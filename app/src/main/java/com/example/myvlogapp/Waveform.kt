@@ -160,7 +160,15 @@ suspend fun extractWaveform(
     }
 }
 
-/** 復号済みPCMを二乗和として区間に足し込む */
+/**
+ * 復号済みPCMを二乗和として区間に足し込む。
+ *
+ * PCM形式ごとに「サンプル数」と「i番目のサンプルを-1f〜1fへ正規化する関数」だけが違う
+ * (8bit PCMは1バイト=1サンプルなので、他の形式と同じ意味で`SAMPLE_STRIDE`だけ間引ける。
+ * 開始位置が`buffer.position()`なのは、Float/Short用のview bufferは位置0基準になるのに対し、
+ * 生バイトはByteBuffer自体の絶対位置を使う必要があるため)。
+ * このループ自体は形式によらず共通なので、サンプラーだけ差し替えて1本にまとめてある。
+ */
 private fun accumulate(
     buffer: ByteBuffer,
     pcmEncoding: Int,
@@ -169,42 +177,34 @@ private fun accumulate(
     counts: IntArray
 ) {
     buffer.order(ByteOrder.LITTLE_ENDIAN)
-    var sum = 0.0
-    var taken = 0
 
-    when (pcmEncoding) {
+    val (sampleCount, sampleAt) = when (pcmEncoding) {
         AudioFormat.ENCODING_PCM_FLOAT -> {
             val samples = buffer.asFloatBuffer()
-            var i = 0
-            while (i < samples.limit()) {
-                val value = samples.get(i).toDouble()
-                sum += value * value
-                taken++
-                i += SAMPLE_STRIDE
-            }
+            samples.limit() to { i: Int -> samples.get(i).toDouble() }
         }
 
         AudioFormat.ENCODING_PCM_8BIT -> {
-            var i = buffer.position()
-            while (i < buffer.limit()) {
-                // 8bit PCMは符号なしで中心が128
-                val value = ((buffer.get(i).toInt() and 0xFF) - 128) / 128.0
-                sum += value * value
-                taken++
-                i += SAMPLE_STRIDE
-            }
+            val start = buffer.position()
+            val count = buffer.limit() - start
+            // 8bit PCMは符号なしで中心が128
+            count to { i: Int -> ((buffer.get(start + i).toInt() and 0xFF) - 128) / 128.0 }
         }
 
         else -> {
             val samples = buffer.asShortBuffer()
-            var i = 0
-            while (i < samples.limit()) {
-                val value = samples.get(i) / 32768.0
-                sum += value * value
-                taken++
-                i += SAMPLE_STRIDE
-            }
+            samples.limit() to { i: Int -> samples.get(i) / 32768.0 }
         }
+    }
+
+    var sum = 0.0
+    var taken = 0
+    var i = 0
+    while (i < sampleCount) {
+        val value = sampleAt(i)
+        sum += value * value
+        taken++
+        i += SAMPLE_STRIDE
     }
 
     sums[bucket] += sum
