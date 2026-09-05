@@ -43,6 +43,15 @@ import kotlinx.coroutines.withContext
  * 分離してあり、このファイルにはCompose UIだけが残る。
  */
 
+/** サムネイル画像の要求サイズ(px)。グリッドのタイル自体はdpだが、こちらは実ピクセルで指定する */
+private val THUMBNAIL_SIZE = Size(320, 320)
+
+/** グリッドタイルの最小幅 */
+private val TILE_MIN_SIZE = 104.dp
+
+/** タイル・選択枠に共通で使う角丸 */
+private val TILE_SHAPE = RoundedCornerShape(6.dp)
+
 /**
  * サムネイル。1件ずつ非同期に読み込む。
  * loadThumbnail は API 29 以降。それ以前は無地のタイルにファイル名だけ出す。
@@ -54,7 +63,7 @@ private fun rememberThumbnail(uri: Uri): Bitmap? {
         value = withContext(Dispatchers.IO) {
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.loadThumbnail(uri, Size(320, 320), null)
+                    context.contentResolver.loadThumbnail(uri, THUMBNAIL_SIZE, null)
                 } else {
                     null
                 }
@@ -126,13 +135,11 @@ private fun GalleryPickerHeader(onUseFilePicker: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("動画を選ぶ", style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // MediaStoreに出てこない場所（Downloadなど）の動画はこちらから
-            TextButton(
-                onClick = onUseFilePicker,
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) { Text("ファイル", fontSize = 13.sp) }
-        }
+        // MediaStoreに出てこない場所（Downloadなど）の動画はこちらから
+        TextButton(
+            onClick = onUseFilePicker,
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) { Text("ファイル", fontSize = 13.sp) }
     }
 }
 
@@ -171,7 +178,7 @@ private fun VideoGrid(
             )
 
             else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 104.dp),
+                columns = GridCells.Adaptive(minSize = TILE_MIN_SIZE),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -227,12 +234,14 @@ private fun VideoTile(
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(TILE_SHAPE)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .then(
-                if (selectionOrder != null) Modifier.border(
-                    3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)
-                ) else Modifier
+                if (selectionOrder != null) {
+                    Modifier.border(3.dp, MaterialTheme.colorScheme.primary, TILE_SHAPE)
+                } else {
+                    Modifier
+                }
             )
             .clickable(onClick = onClick)
     ) {

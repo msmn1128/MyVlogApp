@@ -2,7 +2,9 @@ package com.example.myvlogapp // ← ご自身のパッケージ名に合わせ�
 
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** 書き出しの進行状態。UIはこれを見るだけでよい */
@@ -33,7 +35,8 @@ object ExportStatus {
      * Activityが購読していない間に飛んだメッセージ（保存完了・失敗など）を
      * 取りこぼさないよう、直近1件だけ溜めておく。
      */
-    val events = MutableSharedFlow<VlogEvent>(extraBufferCapacity = 1)
+    private val _events = MutableSharedFlow<VlogEvent>(extraBufferCapacity = 1)
+    val events: SharedFlow<VlogEvent> = _events.asSharedFlow()
 
     val isRunning: Boolean get() = _state.value is ExportState.Running
 
@@ -46,6 +49,6 @@ object ExportStatus {
     }
 
     fun emit(event: VlogEvent) {
-        events.tryEmit(event)
+        _events.tryEmit(event)
     }
 }
