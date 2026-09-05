@@ -236,13 +236,17 @@ object ClipStore {
         val array = optJSONArray("texts")
             ?: return listOf(TextSegment(0L, optString("userText", DEFAULT_HITOKOTO)))
 
+        // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
+        // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
+        // ひとことが拾えない区間ができ、書き出しから文字が消える。
         val segments = (0 until array.length()).map { index ->
             val item = array.getJSONObject(index)
             TextSegment(
                 startMs = item.optLong("startMs"),
                 text = item.optString("text", DEFAULT_HITOKOTO)
             )
-        }
+        }.sortedBy { it.startMs }
+
         // 先頭が0から始まらないと textAt が拾えない区間ができてしまう
         return segments.takeIf { it.isNotEmpty() && it.first().startMs == 0L }
             ?: listOf(TextSegment())

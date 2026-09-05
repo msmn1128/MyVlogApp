@@ -964,14 +964,22 @@ private fun WaveformTrimmer(
     // 奪われる端末がある。波形トリマー全体（左端〜右端）をジェスチャー除外領域として
     // 申告し、この範囲では常に自前のタッチ処理を優先させる。選択中クリップが変わって
     // 表示が消えるときは除外を解除しないと、別の場所にまで戻るジェスチャーが効かなくなる。
+    //
+    // systemGestureExclusionRects はAPI 29以降にしか無い。minSdkは24なので、
+    // 直に呼ぶと Android 9 以下で NoSuchMethodError で落ちる。
+    // ジェスチャーナビゲーション自体がAPI 29からの機能なので、それ未満では何もしない。
     val view = LocalView.current
-    DisposableEffect(view) {
-        onDispose { view.systemGestureExclusionRects = emptyList() }
+    val supportsGestureExclusion = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+    DisposableEffect(view, supportsGestureExclusion) {
+        onDispose {
+            if (supportsGestureExclusion) view.systemGestureExclusionRects = emptyList()
+        }
     }
 
     Box(
         modifier = modifier
             .onGloballyPositioned { coordinates ->
+                if (!supportsGestureExclusion) return@onGloballyPositioned
                 val bounds = coordinates.boundsInWindow()
                 view.systemGestureExclusionRects = listOf(
                     AndroidRect(
@@ -988,139 +996,152 @@ private fun WaveformTrimmer(
                 if (!enabled) return@pointerInput
 
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val track = trackMetrics(size.width.toFloat(), handleHalfPx)
-                    val startX = track.msToX(latestStart, latestDuration)
-                    val endX = track.msToX(latestEnd, latestDuration)
+                    // 掴んでいる最中に指以外の理由でジェスチャーが打ち切られることがある
+                    // （親の縦スクロールに主導権を奪われる、書き出し開始で enabled が
+                    // 変わって pointerInput が作り直される、クリップの選択が変わって
+                    // このコンポーザブルごと消えるなど）。
+                    // その場合ここのコルーチンはキャンセルされて以降の行が実行されないため、
+                    // 強調表示のフラグとスクラブ終了通知は必ず finally で戻す。
+                    // 戻し忘れると、つまみが太ったまま固まる／指を離しても再生が再開しない、
+                    // といった状態が画面に残り続ける。
+                    var scrubbing = false
+                    try {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val track = trackMetrics(size.width.toFloat(), handleHalfPx)
+                        val startX = track.msToX(latestStart, latestDuration)
+                        val endX = track.msToX(latestEnd, latestDuration)
 
-                    // つまみと分割ラインのうち、いちばん近いものを探す。
-                    // どちらの許容範囲にも入らなければ「本体」として扱う
-                    val toStart = kotlin.math.abs(down.position.x - startX)
-                    val toEnd = kotlin.math.abs(down.position.x - endX)
-                    val handleKind = if (toStart <= toEnd) TrimHandle.Start else TrimHandle.End
-                    val handleDist = minOf(toStart, toEnd)
+                        // つまみと分割ラインのうち、いちばん近いものを探す。
+                        // どちらの許容範囲にも入らなければ「本体」として扱う
+                        val toStart = kotlin.math.abs(down.position.x - startX)
+                        val toEnd = kotlin.math.abs(down.position.x - endX)
+                        val handleKind = if (toStart <= toEnd) TrimHandle.Start else TrimHandle.End
+                        val handleDist = minOf(toStart, toEnd)
 
-                    var nearestSplit: Int? = null
-                    var nearestSplitDist = Float.MAX_VALUE
-                    for (i in 1 until latestTexts.size) {
-                        val splitX = track.msToX(latestTexts[i].startMs, latestDuration)
-                        val dist = kotlin.math.abs(down.position.x - splitX)
-                        if (dist < nearestSplitDist) {
-                            nearestSplitDist = dist
-                            nearestSplit = i
-                        }
-                    }
-
-                    val useHandle = handleDist <= grabRadiusPx && handleDist <= nearestSplitDist
-                    val useSplit = !useHandle && nearestSplit != null && nearestSplitDist <= grabRadiusPx
-
-                    when {
-                        // --- 端のつまみ：即ドラッグで伸縮 ---
-                        useHandle -> {
-                            activeHandle = handleKind
-                            val grabOffset =
-                                if (handleKind == TrimHandle.Start) down.position.x - startX
-                                else down.position.x - endX
-
-                            val pointerId = down.id
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                                if (change.changedToUpIgnoreConsumed()) break
-                                change.consume()
-                                val ms = track.xToMs(change.position.x - grabOffset, latestDuration)
-                                when (handleKind) {
-                                    TrimHandle.Start -> {
-                                        val next = ms.coerceIn(0L, latestEnd - MIN_TRIM_MS)
-                                        latestTrimChange(next, latestEnd, next)
-                                    }
-                                    TrimHandle.End -> {
-                                        val next = ms.coerceIn(
-                                            latestStart + MIN_TRIM_MS, latestDuration
-                                        )
-                                        latestTrimChange(latestStart, next, next)
-                                    }
-                                }
+                        var nearestSplit: Int? = null
+                        var nearestSplitDist = Float.MAX_VALUE
+                        for (i in 1 until latestTexts.size) {
+                            val splitX = track.msToX(latestTexts[i].startMs, latestDuration)
+                            val dist = kotlin.math.abs(down.position.x - splitX)
+                            if (dist < nearestSplitDist) {
+                                nearestSplitDist = dist
+                                nearestSplit = i
                             }
-                            activeHandle = null
                         }
 
-                        // --- 分割ライン：即ドラッグで移動 ---
-                        useSplit -> {
-                            val index = nearestSplit!!
-                            activeSplitIndex = index
-                            val splitX = track.msToX(latestTexts[index].startMs, latestDuration)
-                            val grabOffset = down.position.x - splitX
+                        val useHandle = handleDist <= grabRadiusPx && handleDist <= nearestSplitDist
+                        val useSplit =
+                            !useHandle && nearestSplit != null && nearestSplitDist <= grabRadiusPx
 
-                            val pointerId = down.id
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                                if (change.changedToUpIgnoreConsumed()) break
-                                change.consume()
-                                val ms = track.xToMs(change.position.x - grabOffset, latestDuration)
-                                latestSplitMove(index, ms)
-                            }
-                            activeSplitIndex = null
-                        }
+                        when {
+                            // --- 端のつまみ：即ドラッグで伸縮 ---
+                            useHandle -> {
+                                activeHandle = handleKind
+                                val grabOffset =
+                                    if (handleKind == TrimHandle.Start) down.position.x - startX
+                                    else down.position.x - endX
 
-                        // --- 本体：すぐ動かせば従来通りなぞって頭出し、
-                        //     長押ししてから動かせば区間ごと移動 ---
-                        else -> {
-                            val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                awaitSlopOrRelease(down.id, viewConfiguration.touchSlop, down.position)
-                            }
-
-                            when (outcome) {
-                                is DragOutcome.Dragged -> {
-                                    // すぐ動いた＝なぞって頭出し（従来のシーク）
-                                    latestScrubStart()
-                                    latestSeek(track.xToMs(outcome.change.position.x, latestDuration))
-                                    val pointerId = outcome.change.id
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                                        if (change.changedToUpIgnoreConsumed()) break
-                                        change.consume()
-                                        latestSeek(track.xToMs(change.position.x, latestDuration))
-                                    }
-                                    latestScrubEnd()
-                                }
-
-                                DragOutcome.Released -> {
-                                    // 動かさず離した＝タップ。その場へ頭出し
-                                    latestSeek(track.xToMs(down.position.x, latestDuration))
-                                }
-
-                                null -> {
-                                    // 動かさず一定時間経過＝長押し。
-                                    // まだ指が乗っていれば区間ごと移動へ切り替える
-                                    val stillDown =
-                                        currentEvent.changes.firstOrNull { it.id == down.id }?.pressed == true
-                                    if (!stillDown) {
-                                        latestSeek(track.xToMs(down.position.x, latestDuration))
-                                    } else {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        isMovingTrim = true
-                                        val originalStart = latestStart
-                                        val pxPerMs = track.width / latestDuration.coerceAtLeast(1L)
-                                        val anchorX = down.position.x
-
-                                        val pointerId = down.id
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                                            if (change.changedToUpIgnoreConsumed()) break
-                                            change.consume()
-                                            val deltaMs = ((change.position.x - anchorX) / pxPerMs).toLong()
-                                            val targetStart = originalStart + deltaMs
-                                            latestTrimMove(targetStart, targetStart)
+                                dragUntilRelease(down.id) { change ->
+                                    val ms =
+                                        track.xToMs(change.position.x - grabOffset, latestDuration)
+                                    when (handleKind) {
+                                        TrimHandle.Start -> {
+                                            val next = ms.coerceIn(0L, latestEnd - MIN_TRIM_MS)
+                                            latestTrimChange(next, latestEnd, next)
                                         }
-                                        isMovingTrim = false
+                                        TrimHandle.End -> {
+                                            val next = ms.coerceIn(
+                                                latestStart + MIN_TRIM_MS, latestDuration
+                                            )
+                                            latestTrimChange(latestStart, next, next)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // --- 分割ライン：即ドラッグで移動 ---
+                            useSplit -> {
+                                val index = nearestSplit!!
+                                activeSplitIndex = index
+                                val splitX =
+                                    track.msToX(latestTexts[index].startMs, latestDuration)
+                                val grabOffset = down.position.x - splitX
+
+                                dragUntilRelease(down.id) { change ->
+                                    val ms =
+                                        track.xToMs(change.position.x - grabOffset, latestDuration)
+                                    latestSplitMove(index, ms)
+                                }
+                            }
+
+                            // --- 本体：すぐ動かせば従来通りなぞって頭出し、
+                            //     長押ししてから動かせば区間ごと移動 ---
+                            else -> {
+                                val outcome =
+                                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        awaitSlopOrRelease(
+                                            down.id, viewConfiguration.touchSlop, down.position
+                                        )
+                                    }
+
+                                when (outcome) {
+                                    is DragOutcome.Dragged -> {
+                                        // すぐ動いた＝なぞって頭出し（従来のシーク）
+                                        scrubbing = true
+                                        latestScrubStart()
+                                        latestSeek(
+                                            track.xToMs(
+                                                outcome.change.position.x, latestDuration
+                                            )
+                                        )
+                                        dragUntilRelease(outcome.change.id) { change ->
+                                            latestSeek(
+                                                track.xToMs(change.position.x, latestDuration)
+                                            )
+                                        }
+                                    }
+
+                                    DragOutcome.Released -> {
+                                        // 動かさず離した＝タップ。その場へ頭出し
+                                        latestSeek(track.xToMs(down.position.x, latestDuration))
+                                    }
+
+                                    null -> {
+                                        // 動かさず一定時間経過＝長押し。
+                                        // まだ指が乗っていれば区間ごと移動へ切り替える
+                                        val stillDown = currentEvent.changes
+                                            .firstOrNull { it.id == down.id }?.pressed == true
+                                        if (!stillDown) {
+                                            latestSeek(
+                                                track.xToMs(down.position.x, latestDuration)
+                                            )
+                                        } else {
+                                            haptics.performHapticFeedback(
+                                                HapticFeedbackType.LongPress
+                                            )
+                                            isMovingTrim = true
+                                            val originalStart = latestStart
+                                            val pxPerMs =
+                                                track.width / latestDuration.coerceAtLeast(1L)
+                                            val anchorX = down.position.x
+
+                                            dragUntilRelease(down.id) { change ->
+                                                val deltaMs =
+                                                    ((change.position.x - anchorX) / pxPerMs)
+                                                        .toLong()
+                                                val targetStart = originalStart + deltaMs
+                                                latestTrimMove(targetStart, targetStart)
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                    } finally {
+                        activeHandle = null
+                        activeSplitIndex = null
+                        isMovingTrim = false
+                        if (scrubbing) latestScrubEnd()
                     }
                 }
             },
@@ -1352,6 +1373,28 @@ private fun trackMetrics(totalWidth: Float, handleHalfPx: Float) =
 private sealed interface DragOutcome {
     data object Released : DragOutcome
     data class Dragged(val change: PointerInputChange) : DragOutcome
+}
+
+/**
+ * 指を離すまで、動くたびに [onMove] を呼び続ける。
+ *
+ * つまみ・分割ライン・区間ごと移動で共通の骨組み。掴んだ対象ごとに違うのは
+ * 「動いたときに何をするか」だけなので、待ち受けと終了条件はここに1本化する。
+ *
+ * イベントを consume するのは、同じ座標を親（タイムラインの縦スクロールなど）にも
+ * 渡してしまうと、なぞっている最中に画面ごとスクロールしてしまうため。
+ */
+private suspend fun AwaitPointerEventScope.dragUntilRelease(
+    pointerId: PointerId,
+    onMove: (PointerInputChange) -> Unit
+) {
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull { it.id == pointerId } ?: return
+        if (change.changedToUpIgnoreConsumed()) return
+        change.consume()
+        onMove(change)
+    }
 }
 
 /**

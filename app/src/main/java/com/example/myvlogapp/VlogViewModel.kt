@@ -385,14 +385,22 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         _playbackPositionMs.value = at
     }
 
-    /** 区切りをひとつ解除する。手前の区間の文字が、後ろの区間ぶんまで伸びる */
+    /**
+     * 区切りをひとつ解除する。手前の区間の文字が、後ろの区間ぶんまで伸びる。
+     *
+     * 位置が同じ区切りが万一2つあっても、消すのは1つだけにする
+     * （まとめて消すと、押した覚えのない区切りまで一緒に消えてしまう）。
+     */
     fun removeSplit(atMs: Long) {
         val clip = selectedClip ?: return
-        if (clip.texts.none { it.startMs == atMs && it.startMs != 0L }) return
+        val target = clip.texts.indexOfFirst { it.startMs == atMs && it.startMs != 0L }
+        if (target < 0) return
 
         recordHistory()
         updateSelected { current ->
-            current.copy(texts = current.texts.filterNot { it.startMs == atMs && it.startMs != 0L })
+            current.copy(
+                texts = current.texts.filterIndexed { index, _ -> index != target }
+            )
         }
     }
 

@@ -73,7 +73,12 @@ class VlogExportService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
             VlogExporter.cancel()
-            exportJob?.cancel()
+            // 実行中なら、中止されたジョブのfinallyがstopSelfまで面倒を見る。
+            // 実行中でない場合（書き出しが終わった直後に「中止」を押した等）は、
+            // このIntentのせいで起動しただけのサービスが何もせず残り続けてしまうため、
+            // ここで自分で畳む。
+            val job = exportJob
+            if (job?.isActive == true) job.cancel() else stopSelf()
             return START_NOT_STICKY
         }
 
