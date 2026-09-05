@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** 履歴に積む上限。1件あたりクリップ一覧の参照コピーなので軽い */
@@ -128,12 +130,39 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         player.playWhenReady = false
     }
 
-    /** 先頭へ戻して止める。最後まで再生し終えたときの共通処理 */
+    /**
+     * 先頭へ戻して止める。最後まで再生し終えたときの共通処理。
+     *
+     * `enforceTrimBounds`の監視とExoPlayerのSTATE_ENDEDリスナーの両方から
+     * 呼ばれうる（同じ「最後まで再生し終えた」を別経路で検知しているため）。
+     * 既に先頭で止まっていれば何もしないことで、二重の呼び出しがあっても
+     * 無駄なシークを起こさないようにする。
+     */
     private fun returnToStart() {
         val first = _clips.value.firstOrNull() ?: return
+        if (_selectedIndex.value == 0 &&
+            !player.playWhenReady &&
+            player.currentPosition == first.startMs
+        ) {
+            return
+        }
         _selectedIndex.value = 0
         seekAndSync(0, first.startMs)
     }
+
+    /**
+     * `_clips`を非同期の後始末を伴って書き換える操作（クリップ追加・一時保存の読み込みなど）を
+     * 直列化するロック。
+     *
+     * これらは「バックグラウンドでの下ごしらえ → 完了後に_clips.valueへ反映」という
+     * 形を取るため、2つの操作が重なると片方の反映が失われることがある
+     * （例：動画追加のメタデータ取得中に一時保存を読み込むと、その後addClipsが
+     * 古い_clips.valueを基準に追記してしまい、loadProjectの結果を巻き戻すか、
+     * 逆にloadProjectがaddClipsの結果を消してしまう）。
+     * 反映（コミット）部分だけをこのロックで囲み、常に最新の_clips.valueを
+     * 基準にする。
+     */
+    private val clipsMutationMutex = Mutex()
 
     init {
         // 復元してから保存を始める。順番が逆だと、復元前の空リストを
@@ -197,10 +226,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         val restored = ClipStore.restore(getApplication())
 
-        if (restored.clips.isNotEmpty()) {
-            _clips.value = restored.clips
-            rebuildPlaylist(restored.clips)
-            select(0)
+        clipsMutationMutex.withLock {
+            if (restored.clips.isNotEmpty()) {
+                _clips.value = restored.clips
+                rebuildPlaylist(restored.clips)
+                select(0)
+            }
         }
 
         // 復元直後を「起点」にする。ここで履歴を消しておかないと、
@@ -237,16 +268,18 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            val wasEmpty = _clips.value.isEmpty()
-            recordHistory()
-            _clips.value = _clips.value + added
+            clipsMutationMutex.withLock {
+                val wasEmpty = _clips.value.isEmpty()
+                recordHistory()
+                _clips.value = _clips.value + added
 
-            // 既存の再生位置を保ったまま新しいクリップだけ追加する
-            player.addMediaItems(added.map { MediaItem.fromUri(it.uri) })
-            player.prepare()
-            player.playWhenReady = false
+                // 既存の再生位置を保ったまま新しいクリップだけ追加する
+                player.addMediaItems(added.map { MediaItem.fromUri(it.uri) })
+                player.prepare()
+                player.playWhenReady = false
 
-            if (wasEmpty) select(0)
+                if (wasEmpty) select(0)
+            }
 
             val skipped = added.count { !it.isValid }
             if (skipped > 0) {
@@ -329,8 +362,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (index !in clip.texts.indices || index == 0) return
 
         val lowerBound = clip.texts[index - 1].startMs + MIN_TEXT_SEGMENT_MS
+        // 次の区切りが無い（＝最後の区間を動かす）場合の上限はクリップ全体の長さ(durationMs)
+        // ではなく、いまのトリム終端(endMs)にする。durationMsのままだと、トリムで
+        // 後半を切り落とした後も区切りをトリム範囲の外まで動かせてしまう。
         val upperBound =
-            (clip.texts.getOrNull(index + 1)?.startMs ?: clip.durationMs) - MIN_TEXT_SEGMENT_MS
+            (clip.texts.getOrNull(index + 1)?.startMs ?: clip.endMs) - MIN_TEXT_SEGMENT_MS
         if (lowerBound > upperBound) return
 
         val clamped = newAtMs.coerceIn(lowerBound, upperBound)
@@ -441,10 +477,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     fun removeSelected() {
         val index = _selectedIndex.value
         if (index !in _clips.value.indices) return
+        val removedUri = _clips.value[index].uri
 
         recordHistory()
         _clips.value = _clips.value.toMutableList().apply { removeAt(index) }
         player.removeMediaItem(index)
+        cancelWaveformJobIfUnused(removedUri)
 
         val newIndex = index.coerceAtMost(_clips.value.lastIndex.coerceAtLeast(0))
         _selectedIndex.value = newIndex
@@ -463,12 +501,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     /** タイムラインを空にする。押し間違えても「もとに戻す」で復帰できる */
     fun removeAll() {
         if (_clips.value.isEmpty()) return
+        val removedUris = _clips.value.map { it.uri }.distinct()
 
         recordHistory()
         _clips.value = emptyList()
         player.clearMediaItems()
         _selectedIndex.value = 0
         _playbackPositionMs.value = 0L
+        removedUris.forEach { cancelWaveformJobIfUnused(it) }
     }
 
     // --- 一時保存 -----------------------------------------------------------------------
@@ -515,15 +555,17 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            recordHistory()
-            _clips.value = restored.clips
-            rebuildPlaylist(restored.clips)
-            // 空の保存を読み出したときだけここで0に戻す。中身があるときは
-            // select(0) が同じ代入をやり直すことになるので、そちらだけに任せる。
-            if (restored.clips.isNotEmpty()) select(0)
-            else {
-                _selectedIndex.value = 0
-                _playbackPositionMs.value = 0L
+            clipsMutationMutex.withLock {
+                recordHistory()
+                _clips.value = restored.clips
+                rebuildPlaylist(restored.clips)
+                // 空の保存を読み出したときだけここで0に戻す。中身があるときは
+                // select(0) が同じ代入をやり直すことになるので、そちらだけに任せる。
+                if (restored.clips.isNotEmpty()) select(0)
+                else {
+                    _selectedIndex.value = 0
+                    _playbackPositionMs.value = 0L
+                }
             }
 
             sendMessage(
@@ -636,6 +678,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             val waveform = extractWaveform(getApplication(), clip.uri, clip.durationMs)
             _waveforms.value = _waveforms.value + (key to waveform)
             waveformJobs.remove(key)
+        }
+    }
+
+    /**
+     * クリップが削除されたときに、対応する波形取得ジョブが残っていればキャンセルする。
+     * キャンセルしないと、無駄なデコードが完了時まで走り続ける。
+     *
+     * 同じ動画を2回追加している場合はURIが重複するため、削除後もまだ他のクリップが
+     * 同じURIを参照していれば消さない（そちらの表示に使われている波形を巻き添えにしない）。
+     * 呼び出し側は、_clips.valueを削除後の状態に更新してから呼ぶこと。
+     */
+    private fun cancelWaveformJobIfUnused(uri: Uri) {
+        val key = uri.toString()
+        if (_clips.value.none { it.uri.toString() == key }) {
+            waveformJobs.remove(key)?.cancel()
         }
     }
 
