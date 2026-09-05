@@ -1,74 +1,12 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
-import android.content.Context
-import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.provider.MediaStore
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.TimeZone
-
-// =====================================================================================
-// 定数
-// =====================================================================================
-
-const val CANVAS_WIDTH = 1920
-const val CANVAS_HEIGHT = 1080
-const val CANVAS_FPS = 30
-
-/** タイトル「Vlog.」／ ひとこと 用フォント */
-const val TITLE_FONT_ASSET = "LogoTypeGothic.otf"
-
-/** 撮影時刻／日付 用フォント */
-const val TIME_FONT_ASSET = "MPLUSU-Regular.ttf"
-
-/** タイトルカードの長さ（ミリ秒）。黒背景の尺・フェードのタイミング・効果音の切り詰め先すべての基準 */
-const val TITLE_DURATION_MS = 2000L
-
-/** タイトルカードの効果音（assets/sfx/ 以下のファイル名） */
-const val TITLE_SFX_ASSET = "title.mp3"
-
-/**
- * 効果音を鳴らすフレーム番号（1始まり）。
- * 例えば21なら、動画の21フレーム目（0始まりのnで数えるとn=20）から効果音が始まる。
- * CANVAS_FPSが30の場合、20/30秒 ≒ 約667ms地点。
- */
-const val TITLE_SFX_FRAME_NUMBER = 21
-
-// --- フォントサイズ（1920x1080キャンバス上のpt） -------------------------------------
-// UI側とExporter側で数値が散らばると片方だけ変えたときに食い違うため、
-// ここ1箇所に集約して両方から参照する。
-
-const val HITOKOTO_FONT_PT = 70f      // ひとこと
-const val HITOKOTO_LINE_SPACING_PT = 10f  // ひとことの行間
-const val TIME_FONT_PT = 60f          // 撮影時刻
-const val TITLE_FONT_PT = 150f        // タイトルカードの「Vlog.」
-const val TITLE_DATE_FONT_PT = 50f    // タイトルカードの日付
-
-// タイトルカードの縦位置。画面中央からのずれ（マイナスが上、プラスが下）
-const val TITLE_Y_OFFSET_PT = -70f
-const val TITLE_DATE_Y_OFFSET_PT = 80f
-
-/** 撮影時刻の右余白（キャンバス上のpt） */
-const val TIME_MARGIN_PT = 40f
-
-/**
- * プレビューのみに掛かる文字の拡大率。
- * 1.0f が書き出し結果と同じ見え方。編集中に読みづらい場合は 1.2f〜1.5f に上げる。
- * 書き出される動画は変わらない。
- */
-const val PREVIEW_FONT_SCALE = 1.0f
-
-const val LOG_TAG = "VlogApp"
-
-/** ひとことの初期値。区間を分割したときの後半にもこれが入る */
-const val DEFAULT_HITOKOTO = "ひとこと"
-
-/** これ以上は詰められないひとこと区間の長さ。短すぎる区間は読む前に消えてしまう */
-const val MIN_TEXT_SEGMENT_MS = 400L
 
 // =====================================================================================
 // データモデル
+//
+// 定数は VlogConstants.kt、Android I/O依存のメタデータ取得は VideoMetadataReader.kt、
+// 表示整形は Formatters.kt にそれぞれ分離してある。このファイルは純粋データのみを持つ。
 // =====================================================================================
 
 /**
@@ -170,89 +108,4 @@ sealed interface ExportState {
 /** Toastなど「1回だけ通知したい」イベント */
 sealed interface VlogEvent {
     data class Message(val text: String) : VlogEvent
-}
-
-// =====================================================================================
-// メタデータ取得
-// =====================================================================================
-
-/**
- * 動画から撮影日時・長さ・解像度を取得する。
- *
- * 撮影日時メタデータ（creation_time）は、SNS経由で共有された動画や
- * PCで変換した動画では失われていることが多いため、
- * 取得できない場合は MediaStore の追加日時にフォールバックする。
- */
-fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
-    val retriever = MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(context, uri)
-
-        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull() ?: 0L
-
-        val shotAtMillis = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
-            ?.let { parseCreationTime(it) }
-            ?: queryMediaStoreDateMillis(context, uri)
-
-        // 生の幅・高さは回転情報(90/270度)を反映していないため補正する。
-        // 縦持ち撮影の動画は内部的に横長のままrotation=90が入っていることが多い。
-        val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-            ?.toIntOrNull() ?: CANVAS_WIDTH
-        val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-            ?.toIntOrNull() ?: CANVAS_HEIGHT
-        val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
-            ?.toIntOrNull() ?: 0
-        val (width, height) =
-            if (rotation == 90 || rotation == 270) rawHeight to rawWidth else rawWidth to rawHeight
-
-        VideoMeta(
-            timeText = formatTime(shotAtMillis),
-            dateText = formatDate(shotAtMillis),
-            durationMs = durationMs,
-            width = width.coerceAtLeast(1),
-            height = height.coerceAtLeast(1)
-        )
-    } catch (e: Exception) {
-        VideoMeta(formatTime(null), formatDate(null), 0L, CANVAS_WIDTH, CANVAS_HEIGHT)
-    } finally {
-        runCatching { retriever.release() }
-    }
-}
-
-private fun parseCreationTime(raw: String): Long? = runCatching {
-    SimpleDateFormat("yyyyMMdd'T'HHmmss.SSS'Z'", Locale.US)
-        .apply { timeZone = TimeZone.getTimeZone("UTC") }
-        .parse(raw)?.time
-}.getOrNull()
-
-private fun queryMediaStoreDateMillis(context: Context, uri: Uri): Long? = runCatching {
-    context.contentResolver.query(
-        uri, arrayOf(MediaStore.MediaColumns.DATE_ADDED), null, null, null
-    )?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getLong(0) * 1000L else null
-    }
-}.getOrNull()
-
-/** 撮影時刻 "HH:mm"（24時間表記） */
-private fun formatTime(millis: Long?): String =
-    millis?.let { SimpleDateFormat("HH:mm", Locale.getDefault()).format(it) } ?: "00:00"
-
-/** 撮影日 "yyyy/MM/dd" */
-private fun formatDate(millis: Long?): String =
-    millis?.let { SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(it) }
-        ?: SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(System.currentTimeMillis())
-
-// =====================================================================================
-// 表示ヘルパー
-// =====================================================================================
-
-/** 一時保存の日時表示 "M/d HH:mm"。保存名の既定値と一覧の見出しで同じ形にする */
-fun formatSavedAt(millis: Long): String =
-    SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
-
-/** 尺の表示 "m:ss"。タイムラインとギャラリーで表記を揃えるためここに1本だけ置く */
-fun formatSeconds(ms: Long): String {
-    val totalSeconds = ms / 1000
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
