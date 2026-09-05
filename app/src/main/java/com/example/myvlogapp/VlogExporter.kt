@@ -4,6 +4,9 @@ import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -12,8 +15,10 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -48,10 +53,7 @@ object VlogExporter {
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
         val workDir = File(context.cacheDir, "vlog_work").apply { mkdirs() }
         val id = System.currentTimeMillis()
-        val titleFile = File(workDir, "title_$id.mp4")
         val mergedFile = File(workDir, "merged_$id.mp4")
-        val listFile = File(workDir, "list_$id.txt")
-        val clipFiles = mutableListOf<File>()
         val textFiles = mutableListOf<File>()
 
         try {
@@ -60,43 +62,49 @@ object VlogExporter {
             val timeFont = copyFontAsset(context, TIME_FONT_ASSET)
             val titleSfx = copySfxAsset(context, TITLE_SFX_ASSET)
 
-            // --- 1. タイトルカード（黒背景 / 2秒 / 31〜50フレーム目でフェードアウト /
-            //        TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
-            onProgress("タイトルを作成中...")
+            onProgress("書き出し中...")
             coroutineContext.ensureActive()
 
             val firstDate = clips.first().dateText
             val sfxDelayMs = titleSfxDelayMs()
-            runFFmpeg(
-                arrayOf(
-                    "-f", "lavfi",
-                    "-i", "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS:d=${secondsArg(TITLE_DURATION_MS)}",
-                    "-i", titleSfx.absolutePath,
-                    // 動画側はdrawtextの連なり(buildTitleFilter)をそのまま[vout]に、
-                    // 音声側は効果音をTITLE_SFX_FRAME_NUMBER分だけ遅らせて[aout]にする。
-                    //
-                    // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
-                    // 「動画(2秒)の方が短いから-shortestで自動的に切られるはず」と考えて
-                    // 頼ると、ここに-shortestを付けていても実機では音声側が先に
-                    // 何時間ぶんもの無音を吐き出そうとしてしまい、書き出しが
-                    // 実質ハングする（動画のフレーム数が全く進まなくなる）。
-                    // atrimでタイトルの尺ぴったりに強制的に切ることで、
-                    // -shortestに頼らず必ず有限時間で終わるようにする。
-                    "-filter_complex",
-                    "[0:v]${buildTitleFilter(firstDate, titleFont, timeFont)}[vout];" +
-                            "[1:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
-                            "atrim=0:${secondsArg(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[aout]",
-                    "-map", "[vout]", "-map", "[aout]",
-                    *videoEncodeArgs(),
-                    "-y", titleFile.absolutePath
-                ),
-                "タイトルの生成に失敗しました"
-            )
 
-            // --- 2. 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
+            // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
+            // 1回のFFmpeg呼び出しで結合・エンコードする。
+            //
+            // 以前はクリップごとに個別エンコードしたファイルを作り、それを
+            // 再度concatで結合し直す2段構成だった。同じ映像を2回圧縮することになり
+            // 画質のロスが重なるうえ、フレームレート変換の帳尻合わせが複雑になっていた。
+            // 生の素材から直接1回だけエンコードすることで、圧縮は1回で済み、
+            // 30fps変換も結合後の連続した1本の映像に対して1回で完結する。
+            //
+            // 入力は 0=タイトル効果音、1..N=各クリップ（SAF経由）。
+            // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
+            // 要求しない生成フィルタなので、追加の-iは不要。
+            val safInputs = clips.map { FFmpegKitConfig.getSafParameterForRead(context, it.uri) }
+            val inputs = arrayOf("-i", titleSfx.absolutePath) +
+                    safInputs.flatMap { listOf("-i", it) }.toTypedArray()
+
+            val graph = mutableListOf<String>()
+
+            // --- タイトルカード（黒背景 / 2秒 / 31〜50フレーム目でフェードアウト /
+            //     TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
+            graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
+                    ":d=${secondsArg(TITLE_DURATION_MS)}[vtitlesrc]"
+            graph += "[vtitlesrc]${buildTitleFilter(firstDate, titleFont, timeFont)}[vtitle]"
+            // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
+            // 「動画(2秒)の方が短いから-shortestで自動的に切られるはず」と考えて頼ると、
+            // 実機では音声側が先に何時間ぶんもの無音を吐き出そうとして書き出しが
+            // 実質ハングする。atrimでタイトルの尺ぴったりに強制的に切ることで、
+            // -shortestに頼らず必ず有限時間で終わるようにする。
+            graph += "[0:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
+                    "atrim=0:${secondsArg(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[atitle]"
+
+            // --- 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
             clips.forEachIndexed { index, clip ->
                 coroutineContext.ensureActive()
-                onProgress("クリップ ${index + 1}/${clips.size} を処理中...")
+                val inputIndex = index + 1
+                val startSec = secondsArg(clip.startMs)
+                val endSec = secondsArg(clip.startMs + clip.trimmedDurationMs)
 
                 // drawtextのtext_alignはFFmpeg 7.0以降の機能で、このビルド(6.x)には無い。
                 // 複数行を中央揃えにするため、1行につき1つのdrawtextとして描く。
@@ -116,53 +124,55 @@ object VlogExporter {
                     span to lineFiles
                 }
 
-                val clipFile = File(workDir, "clip_${id}_$index.mp4")
-                clipFiles += clipFile
+                // trimのみ（setpts無し）だと、切り出し後もtが素材の絶対時刻のまま
+                // drawtextに渡る。区間出し分けのenable式(buildClipFilter内)がこの
+                // 絶対時刻を前提にしているため、setpts=PTS-STARTPTSは全フィルタの
+                // 最後（concatへ渡す直前）で1回だけ行う。
+                graph += "[$inputIndex:v]trim=start=$startSec:end=$endSec," +
+                        "${buildClipFilter(spans, clip, titleFont, timeFont)}," +
+                        "setpts=PTS-STARTPTS[v$index]"
 
-                // content:// をFFmpegが読める saf: 形式に変換する
-                val safInput = FFmpegKitConfig.getSafParameterForRead(context, clip.uri)
-
-                runFFmpeg(
-                    arrayOf(
-                        // -ss は -i の後（出力側シーク）に置く。
-                        // 入力側シークはSAF URI入力だと失敗しやすい。
-                        "-i", safInput,
-                        "-ss", secondsArg(clip.startMs),
-                        "-t", secondsArg(clip.trimmedDurationMs),
-                        "-vf", buildClipFilter(spans, clip, titleFont, timeFont),
-                        *videoEncodeArgs(),
-                        "-y", clipFile.absolutePath
-                    ),
-                    "クリップ ${index + 1} の処理に失敗しました"
-                )
+                // concatは各セグメントの音声ストリームを明示参照するため、
+                // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
+                graph += if (hasAudioTrack(context, clip.uri)) {
+                    "[$inputIndex:a]atrim=start=$startSec:end=$endSec,asetpts=PTS-STARTPTS[a$index]"
+                } else {
+                    "anullsrc=r=44100:cl=stereo:d=${secondsArg(clip.trimmedDurationMs)}[a$index]"
+                }
             }
 
-            // --- 3. 結合（全セグメントが同一仕様なのでストリームコピーで無劣化・高速） ---
-            coroutineContext.ensureActive()
-            onProgress("結合中...")
+            // --- 結合 ---
+            // 30fps CFRへの変換は、クリップ個別ではなく結合後の連続した映像に対して
+            // 1回だけかける。素材の実フレームレートのばらつきによる複製フレームが
+            // 全体に薄く分散され、特定の継ぎ目に集中しなくなる。
+            val segmentLabels = buildString {
+                append("[vtitle][atitle]")
+                clips.indices.forEach { append("[v$it][a$it]") }
+            }
+            graph += "${segmentLabels}concat=n=${clips.size + 1}:v=1:a=1[vraw][aout]"
+            graph += "[vraw]fps=$CANVAS_FPS[vout]"
 
-            listFile.writeText(buildString {
-                appendLine("file '${titleFile.absolutePath}'")
-                clipFiles.forEach { appendLine("file '${it.absolutePath}'") }
-            })
-            runFFmpeg(
+            val totalDurationMs = TITLE_DURATION_MS + clips.sumOf { it.trimmedDurationMs }
+
+            runFFmpegWithProgress(
                 arrayOf(
-                    "-f", "concat", "-safe", "0",
-                    "-i", listFile.absolutePath,
-                    "-c", "copy", "-y", mergedFile.absolutePath
+                    *inputs,
+                    "-filter_complex", graph.joinToString(";"),
+                    "-map", "[vout]", "-map", "[aout]",
+                    // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
+                    *videoEncodeArgs(forceFps = false),
+                    "-y", mergedFile.absolutePath
                 ),
-                "最終結合に失敗しました"
+                totalDurationMs,
+                "書き出しに失敗しました",
+                onProgress
             )
 
-            // --- 4. ギャラリーへ保存 ---
             onProgress("保存中...")
             saveToGallery(context, mergedFile, buildDisplayName(context, firstDate))
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
-            titleFile.delete()
             mergedFile.delete()
-            listFile.delete()
-            clipFiles.forEach { it.delete() }
             textFiles.forEach { it.delete() }
         }
     }
@@ -252,7 +262,7 @@ object VlogExporter {
             // 端末のハードウェアエンコーダ。libx264が無いビルドでの代替。
             // ビットレート指定が無いと極端に低品質になるため明示する。
             encoders.contains("h264_mediacodec") ->
-                Capabilities("h264_mediacodec", listOf("-b:v", "8M"), filters.contains("drawtext"))
+                Capabilities("h264_mediacodec", listOf("-b:v", "5M"), filters.contains("drawtext"))
 
             // 最後の手段。mp4に入るが圧縮効率は落ちる。
             else ->
@@ -266,12 +276,21 @@ object VlogExporter {
         caps
     }
 
-    /** 映像エンコード用の共通引数 */
-    private fun videoEncodeArgs(): Array<String> = arrayOf(
+    /**
+     * 映像エンコード用の共通引数。
+     *
+     * @param forceFps 30fps CFRに強制するか。クリップ個別エンコード時にこれをtrueにすると、
+     *   素材の実フレームレートが30fpsよりわずかに低い場合（スマホ撮影では珍しくない）、
+     *   帳尻合わせの複製フレームがクリップ末尾（＝つなぎ目）に集中してしまい、継ぎ目で
+     *   一瞬止まって見える原因になる。クリップ単体では素材本来のタイミングのまま書き出し、
+     *   結合後の連続した映像に対して1回だけ30fps変換をかけることで、複製が全体に
+     *   薄く分散されるようにする。
+     */
+    private fun videoEncodeArgs(forceFps: Boolean = true): Array<String> = arrayOf(
         "-c:v", capabilities.videoEncoder,
         *capabilities.extraVideoArgs.toTypedArray(),
         "-pix_fmt", "yuv420p",
-        "-r", "$CANVAS_FPS",
+        *(if (forceFps) arrayOf("-r", "$CANVAS_FPS") else emptyArray()),
         "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"
     )
 
@@ -368,7 +387,6 @@ object VlogExporter {
         return buildList {
             add("scale=$CANVAS_WIDTH:$CANVAS_HEIGHT:force_original_aspect_ratio=decrease")
             add("pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black")
-            add("fps=$CANVAS_FPS")
             addAll(hitokotoLayers)
             add(
                 "drawtext=fontfile='${timeFont.absolutePath}'" +
@@ -408,6 +426,23 @@ object VlogExporter {
      */
     private fun String.escapePercentExpansion() = replace("%", "%%")
 
+    /** 動画に音声トラックが存在するか（[Waveform.hasAudio]と同じ判定方法） */
+    private fun hasAudioTrack(context: Context, uri: Uri): Boolean {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, null)
+            (0 until extractor.trackCount).any { index ->
+                extractor.getTrackFormat(index)
+                    .getString(MediaFormat.KEY_MIME)
+                    ?.startsWith("audio/") == true
+            }
+        } catch (e: Exception) {
+            false
+        } finally {
+            extractor.release()
+        }
+    }
+
     // ---------------------------------------------------------------------------------
     // ユーティリティ
     // ---------------------------------------------------------------------------------
@@ -420,9 +455,42 @@ object VlogExporter {
     private fun secondsArg(millis: Long): String =
         String.format(Locale.US, "%.3f", millis / 1000.0)
 
-    private fun runFFmpeg(args: Array<String>, errorMessage: String) {
+    /**
+     * FFmpegを実行し、経過時間から進捗率（%）を算出してonProgressに渡す。
+     *
+     * statisticsコールバックはFFmpegKit側の別スレッドから呼ばれるため、
+     * onProgress（呼び出し元のコルーチンコンテキストを前提とするsuspend関数）を
+     * 呼ぶにはrunBlockingで橋渡しする。パーセント値が変わったときだけ呼ぶことで、
+     * 呼び出し頻度（1秒間に何度も飛んでくる）による無駄な更新を減らす。
+     */
+    private suspend fun runFFmpegWithProgress(
+        args: Array<String>,
+        totalDurationMs: Long,
+        errorMessage: String,
+        onProgress: suspend (String) -> Unit
+    ) {
         Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ")}")
-        val session = FFmpegKit.executeWithArguments(args)
+        val completion = CompletableDeferred<com.arthenica.ffmpegkit.FFmpegSession>()
+        val callerContext = coroutineContext
+        var lastPercent = -1
+
+        FFmpegKit.executeWithArgumentsAsync(
+            args,
+            { session -> completion.complete(session) },
+            { /* ログはセッション完了後にまとめて参照するのでここでは何もしない */ },
+            { statistics ->
+                if (totalDurationMs > 0) {
+                    val percent = (statistics.time / totalDurationMs.toDouble() * 100)
+                        .toInt().coerceIn(0, 100)
+                    if (percent != lastPercent) {
+                        lastPercent = percent
+                        runBlocking(callerContext) { onProgress("書き出し中... $percent%") }
+                    }
+                }
+            }
+        )
+
+        val session = completion.await()
         when {
             ReturnCode.isSuccess(session.returnCode) -> Unit
             ReturnCode.isCancel(session.returnCode) -> throw VlogExportException("書き出しを中止しました")
