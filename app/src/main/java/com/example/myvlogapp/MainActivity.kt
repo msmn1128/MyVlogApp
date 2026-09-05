@@ -73,6 +73,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -178,6 +179,27 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
         else permissionLauncher.launch(mediaPermissions)
     }
 
+    // 書き出し中はフォアグラウンドサービスの通知を出す（VlogExportService）。
+    // Android 13以降は表示に実行時許可が要るため、書き出し開始前にリクエストする。
+    // 拒否されても書き出し自体は行われる（通知が出ないだけ）。
+    //
+    // ここ（VlogAppScreen）で1つだけ持つ理由：以前はPreviewSection内で
+    // rememberLauncherForActivityResultしていたが、PreviewSectionは縦画面では
+    // Column直下、横画面ではRow>Column>PreviewSectionと呼び出し位置(親構造)が
+    // isWideの切り替えで変わる。Composeはこれを別インスタンスとして扱うため、
+    // Foldデバイスの開閉などでisWideが反転すると、表示中の権限ダイアログの
+    // 結果コールバックがActivityResultRegistryごと失われてしまっていた。
+    // VlogAppScreenはisWideの分岐より外側で1度しか呼ばれないため、ここに置けば消えない。
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
+    val onExport = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        viewModel.export()
+    }
+
     val filePicker = rememberLauncherForActivityResult(
         remember { OpenVideosFromCamera() }
     ) { uris: List<Uri> ->
@@ -258,10 +280,19 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 再生位置の更新とトリミング範囲の連続再生。
     // キーをUnitにしているのは、selectedIndexだとクリップが切り替わるたびに
     // ループが作り直されて監視が途切れてしまうため。
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(80)
-            viewModel.refreshPlaybackProgress()
+    //
+    // repeatOnLifecycleで囲むのは、アプリをバックグラウンドに回しても
+    // （BackHandlerでmoveTaskToBackした場合など）この無限ループ自体は
+    // Composition生存中ずっと動き続け、上のDisposableEffectが再生こそ止めるものの
+    // 80ms間隔のポーリングは止まらず無駄にCPU/バッテリーを消費していたため。
+    // STARTED未満（バックグラウンド）になると自動的に一時停止し、
+    // 前面に戻ると再開する。
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(80)
+                viewModel.refreshPlaybackProgress()
+            }
         }
     }
 
@@ -296,7 +327,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
                         // 横並びのときはプレビューが左ペインを丸ごと使える
                         previewWeight = 1f,
                         onAdd = openGallery,
-                        onOpenSaves = { showSaves = true }
+                        onOpenSaves = { showSaves = true },
+                        onExport = onExport
                     )
                 }
 
@@ -325,7 +357,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
                     canExport = clips.isNotEmpty(),
                     previewWeight = previewWeight,
                     onAdd = openGallery,
-                    onOpenSaves = { showSaves = true }
+                    onOpenSaves = { showSaves = true },
+                    onExport = onExport
                 )
                 Spacer(Modifier.height(12.dp))
                 EditSection(
@@ -360,17 +393,11 @@ private fun ColumnScope.PreviewSection(
     canExport: Boolean,
     previewWeight: Float,
     onAdd: () -> Unit,
-    onOpenSaves: () -> Unit
+    onOpenSaves: () -> Unit,
+    onExport: () -> Unit
 ) {
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける
     val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
-
-    // 書き出し中はフォアグラウンドサービスの通知を出す（VlogExportService）。
-    // Android 13以降は表示に実行時許可が要るため、書き出し開始前にリクエストする。
-    // 拒否されても書き出し自体は行われる（通知が出ないだけ）。
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
 
     PreviewPane(
         selectedClip = selectedClip,
@@ -386,12 +413,7 @@ private fun ColumnScope.PreviewSection(
         canExport = canExport,
         onAdd = onAdd,
         onOpenSaves = onOpenSaves,
-        onExport = {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-            }
-            viewModel.export()
-        },
+        onExport = onExport,
         onCancel = viewModel::cancelExport
     )
     ExportProgress(exportState)
@@ -688,7 +710,10 @@ private fun TimelinePane(
                 Spacer(Modifier.height(10.dp))
 
                 selectedClip?.let { clip ->
-                    if (clip.durationMs > 0) {
+                    // MIN_TRIM_MS未満の動画はトリムハンドルの可動域が無くなり、
+                    // ドラッグ時にcoerceIn(min, max)のmin>maxで例外を起こす余地があるため、
+                    // 波形トリマー自体を出さない。
+                    if (clip.durationMs >= MIN_TRIM_MS) {
                         Text(
                             text = "${clip.timeText}：" +
                                     "${formatSeconds(clip.startMs)} 〜 ${formatSeconds(clip.endMs)}" +
@@ -731,9 +756,15 @@ private fun TimelinePane(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp)
                         )
-                    } else {
+                    } else if (clip.durationMs <= 0) {
                         Text(
                             "この動画は長さを取得できませんでした",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else {
+                        Text(
+                            "この動画は短すぎてトリミングできません",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -1097,14 +1128,21 @@ private fun WaveformTrimmer(
                                 dragUntilRelease(down.id) { change ->
                                     val ms =
                                         track.xToMs(change.position.x - grabOffset, latestDuration)
+                                    // coerceIn(min, max)はmin > maxだと例外を投げる。
+                                    // durationMsがMIN_TRIM_MS未満の極端に短い動画では
+                                    // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
+                                    // 「動かせる余地が無ければ現在地のまま」に倒す。
                                     when (handleKind) {
                                         TrimHandle.Start -> {
-                                            val next = ms.coerceIn(0L, latestEnd - MIN_TRIM_MS)
+                                            val next = ms.coerceIn(
+                                                0L, (latestEnd - MIN_TRIM_MS).coerceAtLeast(0L)
+                                            )
                                             latestTrimChange(next, latestEnd, next)
                                         }
                                         TrimHandle.End -> {
                                             val next = ms.coerceIn(
-                                                latestStart + MIN_TRIM_MS, latestDuration
+                                                (latestStart + MIN_TRIM_MS).coerceAtMost(latestDuration),
+                                                latestDuration
                                             )
                                             latestTrimChange(latestStart, next, next)
                                         }
@@ -1493,7 +1531,9 @@ private class TrackMetrics(val left: Float, val right: Float) {
         left + (ms.toFloat() / durationMs.coerceAtLeast(1L)) * width
 
     fun xToMs(x: Float, durationMs: Long): Long =
-        (((x - left) / width) * durationMs).toLong().coerceIn(0L, durationMs)
+        // durationMsが負値だとcoerceIn(0L, 負値)がmin>maxで例外を投げる。
+        // 呼び出し元は現状durationMs>0を保証しているが、防御的にクランプしておく。
+        (((x - left) / width) * durationMs).toLong().coerceIn(0L, durationMs.coerceAtLeast(0L))
 
     companion object {
         /** つまみの半径ぶん内側に縮めたトラック範囲を作る（左右0%・100%でもつまみが切れないように） */
