@@ -1,6 +1,8 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
 import android.net.Uri
+import org.json.JSONArray
+import org.json.JSONObject
 
 // =====================================================================================
 // データモデル
@@ -26,7 +28,7 @@ data class VlogClip(
     val startMs: Long = 0L,
     val endMs: Long = 0L
 ) {
-    val trimmedDurationMs: Long get() = (endMs - startMs).coerceAtLeast(0L)
+    val trimmedDurationMs: Long get() = trimmedDurationMs(startMs, endMs)
     val isValid: Boolean get() = durationMs > 0 && endMs > startMs
 
     /** 区切り位置（2番目以降の区間の頭）。波形に紫のラインを引くのに使う */
@@ -68,6 +70,81 @@ data class VlogClip(
             else TextSpan(number = index + 1, startMs = spanStart, endMs = spanEnd, text = segment.text)
         }
     }
+
+    companion object {
+        /**
+         * [toJson] で書き出したJSONから復元する。
+         *
+         * uriの読み取り可否チェックやidの発行は呼び出し元（ClipStore）の責務なので、
+         * ここでは純粋にJSON→VlogClipの変換だけを行う。
+         */
+        fun fromJson(json: JSONObject, id: Long): VlogClip = VlogClip(
+            id = id,
+            uri = Uri.parse(json.getString("uri")),
+            timeText = json.getString("timeText"),
+            dateText = json.getString("dateText"),
+            durationMs = json.getLong("durationMs"),
+            width = json.getInt("width"),
+            height = json.getInt("height"),
+            texts = json.readTextSegments(),
+            startMs = json.getLong("startMs"),
+            endMs = json.getLong("endMs")
+        )
+    }
+}
+
+/**
+ * [VlogClip.trimmedDurationMs] と同じ計算。
+ * ClipStoreの一覧表示のように、VlogClipを組み立てず生のJSONだけから
+ * 尺を求めたい場面でも同じロジックを使い回すため独立させてある。
+ */
+fun trimmedDurationMs(startMs: Long, endMs: Long): Long = (endMs - startMs).coerceAtLeast(0L)
+
+/** [VlogClip] をJSONへ。ClipStoreの自動保存・一時保存の両方で同じ形を使う */
+fun VlogClip.toJson(): JSONObject = JSONObject().apply {
+    put("uri", uri.toString())
+    put("timeText", timeText)
+    put("dateText", dateText)
+    put("durationMs", durationMs)
+    put("width", width)
+    put("height", height)
+    put("texts", JSONArray().apply {
+        texts.forEach { segment ->
+            put(
+                JSONObject()
+                    .put("startMs", segment.startMs)
+                    .put("text", segment.text)
+            )
+        }
+    })
+    put("startMs", startMs)
+    put("endMs", endMs)
+}
+
+/**
+ * ひとことの区間を読む。
+ *
+ * 区間を持たせる前のバージョンで保存された分は "userText" しか無いので、
+ * その1件を先頭区間として読み直す（更新しても前回の続きが消えない）。
+ */
+private fun JSONObject.readTextSegments(): List<TextSegment> {
+    val array = optJSONArray("texts")
+        ?: return listOf(TextSegment(0L, optString("userText", DEFAULT_HITOKOTO)))
+
+    // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
+    // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
+    // ひとことが拾えない区間ができ、書き出しから文字が消える。
+    val segments = (0 until array.length()).map { index ->
+        val item = array.getJSONObject(index)
+        TextSegment(
+            startMs = item.optLong("startMs"),
+            text = item.optString("text", DEFAULT_HITOKOTO)
+        )
+    }.sortedBy { it.startMs }
+
+    // 先頭が0から始まらないと textAt が拾えない区間ができてしまう
+    return segments.takeIf { it.isNotEmpty() && it.first().startMs == 0L }
+        ?: listOf(TextSegment())
 }
 
 /**

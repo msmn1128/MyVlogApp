@@ -49,36 +49,14 @@ object ClipStore {
 
     fun save(context: Context, clips: List<VlogClip>) {
         context.prefs().edit {
-            putString(KEY_CLIPS, toJson(clips).toString())
+            putString(KEY_CLIPS, clipsToJson(clips).toString())
         }
     }
 
     /** クリップ一覧をJSONへ。自動保存と一時保存で同じ形を使う */
-    private fun toJson(clips: List<VlogClip>): JSONArray {
+    private fun clipsToJson(clips: List<VlogClip>): JSONArray {
         val array = JSONArray()
-        clips.forEach { clip ->
-            array.put(
-                JSONObject().apply {
-                    put("uri", clip.uri.toString())
-                    put("timeText", clip.timeText)
-                    put("dateText", clip.dateText)
-                    put("durationMs", clip.durationMs)
-                    put("width", clip.width)
-                    put("height", clip.height)
-                    put("texts", JSONArray().apply {
-                        clip.texts.forEach { segment ->
-                            put(
-                                JSONObject()
-                                    .put("startMs", segment.startMs)
-                                    .put("text", segment.text)
-                            )
-                        }
-                    })
-                    put("startMs", clip.startMs)
-                    put("endMs", clip.endMs)
-                }
-            )
-        }
+        clips.forEach { array.put(it.toJson()) }
         return array
     }
 
@@ -94,13 +72,11 @@ object ClipStore {
     }
 
     suspend fun restore(context: Context): RestoredClips = withContext(Dispatchers.IO) {
-        val raw = context.prefs().getString(KEY_CLIPS, null)
-            ?: return@withContext RestoredClips(emptyList(), 0)
-
-        runCatching { fromJson(context, JSONArray(raw)) }.getOrElse { e ->
-            Log.w(LOG_TAG, "クリップの復元に失敗しました", e)
-            RestoredClips(emptyList(), 0)
-        }
+        parseJsonArray(
+            context.prefs().getString(KEY_CLIPS, null),
+            default = RestoredClips(emptyList(), 0),
+            errorMessage = "クリップの復元に失敗しました"
+        ) { fromJson(context, it) }
     }
 
     /**
@@ -119,18 +95,7 @@ object ClipStore {
                     dropped++
                     return@runCatching null
                 }
-                VlogClip(
-                    id = System.nanoTime() + index,
-                    uri = uri,
-                    timeText = json.getString("timeText"),
-                    dateText = json.getString("dateText"),
-                    durationMs = json.getLong("durationMs"),
-                    width = json.getInt("width"),
-                    height = json.getInt("height"),
-                    texts = json.readTexts(),
-                    startMs = json.getLong("startMs"),
-                    endMs = json.getLong("endMs")
-                )
+                VlogClip.fromJson(json, id = System.nanoTime() + index)
             }.getOrElse { e ->
                 Log.w(LOG_TAG, "1件のクリップ復元に失敗しました（この1件だけ落とします）", e)
                 dropped++
@@ -169,7 +134,7 @@ object ClipStore {
             .put("id", System.currentTimeMillis())
             .put("name", name)
             .put("savedAt", System.currentTimeMillis())
-            .put("clips", toJson(clips))
+            .put("clips", clipsToJson(clips))
 
         writeProjects(context, projects + entry)
         true
@@ -193,15 +158,25 @@ object ClipStore {
     }
 
     /** 新しいものが上に来る並び。読み出したいのはたいてい直近のもの */
-    private fun readProjects(context: Context): List<JSONObject> {
-        val raw = context.prefs().getString(KEY_PROJECTS, null) ?: return emptyList()
-        return runCatching {
-            val array = JSONArray(raw)
+    private fun readProjects(context: Context): List<JSONObject> =
+        parseJsonArray(
+            context.prefs().getString(KEY_PROJECTS, null),
+            default = emptyList(),
+            errorMessage = "一時保存の一覧を読めませんでした"
+        ) { array ->
             (0 until array.length()).map { array.getJSONObject(it) }
                 .sortedByDescending { it.optLong("savedAt") }
-        }.getOrElse { e ->
-            Log.w(LOG_TAG, "一時保存の一覧を読めませんでした", e)
-            emptyList()
+        }
+
+    /**
+     * "rawがnullなら既定値、あればJSONArrayとしてparseしてactionに渡す。
+     * 失敗したら既定値にフォールバック"という、復元系の各関数で共通していた形をまとめたもの。
+     */
+    private fun <T> parseJsonArray(raw: String?, default: T, errorMessage: String, action: (JSONArray) -> T): T {
+        if (raw == null) return default
+        return runCatching { action(JSONArray(raw)) }.getOrElse { e ->
+            Log.w(LOG_TAG, errorMessage, e)
+            default
         }
     }
 
@@ -215,7 +190,7 @@ object ClipStore {
         val clips = optJSONArray("clips") ?: JSONArray()
         val totalMs = (0 until clips.length()).sumOf { index ->
             val clip = clips.getJSONObject(index)
-            (clip.optLong("endMs") - clip.optLong("startMs")).coerceAtLeast(0L)
+            trimmedDurationMs(clip.optLong("startMs"), clip.optLong("endMs"))
         }
         return SavedProject(
             id = optLong("id"),
@@ -224,32 +199,6 @@ object ClipStore {
             clipCount = clips.length(),
             totalMs = totalMs
         )
-    }
-
-    /**
-     * ひとことの区間を読む。
-     *
-     * 区間を持たせる前のバージョンで保存された分は "userText" しか無いので、
-     * その1件を先頭区間として読み直す（更新しても前回の続きが消えない）。
-     */
-    private fun JSONObject.readTexts(): List<TextSegment> {
-        val array = optJSONArray("texts")
-            ?: return listOf(TextSegment(0L, optString("userText", DEFAULT_HITOKOTO)))
-
-        // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
-        // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
-        // ひとことが拾えない区間ができ、書き出しから文字が消える。
-        val segments = (0 until array.length()).map { index ->
-            val item = array.getJSONObject(index)
-            TextSegment(
-                startMs = item.optLong("startMs"),
-                text = item.optString("text", DEFAULT_HITOKOTO)
-            )
-        }.sortedBy { it.startMs }
-
-        // 先頭が0から始まらないと textAt が拾えない区間ができてしまう
-        return segments.takeIf { it.isNotEmpty() && it.first().startMs == 0L }
-            ?: listOf(TextSegment())
     }
 
     /** いまこのURIを開けるか。権限切れ・移動・削除をまとめて判定できる */
