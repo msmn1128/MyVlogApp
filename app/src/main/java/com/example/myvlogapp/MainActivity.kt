@@ -1327,9 +1327,47 @@ private fun DrawScope.drawWaveformTrimmer(
     val track = TrackMetrics.forWidth(size.width, handleHalfPx)
     val startX = track.msToX(startMs, durationMs)
     val endX = track.msToX(endMs, durationMs)
-    val centerY = size.height / 2f
 
-    // --- 波形 ---
+    drawWaveformBars(waveform, track, startX, endX, colors)
+
+    // 長押しで区間ごと移動している間は太くして、動かしていることを示す
+    val railHeight = if (isMovingTrim) 5.dp.toPx() else 3.dp.toPx()
+    drawTrimRails(startX, endX, railHeight, colors.active)
+
+    // 動画は切っていないので、ひとことの切れ目は自分で描かないと分からない
+    if (texts.size > 1) {
+        drawSegmentSplits(texts, track, durationMs, startMs, startX, activeSplitIndex, textMeasurer, colors)
+    }
+
+    if (positionMs in startMs..endMs) {
+        drawPlayhead(track.msToX(positionMs, durationMs), railHeight, colors.playhead)
+    }
+
+    drawTrimHandle(
+        centerX = startX,
+        halfWidth = handleHalfPx,
+        grown = activeHandle == TrimHandle.Start,
+        fill = colors.handle,
+        grip = colors.grip
+    )
+    drawTrimHandle(
+        centerX = endX,
+        halfWidth = handleHalfPx,
+        grown = activeHandle == TrimHandle.End,
+        fill = colors.handle,
+        grip = colors.grip
+    )
+}
+
+/** 波形の棒。読み込み中や無音では、つまめる範囲が分かるよう土台の線だけ引く */
+private fun DrawScope.drawWaveformBars(
+    waveform: Waveform?,
+    track: TrackMetrics,
+    startX: Float,
+    endX: Float,
+    colors: WaveformTrimmerColors
+) {
+    val centerY = size.height / 2f
     val amplitudes = waveform?.takeIf { it.hasAudio }?.amplitudes
     if (amplitudes != null && amplitudes.isNotEmpty()) {
         val slot = track.width / amplitudes.size
@@ -1349,94 +1387,65 @@ private fun DrawScope.drawWaveformTrimmer(
             )
         }
     } else {
-        // 読み込み中や無音でも、つまめる範囲が分かるよう土台の線だけ引く
-        drawLine(
-            colors.inactive,
-            Offset(track.left, centerY),
-            Offset(track.right, centerY),
-            1.dp.toPx()
-        )
+        drawLine(colors.inactive, Offset(track.left, centerY), Offset(track.right, centerY), 1.dp.toPx())
     }
+}
 
-    // --- 選択範囲の枠。上下の桟でトリム区間を囲う。
-    //     長押しで区間ごと移動している間は太くして、動かしていることを示す ---
-    val railHeight = if (isMovingTrim) 5.dp.toPx() else 3.dp.toPx()
-    drawRect(
-        color = colors.active,
-        topLeft = Offset(startX, 0f),
-        size = Size((endX - startX).coerceAtLeast(0f), railHeight)
-    )
-    drawRect(
-        color = colors.active,
-        topLeft = Offset(startX, size.height - railHeight),
-        size = Size((endX - startX).coerceAtLeast(0f), railHeight)
-    )
+/** 選択範囲を囲う上下の桟 */
+private fun DrawScope.drawTrimRails(startX: Float, endX: Float, railHeight: Float, color: Color) {
+    val width = (endX - startX).coerceAtLeast(0f)
+    drawRect(color = color, topLeft = Offset(startX, 0f), size = Size(width, railHeight))
+    drawRect(color = color, topLeft = Offset(startX, size.height - railHeight), size = Size(width, railHeight))
+}
 
-    // --- ひとことの区切り ---
-    // 動画は切っていないので、切れ目は自分で描かないと分からない。
-    // 波形（primary）と同系だが一段濃い紫にして、線と番号を同じ色で揃える。
-    if (texts.size > 1) {
-        // トリム開始位置で実際に表示される区間（トリミングで頭を落とすと、
-        // それより手前の区切りは再生されない）。番号はここから描き始める
-        val firstVisibleSegmentIndex = texts.indexOfLast { it.startMs <= startMs }.coerceAtLeast(0)
+/**
+ * ひとことの区切り線と番号。
+ * 波形（primary）と同系だが一段濃い紫にして、線と番号を同じ色で揃える。
+ */
+private fun DrawScope.drawSegmentSplits(
+    texts: List<TextSegment>,
+    track: TrackMetrics,
+    durationMs: Long,
+    startMs: Long,
+    startX: Float,
+    activeSplitIndex: Int?,
+    textMeasurer: TextMeasurer,
+    colors: WaveformTrimmerColors
+) {
+    // トリム開始位置で実際に表示される区間（トリミングで頭を落とすと、
+    // それより手前の区切りは再生されない）。番号はここから描き始める
+    val firstVisibleSegmentIndex = texts.indexOfLast { it.startMs <= startMs }.coerceAtLeast(0)
 
-        texts.forEachIndexed { index, segment ->
-            val splitX = track.msToX(segment.startMs, durationMs)
-            if (index > 0) {
-                drawLine(
-                    color = colors.split,
-                    start = Offset(splitX, 0f),
-                    end = Offset(splitX, size.height),
-                    strokeWidth = if (index == activeSplitIndex) 4.5.dp.toPx() else 2.5.dp.toPx()
-                )
-            }
-            // トリム範囲より手前の区切りは番号を出さない。表示されない文字だから。
-            if (index < firstVisibleSegmentIndex) return@forEachIndexed
-
-            // いま表示中の区間の番号は、実際の区切り位置ではなくトリム開始位置に
-            // 追従させる。そうしないとトリムを動かしても左端に張り付いたままになる
-            val anchorX = if (index == firstVisibleSegmentIndex) startX else splitX + 3.dp.toPx()
-            drawSegmentNumber(
-                measurer = textMeasurer,
-                number = index + 1,
-                anchorX = anchorX,
-                fill = colors.split,
-                label = colors.splitLabel
+    texts.forEachIndexed { index, segment ->
+        val splitX = track.msToX(segment.startMs, durationMs)
+        if (index > 0) {
+            drawLine(
+                color = colors.split,
+                start = Offset(splitX, 0f),
+                end = Offset(splitX, size.height),
+                strokeWidth = if (index == activeSplitIndex) 4.5.dp.toPx() else 2.5.dp.toPx()
             )
         }
-    }
+        // トリム範囲より手前の区切りは番号を出さない。表示されない文字だから。
+        if (index < firstVisibleSegmentIndex) return@forEachIndexed
 
-    // --- 再生ヘッド。上端の丸で「つまんで動かせる」ことを示す ---
-    if (positionMs in startMs..endMs) {
-        val playheadX = track.msToX(positionMs, durationMs)
-        drawLine(
-            colors.playhead,
-            Offset(playheadX, railHeight),
-            Offset(playheadX, size.height - railHeight),
-            2.dp.toPx()
-        )
-        drawCircle(
-            color = colors.playhead,
-            radius = 4.dp.toPx(),
-            center = Offset(playheadX, railHeight + 4.dp.toPx())
+        // いま表示中の区間の番号は、実際の区切り位置ではなくトリム開始位置に
+        // 追従させる。そうしないとトリムを動かしても左端に張り付いたままになる
+        val anchorX = if (index == firstVisibleSegmentIndex) startX else splitX + 3.dp.toPx()
+        drawSegmentNumber(
+            measurer = textMeasurer,
+            number = index + 1,
+            anchorX = anchorX,
+            fill = colors.split,
+            label = colors.splitLabel
         )
     }
+}
 
-    // --- つまみ ---
-    drawTrimHandle(
-        centerX = startX,
-        halfWidth = handleHalfPx,
-        grown = activeHandle == TrimHandle.Start,
-        fill = colors.handle,
-        grip = colors.grip
-    )
-    drawTrimHandle(
-        centerX = endX,
-        halfWidth = handleHalfPx,
-        grown = activeHandle == TrimHandle.End,
-        fill = colors.handle,
-        grip = colors.grip
-    )
+/** 再生ヘッド。上端の丸で「つまんで動かせる」ことを示す */
+private fun DrawScope.drawPlayhead(playheadX: Float, railHeight: Float, color: Color) {
+    drawLine(color, Offset(playheadX, railHeight), Offset(playheadX, size.height - railHeight), 2.dp.toPx())
+    drawCircle(color = color, radius = 4.dp.toPx(), center = Offset(playheadX, railHeight + 4.dp.toPx()))
 }
 
 /**

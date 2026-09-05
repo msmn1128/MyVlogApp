@@ -102,51 +102,13 @@ suspend fun extractWaveform(
         while (!outputDone) {
             ensureActive()
 
-            // 入力は空きバッファがある間まとめて詰める。待ち時間を0にしているのが要点で、
-            // ここで待つと「1フレームごとにタイムアウトぶん空転」が積み上がり、
-            // 12秒の音声に10秒以上かかってしまう。空きが無ければ即座に出力側へ回る。
-            while (!inputDone) {
-                val inputIndex = codec.dequeueInputBuffer(0)
-                if (inputIndex < 0) break
-
-                val buffer = codec.getInputBuffer(inputIndex)
-                val size = if (buffer == null) -1 else extractor.readSampleData(buffer, 0)
-                if (size < 0) {
-                    codec.queueInputBuffer(
-                        inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                    )
-                    inputDone = true
-                } else {
-                    codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
-                    extractor.advance()
-                }
+            if (!inputDone) {
+                inputDone = feedInput(codec, extractor)
             }
 
-            // 出力はここで1回だけ待つ。デコーダを詰めたあとなので基本すぐ返り、
-            // 空振りのときだけ短く眠る（busy-waitにならない）
-            val outputIndex = codec.dequeueOutputBuffer(info, DECODE_TIMEOUT_US)
-            when {
-                outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    pcmEncoding = codec.outputFormat.pcmEncoding()
-                }
-
-                outputIndex >= 0 -> {
-                    if (info.size > 0) {
-                        val bucket = (info.presentationTimeUs / durationUs * buckets)
-                            .toInt().coerceIn(0, buckets - 1)
-                        codec.getOutputBuffer(outputIndex)?.let { buffer ->
-                            buffer.position(info.offset)
-                            buffer.limit(info.offset + info.size)
-                            accumulate(buffer, pcmEncoding, bucket, sums, counts)
-                        }
-                    }
-                    codec.releaseOutputBuffer(outputIndex, false)
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
-                }
-
-                // INFO_TRY_AGAIN_LATER と非推奨の INFO_OUTPUT_BUFFERS_CHANGED は何もしない
-                else -> Unit
-            }
+            val drained = drainOutput(codec, info, pcmEncoding, buckets, durationUs, sums, counts)
+            pcmEncoding = drained.pcmEncoding
+            outputDone = drained.done
         }
 
         Waveform(normalize(sums, counts), hasAudio = true)
@@ -157,6 +119,71 @@ suspend fun extractWaveform(
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         runCatching { extractor.release() }
+    }
+}
+
+/**
+ * 空いている入力バッファへ、素材から読めるだけまとめて詰める。
+ *
+ * 待ち時間を0にしているのが要点で、ここで待つと「1フレームごとにタイムアウトぶん空転」が
+ * 積み上がり、12秒の音声に10秒以上かかってしまう。空きが無ければ即座に呼び出し元へ返す。
+ *
+ * @return 素材を読み切ってEOS(終端)を送り終えたら true
+ */
+private fun feedInput(codec: MediaCodec, extractor: MediaExtractor): Boolean {
+    while (true) {
+        val inputIndex = codec.dequeueInputBuffer(0)
+        if (inputIndex < 0) return false
+
+        val buffer = codec.getInputBuffer(inputIndex)
+        val size = if (buffer == null) -1 else extractor.readSampleData(buffer, 0)
+        if (size < 0) {
+            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            return true
+        }
+        codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
+        extractor.advance()
+    }
+}
+
+/** [drainOutput] の結果。pcmEncodingはINFO_OUTPUT_FORMAT_CHANGED時だけ更新される */
+private data class DrainResult(val pcmEncoding: Int, val done: Boolean)
+
+/**
+ * 出力バッファを1回だけ待って処理する。
+ * デコーダを詰めたあとなので基本すぐ返り、空振りのときだけ[DECODE_TIMEOUT_US]だけ
+ * 短く眠る（busy-waitにならない）。
+ */
+private fun drainOutput(
+    codec: MediaCodec,
+    info: MediaCodec.BufferInfo,
+    pcmEncoding: Int,
+    buckets: Int,
+    durationUs: Double,
+    sums: DoubleArray,
+    counts: IntArray
+): DrainResult {
+    val outputIndex = codec.dequeueOutputBuffer(info, DECODE_TIMEOUT_US)
+    return when {
+        outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
+            DrainResult(codec.outputFormat.pcmEncoding(), done = false)
+
+        outputIndex >= 0 -> {
+            if (info.size > 0) {
+                val bucket = (info.presentationTimeUs / durationUs * buckets)
+                    .toInt().coerceIn(0, buckets - 1)
+                codec.getOutputBuffer(outputIndex)?.let { buffer ->
+                    buffer.position(info.offset)
+                    buffer.limit(info.offset + info.size)
+                    accumulate(buffer, pcmEncoding, bucket, sums, counts)
+                }
+            }
+            codec.releaseOutputBuffer(outputIndex, false)
+            DrainResult(pcmEncoding, done = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0)
+        }
+
+        // INFO_TRY_AGAIN_LATER と非推奨の INFO_OUTPUT_BUFFERS_CHANGED は何もしない
+        else -> DrainResult(pcmEncoding, done = false)
     }
 }
 
