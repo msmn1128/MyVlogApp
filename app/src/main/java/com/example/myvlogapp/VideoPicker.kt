@@ -1,13 +1,8 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
-import android.Manifest
-import android.content.ContentUris
-import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
-import android.provider.MediaStore
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,7 +28,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,89 +38,10 @@ import kotlinx.coroutines.withContext
  * プロセスの生存中しか有効でなく、アプリを閉じると編集の続きを復元できないため。
  * READ_MEDIA_VIDEO を取ってMediaStoreのURIを直接扱えば、動画をコピーしなくても
  * 次回起動時にそのまま読み込める。
- */
-
-/** ギャラリー内の動画1件 */
-data class GalleryVideo(
-    val uri: Uri,
-    val name: String,
-    val durationMs: Long
-)
-
-/** この端末で動画一覧に必要な権限。Android 14以降は「選択した項目のみ」も含む */
-val mediaPermissions: Array<String> = when {
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
-        Manifest.permission.READ_MEDIA_VIDEO,
-        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-    )
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
-        arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-    else ->
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-}
-
-/**
- * 動画を一覧できる状態か。
  *
- * 「選択した項目のみ許可」の場合は READ_MEDIA_VIDEO が拒否のままになるため、
- * どれか1つでも許可されていれば一覧できると判断する。
+ * 権限判定は MediaAccess.kt、MediaStoreへの問い合わせは GalleryRepository.kt に
+ * 分離してあり、このファイルにはCompose UIだけが残る。
  */
-fun hasMediaAccess(context: Context): Boolean = mediaPermissions.any {
-    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-}
-
-/**
- * 「選択した項目のみ許可」の状態か（Android 14以降）。
- *
- * この状態では一部の動画しか一覧に出ないため、対象を選び直す導線が必要になる。
- * 権限をもう一度リクエストすると、システムの選択画面が再表示される。
- */
-fun hasPartialMediaAccess(context: Context): Boolean =
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-            ) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.READ_MEDIA_VIDEO
-            ) != PackageManager.PERMISSION_GRANTED
-
-/** 端末内の動画を新しい順に取得する */
-suspend fun queryGalleryVideos(context: Context): List<GalleryVideo> =
-    withContext(Dispatchers.IO) {
-        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        } else {
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
-        val projection = arrayOf(
-            MediaStore.Video.Media._ID,
-            MediaStore.Video.Media.DISPLAY_NAME,
-            MediaStore.Video.Media.DURATION
-        )
-
-        runCatching {
-            context.contentResolver.query(
-                collection, projection, null, null,
-                "${MediaStore.Video.Media.DATE_ADDED} DESC"
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
-                buildList {
-                    while (cursor.moveToNext()) {
-                        val id = cursor.getLong(idColumn)
-                        add(
-                            GalleryVideo(
-                                uri = ContentUris.withAppendedId(collection, id),
-                                name = cursor.getString(nameColumn).orEmpty(),
-                                durationMs = cursor.getLong(durationColumn)
-                            )
-                        )
-                    }
-                }
-            }.orEmpty()
-        }.getOrDefault(emptyList())
-    }
 
 /**
  * サムネイル。1件ずつ非同期に読み込む。
@@ -177,92 +93,124 @@ fun GalleryPickerDialog(
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("動画を選ぶ", style = MaterialTheme.typography.titleMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // MediaStoreに出てこない場所（Downloadなど）の動画はこちらから
-                        TextButton(
-                            onClick = onUseFilePicker,
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) { Text("ファイル", fontSize = 13.sp) }
-                    }
-                }
+                GalleryPickerHeader(onUseFilePicker = onUseFilePicker)
 
                 // 一部の動画だけ許可している場合は、対象を選び直せるようにする
                 if (isPartial) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "許可した動画のみ表示中",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        TextButton(
-                            onClick = onChangeSelection,
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) { Text("選択を変更", fontSize = 13.sp) }
-                    }
+                    PartialAccessBanner(onChangeSelection = onChangeSelection)
                 }
 
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    val list = videos
-                    when {
-                        list == null -> CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-
-                        list.isEmpty() -> Text(
-                            "動画が見つかりませんでした",
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-
-                        else -> LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 104.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(list, key = { it.uri.toString() }) { video ->
-                                val index = selected.indexOf(video.uri)
-                                VideoTile(
-                                    video = video,
-                                    selectionOrder = if (index >= 0) index + 1 else null,
-                                    onClick = {
-                                        if (index >= 0) selected.removeAt(index)
-                                        else selected.add(video.uri)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
+                VideoGrid(
+                    videos = videos,
+                    selected = selected,
+                    modifier = Modifier.fillMaxWidth().weight(1f)
+                )
 
                 Spacer(Modifier.height(8.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                        Text("キャンセル")
-                    }
-                    Button(
-                        onClick = { onPick(selected.toList()) },
-                        enabled = selected.isNotEmpty(),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(if (selected.isEmpty()) "追加" else "${selected.size} 件を追加")
-                    }
+                GalleryPickerFooter(
+                    selectedCount = selected.size,
+                    onDismiss = onDismiss,
+                    onPick = { onPick(selected.toList()) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GalleryPickerHeader(onUseFilePicker: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("動画を選ぶ", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // MediaStoreに出てこない場所（Downloadなど）の動画はこちらから
+            TextButton(
+                onClick = onUseFilePicker,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) { Text("ファイル", fontSize = 13.sp) }
+        }
+    }
+}
+
+@Composable
+private fun PartialAccessBanner(onChangeSelection: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "許可した動画のみ表示中",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(
+            onClick = onChangeSelection,
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) { Text("選択を変更", fontSize = 13.sp) }
+    }
+}
+
+@Composable
+private fun VideoGrid(
+    videos: List<GalleryVideo>?,
+    selected: SnapshotStateList<Uri>,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        when {
+            videos == null -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+
+            videos.isEmpty() -> Text(
+                "動画が見つかりませんでした",
+                modifier = Modifier.align(Alignment.Center)
+            )
+
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 104.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(videos, key = { it.uri.toString() }) { video ->
+                    val index = selected.indexOf(video.uri)
+                    VideoTile(
+                        video = video,
+                        selectionOrder = if (index >= 0) index + 1 else null,
+                        onClick = {
+                            if (index >= 0) selected.removeAt(index)
+                            else selected.add(video.uri)
+                        }
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GalleryPickerFooter(
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onPick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+            Text("キャンセル")
+        }
+        Button(
+            onClick = onPick,
+            enabled = selectedCount > 0,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(if (selectedCount == 0) "追加" else "$selectedCount 件を追加")
         }
     }
 }
