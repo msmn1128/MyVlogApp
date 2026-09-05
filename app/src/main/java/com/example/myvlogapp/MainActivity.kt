@@ -64,6 +64,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -796,17 +798,10 @@ private fun TimelinePane(
                                     // ひとことを分割してあるクリップは、区間の数を出す。
                                     // タイルを見ただけで「途中で文字が変わる」と分かる
                                     if (clip.texts.size > 1) {
-                                        Text(
+                                        SegmentBadge(
                                             "1-${clip.texts.size}",
                                             fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = onSplitMarkerColor(),
-                                            modifier = Modifier
-                                                .background(
-                                                    splitMarkerColor(),
-                                                    RoundedCornerShape(50)
-                                                )
-                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                            horizontalPadding = 4.dp
                                         )
                                     }
                                 }
@@ -1007,7 +1002,7 @@ private fun WaveformTrimmer(
                     var scrubbing = false
                     try {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        val track = trackMetrics(size.width.toFloat(), handleHalfPx)
+                        val track = TrackMetrics.forWidth(size.width.toFloat(), handleHalfPx)
                         val startX = track.msToX(latestStart, latestDuration)
                         val endX = track.msToX(latestEnd, latestDuration)
 
@@ -1149,7 +1144,7 @@ private fun WaveformTrimmer(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (durationMs <= 0L) return@Canvas
-            val track = trackMetrics(size.width, handleHalfPx)
+            val track = TrackMetrics.forWidth(size.width, handleHalfPx)
             val startX = track.msToX(startMs, durationMs)
             val endX = track.msToX(endMs, durationMs)
             val centerY = size.height / 2f
@@ -1353,6 +1348,28 @@ private fun NoteText(text: String) {
 }
 
 /**
+ * 分割済みの区間を示す紫のバッジ。
+ * タイムラインのクリップタイル（"1-3"のような区間数）と、
+ * 「ひとこと」入力欄（"2"のような編集中の区間番号）の2箇所で共通の見た目を使う。
+ */
+@Composable
+private fun SegmentBadge(
+    text: String,
+    fontSize: TextUnit,
+    horizontalPadding: Dp
+) {
+    Text(
+        text,
+        fontSize = fontSize,
+        fontWeight = FontWeight.Bold,
+        color = onSplitMarkerColor(),
+        modifier = Modifier
+            .background(splitMarkerColor(), RoundedCornerShape(50))
+            .padding(horizontal = horizontalPadding, vertical = 1.dp)
+    )
+}
+
+/**
  * つまみの中心を置ける範囲。
  * 左右をつまみの半分ぶん内側にしてあるので、0%・100%でも端が切れない。
  */
@@ -1364,10 +1381,13 @@ private class TrackMetrics(val left: Float, val right: Float) {
 
     fun xToMs(x: Float, durationMs: Long): Long =
         (((x - left) / width) * durationMs).toLong().coerceIn(0L, durationMs)
-}
 
-private fun trackMetrics(totalWidth: Float, handleHalfPx: Float) =
-    TrackMetrics(handleHalfPx, (totalWidth - handleHalfPx).coerceAtLeast(handleHalfPx + 1f))
+    companion object {
+        /** つまみの半径ぶん内側に縮めたトラック範囲を作る（左右0%・100%でもつまみが切れないように） */
+        fun forWidth(totalWidth: Float, handleHalfPx: Float) =
+            TrackMetrics(handleHalfPx, (totalWidth - handleHalfPx).coerceAtLeast(handleHalfPx + 1f))
+    }
+}
 
 /** [awaitSlopOrRelease] の結果。長押し（動かさず時間切れ）はこれとは別に呼び出し側で判定する */
 private sealed interface DragOutcome {
@@ -1462,6 +1482,36 @@ private fun TimelineDivider() {
 }
 
 /**
+ * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
+ * 中身（アイコンと色）はTimelineIconButton/TimelineToggleButtonそれぞれに任せる。
+ */
+@Composable
+private fun ToolbarButtonBox(
+    background: Color,
+    role: Role,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    Box(
+        modifier = modifier
+            .size(TOOLBAR_BUTTON_SIZE)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(
+                enabled = enabled,
+                role = role,
+                onClickLabel = contentDescription,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+/**
  * 操作バー用の小さめアイコンボタン。
  *
  * IconButtonは48dp固定で、6個並べると横幅の狭い端末で見出しごと押し出されてしまう。
@@ -1475,17 +1525,13 @@ private fun TimelineIconButton(
     modifier: Modifier = Modifier,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
-    Box(
+    ToolbarButtonBox(
+        background = Color.Transparent,
+        role = Role.Button,
+        contentDescription = contentDescription,
+        enabled = enabled,
+        onClick = onClick,
         modifier = modifier
-            .size(TOOLBAR_BUTTON_SIZE)
-            .clip(CircleShape)
-            .clickable(
-                enabled = enabled,
-                role = Role.Button,
-                onClickLabel = contentDescription,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
@@ -1512,21 +1558,14 @@ private fun TimelineToggleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    ToolbarButtonBox(
+        background = if (checked && enabled) MaterialTheme.colorScheme.primaryContainer
+        else Color.Transparent,
+        role = Role.Switch,
+        contentDescription = contentDescription,
+        enabled = enabled,
+        onClick = onClick,
         modifier = modifier
-            .size(TOOLBAR_BUTTON_SIZE)
-            .clip(CircleShape)
-            .background(
-                if (checked && enabled) MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent
-            )
-            .clickable(
-                enabled = enabled,
-                role = Role.Switch,
-                onClickLabel = contentDescription,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
@@ -1565,24 +1604,15 @@ private fun SaveLoadDialog(
 
     // 削除だけは「もとに戻す」で戻せないので確認を挟む
     pendingDelete?.let { target ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            icon = { Icon(VlogIcons.Delete, contentDescription = null) },
-            title = { Text("削除しますか") },
-            text = { Text("「${target.name}」を削除します。元には戻せません。") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDelete(target.id)
-                        pendingDelete = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("削除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("キャンセル") }
+        DestructiveConfirmDialog(
+            icon = VlogIcons.Delete,
+            title = "削除しますか",
+            message = "「${target.name}」を削除します。元には戻せません。",
+            confirmLabel = "削除",
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                onDelete(target.id)
+                pendingDelete = null
             }
         )
     }
@@ -1694,18 +1724,41 @@ private fun RemoveAllDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    DestructiveConfirmDialog(
+        icon = VlogIcons.DeleteSweep,
+        title = "すべて削除しますか",
+        message = "タイムラインの動画をすべて外します。「もとに戻す」で元に戻せます。",
+        confirmLabel = "すべて削除",
+        onDismiss = onDismiss,
+        onConfirm = onConfirm
+    )
+}
+
+/**
+ * 取り消せない操作の確認ダイアログ。
+ * 「削除しますか」（一時保存の削除）と「すべて削除しますか」で見た目が同じだったのを共通化。
+ */
+@Composable
+private fun DestructiveConfirmDialog(
+    icon: ImageVector,
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(VlogIcons.DeleteSweep, contentDescription = null) },
-        title = { Text("すべて削除しますか") },
-        text = { Text("タイムラインの動画をすべて外します。「もとに戻す」で元に戻せます。") },
+        icon = { Icon(icon, contentDescription = null) },
+        title = { Text(title) },
+        text = { Text(message) },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
                 )
-            ) { Text("すべて削除") }
+            ) { Text(confirmLabel) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("キャンセル") }
@@ -1740,15 +1793,7 @@ private fun EditorPane(
                 Text("ひとこと", style = MaterialTheme.typography.titleMedium)
                 // 分割しているときだけ、いま何番目を触っているのかを出す
                 if (segmentCount > 1) {
-                    Text(
-                        "$segmentNumber",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = onSplitMarkerColor(),
-                        modifier = Modifier
-                            .background(splitMarkerColor(), RoundedCornerShape(50))
-                            .padding(horizontal = 6.dp, vertical = 1.dp)
-                    )
+                    SegmentBadge("$segmentNumber", fontSize = 11.sp, horizontalPadding = 6.dp)
                     Text(
                         "／$segmentCount 区間目を編集中",
                         fontSize = 11.sp,
