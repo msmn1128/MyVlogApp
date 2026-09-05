@@ -14,6 +14,7 @@ import android.provider.MediaStore
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
+import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -26,6 +27,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
+import kotlin.math.roundToLong
 
 class VlogExportException(message: String) : Exception(message)
 
@@ -52,6 +54,39 @@ object VlogExporter {
      */
     private const val MAX_EXPORT_CLIPS = 50
 
+    // --- タイトルカードのフェード -------------------------------------------------------
+    // buildTitleFilterのalpha式で使う。nは0始まりのフレーム番号。
+
+    /** フェードアウトを開始するフレーム番号(0始まり) */
+    private const val FADE_START_FRAME = 30
+
+    /** フェードアウトにかけるフレーム数 */
+    private const val FADE_FRAME_COUNT = 20
+
+    // --- 音声フォーマット -----------------------------------------------------------------
+    // 無音クリップの補完(anullsrc)と実際のエンコード出力(-ar/-ac/-b:a)の両方でこの値を使う。
+    // 片方だけ変えると無音クリップだけサンプルレートが食い違うため、必ずここを経由する。
+
+    private const val AUDIO_SAMPLE_RATE = 44100
+    private const val AUDIO_CHANNEL_LAYOUT = "stereo" // anullsrcの cl= 用
+    private const val AUDIO_CHANNELS = 2              // -ac 用
+    private const val AUDIO_BITRATE = "128k"
+
+    /** h264_mediacodec（ハードウェアエンコーダ）使用時のビットレート */
+    private const val MEDIACODEC_BITRATE = "5M"
+
+    /** ギャラリー保存先のサブフォルダ名(Movies/以下)。孤児ファイル掃除の検索条件とも一致させる */
+    private const val OUTPUT_SUBDIRECTORY = "MyVlogApp"
+
+    private const val FONT_ASSET_DIR = "fonts"
+    private const val SFX_ASSET_DIR = "sfx"
+
+    private const val LOG_CHUNK_SIZE = 3000
+    private const val ERROR_SNIPPET_MAX_CHARS = 400
+    private const val ERROR_HIT_LINE_LIMIT = 3
+
+    private const val COPY_BUFFER_SIZE = 64 * 1024
+
     /**
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
@@ -77,8 +112,10 @@ object VlogExporter {
 
         try {
             requireDrawtext()
-            val titleFont = copyFontAsset(context, TITLE_FONT_ASSET)
-            val timeFont = copyFontAsset(context, TIME_FONT_ASSET)
+            val fonts = ExportFonts(
+                logoType = copyFontAsset(context, TITLE_FONT_ASSET),
+                time = copyFontAsset(context, TIME_FONT_ASSET)
+            )
             val titleSfx = copySfxAsset(context, TITLE_SFX_ASSET)
 
             onProgress("書き出し中...")
@@ -103,87 +140,21 @@ object VlogExporter {
             val inputs = arrayOf("-i", titleSfx.absolutePath) +
                     safInputs.flatMap { listOf("-i", it) }.toTypedArray()
 
-            val graph = mutableListOf<String>()
-
-            // --- タイトルカード（黒背景 / 2秒 / 31〜50フレーム目でフェードアウト /
-            //     TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
-            graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
-                    ":d=${secondsArg(TITLE_DURATION_MS)}[vtitlesrc]"
-            graph += "[vtitlesrc]${buildTitleFilter(firstDate, titleFont, timeFont)}[vtitle]"
-            // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
-            // 「動画(2秒)の方が短いから-shortestで自動的に切られるはず」と考えて頼ると、
-            // 実機では音声側が先に何時間ぶんもの無音を吐き出そうとして書き出しが
-            // 実質ハングする。atrimでタイトルの尺ぴったりに強制的に切ることで、
-            // -shortestに頼らず必ず有限時間で終わるようにする。
-            graph += "[0:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
-                    "atrim=0:${secondsArg(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[atitle]"
-
-            // --- 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
-            clips.forEachIndexed { index, clip ->
-                coroutineContext.ensureActive()
-                val inputIndex = index + 1
-                val startSec = secondsArg(clip.startMs)
-                val endSec = secondsArg(clip.startMs + clip.trimmedDurationMs)
-
-                // drawtextのtext_alignはFFmpeg 7.0以降の機能で、このビルド(6.x)には無い。
-                // 複数行を中央揃えにするため、1行につき1つのdrawtextとして描く。
-                // textfile経由なのは、改行やコロン・カンマを含んでも構文が壊れないため。
-                //
-                // クリップの途中でひとことを変えている場合は、区間ごとにこの一式を作る。
-                // 動画は切らずに drawtext の enable で出し分けるので、
-                // 分割してもクリップは1本のまま（つなぎ目が生まれない）。
-                val spans = clip.visibleTextSpans().mapIndexed { spanIndex, span ->
-                    val lineFiles = span.text.split("\n").mapIndexed { lineIndex, line ->
-                        // 空行にdrawtextを掛けるとエラーになるので、位置だけ確保して描かない
-                        if (line.isBlank()) null
-                        else File(workDir, "text_${id}_${index}_${spanIndex}_$lineIndex.txt")
-                            .apply { writeText(line.escapePercentExpansion(), Charsets.UTF_8) }
-                    }
-                    textFiles += lineFiles.filterNotNull()
-                    span to lineFiles
-                }
-
-                // trimのみ（setpts無し）だと、切り出し後もtが素材の絶対時刻のまま
-                // drawtextに渡る。区間出し分けのenable式(buildClipFilter内)がこの
-                // 絶対時刻を前提にしているため、setpts=PTS-STARTPTSは全フィルタの
-                // 最後（concatへ渡す直前）で1回だけ行う。
-                graph += "[$inputIndex:v]trim=start=$startSec:end=$endSec," +
-                        "${buildClipFilter(spans, clip, titleFont, timeFont)}," +
-                        "setpts=PTS-STARTPTS[v$index]"
-
-                // concatは各セグメントの音声ストリームを明示参照するため、
-                // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
-                graph += if (hasAudioTrack(context, clip.uri)) {
-                    "[$inputIndex:a]atrim=start=$startSec:end=$endSec,asetpts=PTS-STARTPTS[a$index]"
-                } else {
-                    "anullsrc=r=44100:cl=stereo:d=${secondsArg(clip.trimmedDurationMs)}[a$index]"
-                }
-            }
-
-            // --- 結合 ---
-            // 30fps CFRへの変換は、クリップ個別ではなく結合後の連続した映像に対して
-            // 1回だけかける。素材の実フレームレートのばらつきによる複製フレームが
-            // 全体に薄く分散され、特定の継ぎ目に集中しなくなる。
-            val segmentLabels = buildString {
-                append("[vtitle][atitle]")
-                clips.indices.forEach { append("[v$it][a$it]") }
-            }
-            graph += "${segmentLabels}concat=n=${clips.size + 1}:v=1:a=1[vraw][aout]"
-            graph += "[vraw]fps=$CANVAS_FPS[vout]"
-
+            val filterGraph = buildFilterGraph(
+                context, clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles
+            )
             val totalDurationMs = TITLE_DURATION_MS + clips.sumOf { it.trimmedDurationMs }
 
             runFFmpegWithProgress(
                 arrayOf(
                     *inputs,
-                    "-filter_complex", graph.joinToString(";"),
+                    "-filter_complex", filterGraph,
                     "-map", "[vout]", "-map", "[aout]",
                     // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
-                    *videoEncodeArgs(forceFps = false),
+                    *videoEncodeArgs(),
                     "-y", mergedFile.absolutePath
                 ),
                 totalDurationMs,
-                "書き出しに失敗しました",
                 onProgress
             )
 
@@ -203,7 +174,7 @@ object VlogExporter {
      * 前回起動時に書き出し中に強制終了（OSによるプロセス回収、強制停止、
      * クラッシュ等）した場合、保存処理の途中でIS_PENDINGのまま更新されない
      * 壊れた動画がMediaStoreに残ることがある。次回起動時に自分のフォルダ
-     * （Movies/MyVlogApp）配下だけを見て、それを消す。
+     * （Movies/[OUTPUT_SUBDIRECTORY]）配下だけを見て、それを消す。
      *
      * IS_PENDINGなアイテムは自分のアプリ以外からは検索できない仕組み
      * （スコープドストレージ）なので、他アプリの保存中ファイルを誤って
@@ -227,7 +198,7 @@ object VlogExporter {
             )
             putStringArray(
                 ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
-                arrayOf("${Environment.DIRECTORY_MOVIES}/MyVlogApp%")
+                arrayOf("${Environment.DIRECTORY_MOVIES}/$OUTPUT_SUBDIRECTORY%")
             )
             putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
         }
@@ -281,7 +252,9 @@ object VlogExporter {
             // 端末のハードウェアエンコーダ。libx264が無いビルドでの代替。
             // ビットレート指定が無いと極端に低品質になるため明示する。
             encoders.contains("h264_mediacodec") ->
-                Capabilities("h264_mediacodec", listOf("-b:v", "5M"), filters.contains("drawtext"))
+                Capabilities(
+                    "h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), filters.contains("drawtext")
+                )
 
             // 最後の手段。mp4に入るが圧縮効率は落ちる。
             else ->
@@ -298,19 +271,16 @@ object VlogExporter {
     /**
      * 映像エンコード用の共通引数。
      *
-     * @param forceFps 30fps CFRに強制するか。クリップ個別エンコード時にこれをtrueにすると、
-     *   素材の実フレームレートが30fpsよりわずかに低い場合（スマホ撮影では珍しくない）、
-     *   帳尻合わせの複製フレームがクリップ末尾（＝つなぎ目）に集中してしまい、継ぎ目で
-     *   一瞬止まって見える原因になる。クリップ単体では素材本来のタイミングのまま書き出し、
-     *   結合後の連続した映像に対して1回だけ30fps変換をかけることで、複製が全体に
-     *   薄く分散されるようにする。
+     * -r（フレームレート強制）を付けないのは、結合後の連続した映像に対して
+     * 呼び出し元がすでに`fps`フィルタでCFR化しているため。クリップ個別に-rを
+     * 掛けていた頃は、素材の実フレームレートとの差分の帳尻合わせがクリップ末尾
+     * （＝つなぎ目）に集中してしまい、継ぎ目で一瞬止まって見える原因になっていた。
      */
-    private fun videoEncodeArgs(forceFps: Boolean = true): Array<String> = arrayOf(
+    private fun videoEncodeArgs(): Array<String> = arrayOf(
         "-c:v", capabilities.videoEncoder,
         *capabilities.extraVideoArgs.toTypedArray(),
         "-pix_fmt", "yuv420p",
-        *(if (forceFps) arrayOf("-r", "$CANVAS_FPS") else emptyArray()),
-        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"
+        "-c:a", "aac", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS", "-b:a", AUDIO_BITRATE
     )
 
     private fun requireDrawtext() {
@@ -323,25 +293,147 @@ object VlogExporter {
     }
 
     // ---------------------------------------------------------------------------------
-    // フィルタ構築
+    // フィルタグラフ構築
     // ---------------------------------------------------------------------------------
+
+    /** タイトルカード・各クリップ両方で使うフォント一式 */
+    private data class ExportFonts(val logoType: File, val time: File)
+
+    /** [VlogClip.visibleTextSpans] 1件と、その各行のテキストファイルの組 */
+    private data class SpanLines(val span: TextSpan, val lineFiles: List<File?>)
+
+    /**
+     * タイトルカード・全クリップ・結合をまとめた1本のfilter_complex文字列を組み立てる。
+     *
+     * @param textFiles 生成した行ごとのテキストファイルをここへ積む（呼び出し元がexport()の
+     *   finallyでまとめて掃除するため）
+     */
+    private suspend fun buildFilterGraph(
+        context: Context,
+        clips: List<VlogClip>,
+        fonts: ExportFonts,
+        firstDate: String,
+        sfxDelayMs: Long,
+        workDir: File,
+        id: Long,
+        textFiles: MutableList<File>
+    ): String {
+        val graph = mutableListOf<String>()
+
+        // --- タイトルカード（黒背景 / TITLE_DURATION_MSぶんの尺 /
+        //     FADE_START_FRAME〜FADE_START_FRAME+FADE_FRAME_COUNT-1フレーム目でフェードアウト /
+        //     TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
+        graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
+                ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[vtitlesrc]"
+        graph += "[vtitlesrc]${buildTitleFilter(firstDate, fonts)}[vtitle]"
+        // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
+        // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と考えて頼ると、
+        // 実機では音声側が先に何時間ぶんもの無音を吐き出そうとして書き出しが
+        // 実質ハングする。atrimでタイトルの尺ぴったりに強制的に切ることで、
+        // -shortestに頼らず必ず有限時間で終わるようにする。
+        graph += "[0:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
+                "atrim=0:${ffmpegSeconds(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[atitle]"
+
+        // --- 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
+        clips.forEachIndexed { index, clip ->
+            coroutineContext.ensureActive()
+            val inputIndex = index + 1
+            val startSec = ffmpegSeconds(clip.startMs)
+            val endSec = ffmpegSeconds(clip.startMs + clip.trimmedDurationMs)
+            val spans = writeSpanTextFiles(workDir, id, index, clip, textFiles)
+
+            // trimのみ（setpts無し）だと、切り出し後もtが素材の絶対時刻のまま
+            // drawtextに渡る。区間出し分けのenable式(buildClipFilter内)がこの
+            // 絶対時刻を前提にしているため、setpts=PTS-STARTPTSは全フィルタの
+            // 最後（concatへ渡す直前）で1回だけ行う。
+            graph += "[$inputIndex:v]${trimFilter(startSec, endSec, audio = false)}," +
+                    "${buildClipFilter(spans, clip, fonts)}," +
+                    "setpts=PTS-STARTPTS[${vTag(index)}]"
+
+            // concatは各セグメントの音声ストリームを明示参照するため、
+            // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
+            graph += if (hasAudioTrack(context, clip.uri)) {
+                "[$inputIndex:a]${trimFilter(startSec, endSec, audio = true)}," +
+                        "asetpts=PTS-STARTPTS[${aTag(index)}]"
+            } else {
+                "anullsrc=r=$AUDIO_SAMPLE_RATE:cl=$AUDIO_CHANNEL_LAYOUT" +
+                        ":d=${ffmpegSeconds(clip.trimmedDurationMs)}[${aTag(index)}]"
+            }
+        }
+
+        // --- 結合 ---
+        // 30fps CFRへの変換は、クリップ個別ではなく結合後の連続した映像に対して
+        // 1回だけかける。素材の実フレームレートのばらつきによる複製フレームが
+        // 全体に薄く分散され、特定の継ぎ目に集中しなくなる。
+        val segmentLabels = buildString {
+            append("[vtitle][atitle]")
+            clips.indices.forEach { append("[${vTag(it)}][${aTag(it)}]") }
+        }
+        graph += "${segmentLabels}concat=n=${clips.size + 1}:v=1:a=1[vraw][aout]"
+        graph += "[vraw]fps=$CANVAS_FPS[vout]"
+
+        return graph.joinToString(";")
+    }
+
+    /** 結合グラフ内での各クリップの映像/音声ラベル名 */
+    private fun vTag(index: Int) = "v$index"
+    private fun aTag(index: Int) = "a$index"
+
+    /** trim/atrimフィルタの文字列。映像と音声で名前が違うだけで形は同じ */
+    private fun trimFilter(startSec: String, endSec: String, audio: Boolean): String {
+        val name = if (audio) "atrim" else "trim"
+        return "$name=start=$startSec:end=$endSec"
+    }
+
+    /**
+     * 1クリップぶんの区間（[VlogClip.visibleTextSpans]）ごとに、行単位のテキストファイルを書き出す。
+     *
+     * drawtextのtext_alignはFFmpeg 7.0以降の機能で、このビルド(6.x)には無い。
+     * 複数行を中央揃えにするため、1行につき1つのdrawtextとして描く。
+     * textfile経由なのは、改行やコロン・カンマを含んでも構文が壊れないため。
+     *
+     * クリップの途中でひとことを変えている場合は、区間ごとにこの一式を作る。
+     * 動画は切らずに drawtext の enable で出し分けるので、
+     * 分割してもクリップは1本のまま（つなぎ目が生まれない）。
+     *
+     * @param textFiles 生成したファイルをここへ積む（呼び出し元が掃除するため）
+     */
+    private fun writeSpanTextFiles(
+        workDir: File,
+        id: Long,
+        clipIndex: Int,
+        clip: VlogClip,
+        textFiles: MutableList<File>
+    ): List<SpanLines> = clip.visibleTextSpans().mapIndexed { spanIndex, span ->
+        val lineFiles = span.text.split("\n").mapIndexed { lineIndex, line ->
+            // 空行にdrawtextを掛けるとエラーになるので、位置だけ確保して描かない
+            if (line.isBlank()) null
+            else File(workDir, "text_${id}_${clipIndex}_${spanIndex}_$lineIndex.txt")
+                .apply { writeText(line.escapePercentExpansion(), Charsets.UTF_8) }
+        }
+        textFiles += lineFiles.filterNotNull()
+        SpanLines(span, lineFiles)
+    }
 
     /**
      * タイトルカードのフィルタ。
-     * - 「Vlog.」 ロゴタイプゴシック 120pt、中央やや上
-     * - 日付 "yyyy/MM/dd" MPLUSU 50pt、中央やや下
-     * - 31〜50フレーム目でフェードアウト（nは0始まりなので n=30〜49）
+     * - 「Vlog.」 [fonts].logoType、[TITLE_FONT_PT]、中央やや上
+     * - 日付 "yyyy/MM/dd" [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下
+     * - [FADE_START_FRAME]フレーム目からフェードアウト開始（nは0始まり）
      *
      * alpha式はシングルクォートで囲まれているため、内部のカンマを
      * バックスラッシュでエスケープしてはいけない（数式が壊れる）。
      */
-    private fun buildTitleFilter(dateText: String, titleFont: File, dateFont: File): String {
-        val alpha = "if(lt(n,30),1,if(between(n,30,49),1-(n-29)/20,0))"
+    private fun buildTitleFilter(dateText: String, fonts: ExportFonts): String {
+        val fadeEndFrame = FADE_START_FRAME + FADE_FRAME_COUNT - 1
+        val alpha = "if(lt(n,$FADE_START_FRAME),1," +
+                "if(between(n,$FADE_START_FRAME,$fadeEndFrame)," +
+                "1-(n-${FADE_START_FRAME - 1})/$FADE_FRAME_COUNT,0))"
         return listOf(
-            "drawtext=fontfile='${titleFont.absolutePath}':text='Vlog.'" +
+            "drawtext=fontfile='${fonts.logoType.absolutePath}':text='Vlog.'" +
                     ":fontsize=${TITLE_FONT_PT.toInt()}:fontcolor=white" +
                     ":x=(w-text_w)/2:y=${centeredY(TITLE_Y_OFFSET_PT)}:alpha='$alpha'",
-            "drawtext=fontfile='${dateFont.absolutePath}':text='${escapeForDrawtext(dateText)}'" +
+            "drawtext=fontfile='${fonts.time.absolutePath}':text='${escapeForDrawtext(dateText)}'" +
                     ":fontsize=${TITLE_DATE_FONT_PT.toInt()}:fontcolor=white" +
                     ":x=(w-text_w)/2:y=${centeredY(TITLE_DATE_Y_OFFSET_PT)}:alpha='$alpha'"
         ).joinToString(",")
@@ -350,10 +442,10 @@ object VlogExporter {
     /**
      * 1クリップのフィルタ。
      * - 1920x1080キャンバスに歪みなしで配置（余白は黒帯）、30fps
-     * - ひとこと：ロゴタイプゴシック 60pt、上下左右中央
+     * - ひとこと：[fonts].logoType、[HITOKOTO_FONT_PT]、上下左右中央
      *   1行につき1つのdrawtextを積む（このFFmpegビルドにはtext_alignが無いため、
      *   1つのdrawtextに複数行を渡すと左揃えになってしまう）
-     * - 撮影時刻：MPLUSU 50pt、映像が実際に映っている領域の右端に配置
+     * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、映像が実際に映っている領域の右端に配置
      *
      * 縦動画を横長キャンバスに収めると左右に大きな黒帯ができるため、
      * キャンバス右端を基準にすると時刻が黒帯の中に浮いてしまう。
@@ -363,10 +455,9 @@ object VlogExporter {
      *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
      */
     private fun buildClipFilter(
-        spans: List<Pair<TextSpan, List<File?>>>,
+        spans: List<SpanLines>,
         clip: VlogClip,
-        hitokotoFont: File,
-        timeFont: File
+        fonts: ExportFonts
     ): String {
         val scale = minOf(
             CANVAS_WIDTH.toDouble() / clip.width,
@@ -391,12 +482,12 @@ object VlogExporter {
                 // 重なるとその1フレームだけ前後の文字が二重に焼き付いてしまう。
                 val isLast = spanIndex == spans.lastIndex
                 val to = (span.endMs - if (isLast) 0L else 1L).coerceAtLeast(from)
-                ":enable='between(t,${secondsArg(from)},${secondsArg(to)})'"
+                ":enable='between(t,${ffmpegSeconds(from)},${ffmpegSeconds(to)})'"
             }
             lineFiles.mapIndexedNotNull { lineIndex, file ->
                 if (file == null) return@mapIndexedNotNull null
                 val offset = (lineIndex - (lineFiles.size - 1) / 2.0) * lineHeight
-                "drawtext=fontfile='${hitokotoFont.absolutePath}'" +
+                "drawtext=fontfile='${fonts.logoType.absolutePath}'" +
                         ":textfile='${file.absolutePath}'" +
                         ":fontsize=${HITOKOTO_FONT_PT.toInt()}:fontcolor=white" +
                         ":x=(w-text_w)/2:y=${centeredY(offset.toFloat())}$enable"
@@ -408,7 +499,7 @@ object VlogExporter {
             add("pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black")
             addAll(hitokotoLayers)
             add(
-                "drawtext=fontfile='${timeFont.absolutePath}'" +
+                "drawtext=fontfile='${fonts.time.absolutePath}'" +
                         ":text='${escapeForDrawtext(clip.timeText)}'" +
                         ":fontsize=${TIME_FONT_PT.toInt()}:fontcolor=white@0.85" +
                         ":x=$visibleRightEdge-text_w-${TIME_MARGIN_PT.toInt()}:y=(h-text_h)/2"
@@ -424,9 +515,9 @@ object VlogExporter {
     private fun centeredY(offsetPt: Float): String {
         val offset = offsetPt.toInt()
         return when {
+            offset == 0 -> "(h-text_h)/2"
             offset > 0 -> "(h-text_h)/2+$offset"
-            offset < 0 -> "(h-text_h)/2-${-offset}"
-            else -> "(h-text_h)/2"
+            else -> "(h-text_h)/2-${-offset}"
         }
     }
 
@@ -456,6 +547,7 @@ object VlogExporter {
                     ?.startsWith("audio/") == true
             }
         } catch (e: Exception) {
+            Log.w(LOG_TAG, "音声トラックの有無を判定できませんでした（無音として扱います）: $uri", e)
             false
         } finally {
             extractor.release()
@@ -467,11 +559,11 @@ object VlogExporter {
     // ---------------------------------------------------------------------------------
 
     /**
-     * 秒数の引数。
+     * FFmpegに渡す秒数の文字列表現（例: "12.345"）。
      * Double.toString() は小数点にカンマを使うロケールの端末で "1,5" を生成し、
      * FFmpegが解釈できないため、必ず Locale.US 固定で組み立てる。
      */
-    private fun secondsArg(millis: Long): String =
+    private fun ffmpegSeconds(millis: Long): String =
         String.format(Locale.US, "%.3f", millis / 1000.0)
 
     /**
@@ -485,11 +577,10 @@ object VlogExporter {
     private suspend fun runFFmpegWithProgress(
         args: Array<String>,
         totalDurationMs: Long,
-        errorMessage: String,
         onProgress: suspend (String) -> Unit
     ) {
         Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ")}")
-        val completion = CompletableDeferred<com.arthenica.ffmpegkit.FFmpegSession>()
+        val completion = CompletableDeferred<FFmpegSession>()
         val callerContext = coroutineContext
         var lastPercent = -1
 
@@ -515,8 +606,8 @@ object VlogExporter {
             ReturnCode.isCancel(session.returnCode) -> throw VlogExportException("書き出しを中止しました")
             else -> {
                 val log = session.allLogsAsString.orEmpty()
-                logFfmpegOutput(errorMessage, "${session.returnCode}", log)
-                throw VlogExportException("$errorMessage\n${extractReason(log)}")
+                logFfmpegOutput("書き出しに失敗しました", "${session.returnCode}", log)
+                throw VlogExportException("書き出しに失敗しました\n${extractReason(log)}")
             }
         }
     }
@@ -528,23 +619,22 @@ object VlogExporter {
     private fun logFfmpegOutput(errorMessage: String, code: String, log: String) {
         Log.e(LOG_TAG, "$errorMessage / code=$code")
         Log.e(LOG_TAG, "--- FFmpeg出力ここから ---")
-        log.chunked(3000).forEach { Log.e(LOG_TAG, it) }
+        log.chunked(LOG_CHUNK_SIZE).forEach { Log.e(LOG_TAG, it) }
         Log.e(LOG_TAG, "--- FFmpeg出力ここまで ---")
     }
 
     /** FFmpegの出力からエラーらしい行だけ拾ってToastに出す */
     private fun extractReason(log: String): String {
         val keywords = listOf(
-            "Error", "error", "Invalid", "invalid", "No such",
-            "Unable", "Failed", "failed", "Permission denied", "Conversion failed"
+            "error", "invalid", "no such", "unable", "failed", "permission denied", "conversion failed"
         )
         val hits = log.lineSequence()
             .map { it.trim() }
-            .filter { line -> line.isNotEmpty() && keywords.any { line.contains(it) } }
+            .filter { line -> line.isNotEmpty() && keywords.any { line.contains(it, ignoreCase = true) } }
             .distinct()
             .toList()
-        return if (hits.isEmpty()) log.takeLast(400).trim()
-        else hits.takeLast(3).joinToString("\n").take(400)
+        return if (hits.isEmpty()) log.takeLast(ERROR_SNIPPET_MAX_CHARS).trim()
+        else hits.takeLast(ERROR_HIT_LINE_LIMIT).joinToString("\n").take(ERROR_SNIPPET_MAX_CHARS)
     }
 
     /**
@@ -571,10 +661,10 @@ object VlogExporter {
     }
 
     private fun copyFontAsset(context: Context, assetName: String): File =
-        copyAsset(context, "fonts/$assetName", "fonts", assetName)
+        copyAsset(context, "$FONT_ASSET_DIR/$assetName", FONT_ASSET_DIR, assetName)
 
     private fun copySfxAsset(context: Context, assetName: String): File =
-        copyAsset(context, "sfx/$assetName", "sfx", assetName)
+        copyAsset(context, "$SFX_ASSET_DIR/$assetName", SFX_ASSET_DIR, assetName)
 
     /**
      * タイトルカードの効果音を鳴らし始めるタイミング（ミリ秒）。
@@ -583,7 +673,7 @@ object VlogExporter {
      */
     private fun titleSfxDelayMs(): Long {
         val n = (TITLE_SFX_FRAME_NUMBER - 1).coerceAtLeast(0)
-        return Math.round(n * 1000.0 / CANVAS_FPS)
+        return (n * 1000.0 / CANVAS_FPS).roundToLong()
     }
 
     /**
@@ -635,7 +725,7 @@ object VlogExporter {
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         }
 
-    /** 完成した動画をギャラリー（Movies/MyVlogApp）へ保存する */
+    /** 完成した動画をギャラリー（Movies/[OUTPUT_SUBDIRECTORY]）へ保存する */
     private suspend fun saveToGallery(context: Context, source: File, displayName: String): String {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
@@ -644,7 +734,7 @@ object VlogExporter {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(
                     MediaStore.Video.Media.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_MOVIES}/MyVlogApp"
+                    "${Environment.DIRECTORY_MOVIES}/$OUTPUT_SUBDIRECTORY"
                 )
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
@@ -674,7 +764,7 @@ object VlogExporter {
     }
 
     private suspend fun copyCancellably(input: InputStream, output: OutputStream) {
-        val buffer = ByteArray(64 * 1024)
+        val buffer = ByteArray(COPY_BUFFER_SIZE)
         while (true) {
             coroutineContext.ensureActive()
             val read = input.read(buffer)
