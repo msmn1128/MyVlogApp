@@ -259,7 +259,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     LaunchedEffect(Unit) {
         while (true) {
             delay(80)
-            viewModel.tick()
+            viewModel.refreshPlaybackProgress()
         }
     }
 
