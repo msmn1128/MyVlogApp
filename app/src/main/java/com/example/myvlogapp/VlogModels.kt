@@ -175,14 +175,3 @@ data class VideoMeta(
     val width: Int,
     val height: Int
 )
-
-/** 書き出しの進行状態。UIはこれを見るだけでよい */
-sealed interface ExportState {
-    data object Idle : ExportState
-    data class Running(val message: String) : ExportState
-}
-
-/** Toastなど「1回だけ通知したい」イベント */
-sealed interface VlogEvent {
-    data class Message(val text: String) : VlogEvent
-}
