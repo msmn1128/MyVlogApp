@@ -647,96 +647,18 @@ private fun TimelinePane(
                 overflow = TextOverflow.Ellipsis
             )
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val enabled = selectedClip != null && !isExporting
-
-                // 並びは 連続再生 → 入れ替え → もとに戻す → やり直す
-                //        → ひとことを分割 → 削除 → すべて削除
-                TimelineToggleButton(
-                    icon = VlogIcons.Play,
-                    checked = autoAdvance,
-                    contentDescription = if (autoAdvance) {
-                        "連続再生：オン（終わったら次のクリップへ進みます）"
-                    } else {
-                        "連続再生：オフ（クリップの終わりで止まります）"
-                    },
-                    enabled = clips.isNotEmpty() && !isExporting,
-                    onClick = { viewModel.setAutoAdvance(!autoAdvance) }
-                )
-
-                TimelineDivider()
-
-                TimelineIconButton(
-                    icon = VlogIcons.MoveLeft,
-                    contentDescription = "ひとつ前へ移動",
-                    enabled = enabled && selectedIndex > 0,
-                    onClick = { viewModel.moveSelected(-1) }
-                )
-                TimelineIconButton(
-                    icon = VlogIcons.MoveRight,
-                    contentDescription = "ひとつ後ろへ移動",
-                    enabled = enabled && selectedIndex < clips.lastIndex,
-                    onClick = { viewModel.moveSelected(1) }
-                )
-
-                TimelineDivider()
-
-                TimelineIconButton(
-                    icon = VlogIcons.Undo,
-                    contentDescription = "もとに戻す",
-                    enabled = canUndo && !isExporting,
-                    onClick = viewModel::undo
-                )
-                TimelineIconButton(
-                    icon = VlogIcons.Redo,
-                    contentDescription = "やり直す",
-                    enabled = canRedo && !isExporting,
-                    onClick = viewModel::redo
-                )
-
-                TimelineDivider()
-
-                // 再生ヘッドが区切りの上にあるときは、同じボタンが解除に変わる。
-                // 区切りを消す手段が「もとに戻す」しか無いと、あとから直せなくなるため。
-                val splitOnPlayhead = selectedClip?.splitPointNear(positionMs)
-                TimelineIconButton(
-                    icon = if (splitOnPlayhead == null) VlogIcons.SplitText
-                    else VlogIcons.SplitTextOff,
-                    contentDescription = if (splitOnPlayhead == null) {
-                        "ここでひとことを分割（動画は切りません）"
-                    } else {
-                        "この区切りを解除"
-                    },
-                    enabled = enabled,
-                    onClick = {
-                        if (splitOnPlayhead == null) viewModel.splitTextAtPlayhead()
-                        else viewModel.removeSplit(splitOnPlayhead)
-                    },
-                    tint = splitMarkerColor()
-                )
-
-                TimelineDivider()
-
-                // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
-                TimelineIconButton(
-                    icon = VlogIcons.Delete,
-                    contentDescription = "選択中のクリップを削除",
-                    enabled = enabled,
-                    onClick = viewModel::removeSelected,
-                    tint = MaterialTheme.colorScheme.error
-                )
-                TimelineIconButton(
-                    icon = VlogIcons.DeleteSweep,
-                    contentDescription = "すべて削除",
-                    enabled = clips.isNotEmpty() && !isExporting,
-                    onClick = { confirmRemoveAll = true },
-                    tint = MaterialTheme.colorScheme.error
-                )
-            }
+            TimelineToolbar(
+                viewModel = viewModel,
+                clips = clips,
+                selectedIndex = selectedIndex,
+                selectedClip = selectedClip,
+                positionMs = positionMs,
+                autoAdvance = autoAdvance,
+                canUndo = canUndo,
+                canRedo = canRedo,
+                isExporting = isExporting,
+                onRequestRemoveAll = { confirmRemoveAll = true }
+            )
 
             if (clips.isEmpty()) {
                 Box(
@@ -755,58 +677,11 @@ private fun TimelinePane(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
-                        val isSelected = index == selectedIndex
-                        Surface(
-                            onClick = { viewModel.select(index) },
-                            // 高さは中身に任せる。固定にすると端末の文字サイズ設定を
-                            // 上げたときに尺の行がタイルからはみ出して切れる
-                            modifier = Modifier.width(104.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerHigh,
-                            // 未選択にも枠を付ける。カードと明度が近く、無地だと
-                            // どこまでが1クリップなのか輪郭が見えないため
-                            border = if (isSelected)
-                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                            else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    clip.timeText,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                // 途中で切り替わる場合も、タイルには頭に出る文字を載せる
-                                Text(
-                                    clip.textAt(clip.startMs).ifBlank { DEFAULT_HITOKOTO },
-                                    fontSize = 11.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    // 時刻を見出しに上げたぶん、ここは尺の表示に使う
-                                    Text(
-                                        formatSeconds(clip.trimmedDurationMs),
-                                        fontSize = 10.sp
-                                    )
-                                    // ひとことを分割してあるクリップは、区間の数を出す。
-                                    // タイルを見ただけで「途中で文字が変わる」と分かる
-                                    if (clip.texts.size > 1) {
-                                        SegmentBadge(
-                                            "1-${clip.texts.size}",
-                                            fontSize = 9.sp,
-                                            horizontalPadding = 4.dp
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        ClipTile(
+                            clip = clip,
+                            isSelected = index == selectedIndex,
+                            onClick = { viewModel.select(index) }
+                        )
                     }
                 }
 
@@ -861,6 +736,173 @@ private fun TimelinePane(
                             color = MaterialTheme.colorScheme.error
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * タイムラインの操作バー。連続再生・入れ替え・もとに戻す/やり直す・
+ * ひとこと分割・削除をまとめて並べる。[TimelinePane] から切り出したもの。
+ */
+@Composable
+private fun TimelineToolbar(
+    viewModel: VlogViewModel,
+    clips: List<VlogClip>,
+    selectedIndex: Int,
+    selectedClip: VlogClip?,
+    positionMs: Long,
+    autoAdvance: Boolean,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    isExporting: Boolean,
+    onRequestRemoveAll: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val enabled = selectedClip != null && !isExporting
+
+        // 並びは 連続再生 → 入れ替え → もとに戻す → やり直す
+        //        → ひとことを分割 → 削除 → すべて削除
+        TimelineToggleButton(
+            icon = VlogIcons.Play,
+            checked = autoAdvance,
+            contentDescription = if (autoAdvance) {
+                "連続再生：オン（終わったら次のクリップへ進みます）"
+            } else {
+                "連続再生：オフ（クリップの終わりで止まります）"
+            },
+            enabled = clips.isNotEmpty() && !isExporting,
+            onClick = { viewModel.setAutoAdvance(!autoAdvance) }
+        )
+
+        TimelineDivider()
+
+        TimelineIconButton(
+            icon = VlogIcons.MoveLeft,
+            contentDescription = "ひとつ前へ移動",
+            enabled = enabled && selectedIndex > 0,
+            onClick = { viewModel.moveSelected(-1) }
+        )
+        TimelineIconButton(
+            icon = VlogIcons.MoveRight,
+            contentDescription = "ひとつ後ろへ移動",
+            enabled = enabled && selectedIndex < clips.lastIndex,
+            onClick = { viewModel.moveSelected(1) }
+        )
+
+        TimelineDivider()
+
+        TimelineIconButton(
+            icon = VlogIcons.Undo,
+            contentDescription = "もとに戻す",
+            enabled = canUndo && !isExporting,
+            onClick = viewModel::undo
+        )
+        TimelineIconButton(
+            icon = VlogIcons.Redo,
+            contentDescription = "やり直す",
+            enabled = canRedo && !isExporting,
+            onClick = viewModel::redo
+        )
+
+        TimelineDivider()
+
+        // 再生ヘッドが区切りの上にあるときは、同じボタンが解除に変わる。
+        // 区切りを消す手段が「もとに戻す」しか無いと、あとから直せなくなるため。
+        val splitOnPlayhead = selectedClip?.splitPointNear(positionMs)
+        TimelineIconButton(
+            icon = if (splitOnPlayhead == null) VlogIcons.SplitText
+            else VlogIcons.SplitTextOff,
+            contentDescription = if (splitOnPlayhead == null) {
+                "ここでひとことを分割（動画は切りません）"
+            } else {
+                "この区切りを解除"
+            },
+            enabled = enabled,
+            onClick = {
+                if (splitOnPlayhead == null) viewModel.splitTextAtPlayhead()
+                else viewModel.removeSplit(splitOnPlayhead)
+            },
+            tint = splitMarkerColor()
+        )
+
+        TimelineDivider()
+
+        // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
+        TimelineIconButton(
+            icon = VlogIcons.Delete,
+            contentDescription = "選択中のクリップを削除",
+            enabled = enabled,
+            onClick = viewModel::removeSelected,
+            tint = MaterialTheme.colorScheme.error
+        )
+        TimelineIconButton(
+            icon = VlogIcons.DeleteSweep,
+            contentDescription = "すべて削除",
+            enabled = clips.isNotEmpty() && !isExporting,
+            onClick = onRequestRemoveAll,
+            tint = MaterialTheme.colorScheme.error
+        )
+    }
+}
+
+/**
+ * タイムラインのクリップ1件ぶんのタイル。[TimelinePane] から切り出したもの。
+ */
+@Composable
+private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        // 高さは中身に任せる。固定にすると端末の文字サイズ設定を
+        // 上げたときに尺の行がタイルからはみ出して切れる
+        modifier = Modifier.width(104.dp),
+        shape = RoundedCornerShape(6.dp),
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        // 未選択にも枠を付ける。カードと明度が近く、無地だと
+        // どこまでが1クリップなのか輪郭が見えないため
+        border = if (isSelected)
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                clip.timeText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            // 途中で切り替わる場合も、タイルには頭に出る文字を載せる
+            Text(
+                clip.textAt(clip.startMs).ifBlank { DEFAULT_HITOKOTO },
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // 時刻を見出しに上げたぶん、ここは尺の表示に使う
+                Text(
+                    formatSeconds(clip.trimmedDurationMs),
+                    fontSize = 10.sp
+                )
+                // ひとことを分割してあるクリップは、区間の数を出す。
+                // タイルを見ただけで「途中で文字が変わる」と分かる
+                if (clip.texts.size > 1) {
+                    SegmentBadge(
+                        "1-${clip.texts.size}",
+                        fontSize = 9.sp,
+                        horizontalPadding = 4.dp
+                    )
                 }
             }
         }
