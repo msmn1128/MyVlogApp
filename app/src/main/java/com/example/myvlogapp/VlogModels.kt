@@ -3,6 +3,7 @@ package com.example.myvlogapp // ← ご自身のパッケージ名に合わせ�
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 
 // =====================================================================================
 // データモデル
@@ -48,10 +49,11 @@ data class VlogClip(
      * 固定値だと「線の上に置いたつもり」でも外れてしまうため。
      */
     fun splitPointNear(positionMs: Long): Long? = splitPoints
-        .minByOrNull { kotlin.math.abs(it - positionMs) }
-        ?.takeIf { kotlin.math.abs(it - positionMs) <= splitToleranceMs() }
+        .minByOrNull { abs(it - positionMs) }
+        ?.takeIf { abs(it - positionMs) <= splitToleranceMs() }
 
-    private fun splitToleranceMs(): Long = (durationMs / 40).coerceIn(200L, 1500L)
+    private fun splitToleranceMs(): Long =
+        (durationMs / SPLIT_TOLERANCE_DIVISOR).coerceIn(SPLIT_TOLERANCE_MIN_MS, SPLIT_TOLERANCE_MAX_MS)
 
     /**
      * トリミング範囲に実際に映るひとことを、区間ごとに切り出す。

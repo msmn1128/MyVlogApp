@@ -61,3 +61,17 @@ const val DEFAULT_HITOKOTO = "ひとこと"
 
 /** これ以上は詰められないひとこと区間の長さ。短すぎる区間は読む前に消えてしまう */
 const val MIN_TEXT_SEGMENT_MS = 400L
+
+/**
+ * 再生位置の監視間隔（ミリ秒）。MainActivity側のポーリングループと
+ * VlogViewModel側のKDocコメントの両方から参照し、値がズレないようにする。
+ */
+const val PLAYBACK_POLL_INTERVAL_MS = 80L
+
+// --- 波形上での「区切り線に近い」判定(VlogClip.splitPointNear) -------------------------
+// 長い動画ほど波形1px当たりの時間が長くなるため、許容幅を尺に比例させて求める。
+// 尺をこの値で割った上で、下限・上限でクランプする。
+
+const val SPLIT_TOLERANCE_DIVISOR = 40
+const val SPLIT_TOLERANCE_MIN_MS = 200L
+const val SPLIT_TOLERANCE_MAX_MS = 1500L

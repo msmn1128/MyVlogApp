@@ -284,13 +284,13 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // repeatOnLifecycleで囲むのは、アプリをバックグラウンドに回しても
     // （BackHandlerでmoveTaskToBackした場合など）この無限ループ自体は
     // Composition生存中ずっと動き続け、上のDisposableEffectが再生こそ止めるものの
-    // 80ms間隔のポーリングは止まらず無駄にCPU/バッテリーを消費していたため。
-    // STARTED未満（バックグラウンド）になると自動的に一時停止し、
+    // PLAYBACK_POLL_INTERVAL_MS間隔のポーリングは止まらず無駄にCPU/バッテリーを
+    // 消費していたため。STARTED未満（バックグラウンド）になると自動的に一時停止し、
     // 前面に戻ると再開する。
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                delay(80)
+                delay(PLAYBACK_POLL_INTERVAL_MS)
                 viewModel.refreshPlaybackProgress()
             }
         }
