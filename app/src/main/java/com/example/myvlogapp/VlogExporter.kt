@@ -78,7 +78,7 @@ object VlogExporter {
     /** ギャラリー保存先のサブフォルダ名(Movies/以下)。孤児ファイル掃除の検索条件とも一致させる */
     private const val OUTPUT_SUBDIRECTORY = "MyVlogApp"
 
-    private const val FONT_ASSET_DIR = "fonts"
+    // FONT_ASSET_DIRはVlogConstants.ktで定義（MainActivity側のプレビュー表示と共有するため）
     private const val SFX_ASSET_DIR = "sfx"
 
     private const val LOG_CHUNK_SIZE = 3000

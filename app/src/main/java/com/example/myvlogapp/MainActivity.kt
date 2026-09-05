@@ -83,9 +83,41 @@ import com.example.myvlogapp.ui.theme.DarkSplitMarker
 import com.example.myvlogapp.ui.theme.LightOnSplitMarker
 import com.example.myvlogapp.ui.theme.LightSplitMarker
 import com.example.myvlogapp.ui.theme.MyVlogAppTheme
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withTimeoutOrNull
+
+// =====================================================================================
+// レイアウト定数
+//
+// 使用箇所より大幅に後ろに埋もれていると見つけにくいため、ファイル先頭に集約する。
+// =====================================================================================
+
+/**
+ * 操作バーのボタン1個の大きさ。
+ * Materialの推奨は48dpだが、ボタンを並べると横幅の狭い端末で行からはみ出してしまう。
+ * アイコン自体は[TOOLBAR_ICON_SIZE]あるので、密なツールバーとしては触れる範囲に収まっている。
+ */
+private val TOOLBAR_BUTTON_SIZE = 32.dp
+
+/** 操作バーのアイコンサイズ */
+private val TOOLBAR_ICON_SIZE = 20.dp
+
+/** セクション間の余白。プレビュー/タイムライン/ひとこと欄の区切りで共通に使う */
+private val SECTION_GAP = 12.dp
+
+/** 波形の高さ。つまみを指で掴める大きさが要るので、表示だけだった頃より厚くしてある */
+private val WAVEFORM_HEIGHT = 76.dp
+
+/** トリミングつまみの幅 */
+private val TRIM_HANDLE_WIDTH = 11.dp
+
+/** つまみを掴んだと判定する距離。指の腹の太さを見込んで広めに取る */
+private val TRIM_GRAB_RADIUS = 30.dp
+
+/** これ以上は詰められない長さ。0にできてしまうと書き出しが通らなくなる */
+private const val MIN_TRIM_MS = 300L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,6 +135,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+/**
+ * assets/[FONT_ASSET_DIR]/ 以下のフォントファイルからFontFamilyを作る。
+ * プレビューにも書き出しと同じフォントを使う（既定フォントのままだと、
+ * サイズを合わせても書き出し結果と別物に見えてしまう）。
+ */
+@Composable
+private fun rememberAssetFontFamily(assetName: String): FontFamily {
+    val context = LocalContext.current
+    return remember(context, assetName) {
+        FontFamily(Font(path = "$FONT_ASSET_DIR/$assetName", assetManager = context.assets))
     }
 }
 
@@ -140,12 +185,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
 
     // プレビューにも書き出しと同じフォントを使う。
     // 既定フォントのままだと、サイズを合わせても書き出し結果と別物に見えてしまう。
-    val hitokotoFontFamily = remember(context) {
-        FontFamily(Font(path = "fonts/$TITLE_FONT_ASSET", assetManager = context.assets))
-    }
-    val timeFontFamily = remember(context) {
-        FontFamily(Font(path = "fonts/$TIME_FONT_ASSET", assetManager = context.assets))
-    }
+    val hitokotoFontFamily = rememberAssetFontFamily(TITLE_FONT_ASSET)
+    val timeFontFamily = rememberAssetFontFamily(TIME_FONT_ASSET)
 
     // 動画の取り込みは自前のギャラリー画面（MediaStore）が主。
     // システムのフォトピッカーを使わないのは、返るURIがプロセスの生存中しか有効でなく、
@@ -303,6 +344,44 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp > configuration.screenHeightDp
 
+    // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。
+    // 以前はPreviewSection/EditSection/TimelinePaneがそれぞれ自分でcollectしていたが、
+    // 同じ値を3箇所で購読しているだけなのでここ1箇所にまとめて引数で渡す。
+    val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
+
+    // isWide(縦画面はColumn直下、横画面はRow>Columnの中)で親構造が変わっても
+    // 中身（PreviewSection/EditSection）は完全に同じなので、呼び出し部分を
+    // ローカルラムダに一本化する。以前は縦横それぞれに引数リストを丸ごと
+    // 書き写しており、片方だけ引数を足し忘れる事故の元だった。
+    val preview: @Composable ColumnScope.(previewWeight: Float) -> Unit = { weight ->
+        PreviewSection(
+            selectedClip = selectedClip,
+            viewModel = viewModel,
+            hitokotoFontFamily = hitokotoFontFamily,
+            timeFontFamily = timeFontFamily,
+            positionMs = positionMs,
+            exportState = exportState,
+            isExporting = isExporting,
+            canExport = clips.isNotEmpty(),
+            previewWeight = weight,
+            onAdd = openGallery,
+            onOpenSaves = { showSaves = true },
+            onExport = onExport
+        )
+    }
+    val edit: @Composable ColumnScope.() -> Unit = {
+        EditSection(
+            viewModel = viewModel,
+            clips = clips,
+            selectedIndex = selectedIndex,
+            selectedClip = selectedClip,
+            positionMs = positionMs,
+            isExporting = isExporting,
+            timelineWeight = timelineWeight,
+            editorWeight = editorWeight
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -315,61 +394,17 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // ── 左ペイン：プレビューと操作ボタン ──────────────────
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    PreviewSection(
-                        selectedClip = selectedClip,
-                        viewModel = viewModel,
-                        hitokotoFontFamily = hitokotoFontFamily,
-                        timeFontFamily = timeFontFamily,
-                        exportState = exportState,
-                        isExporting = isExporting,
-                        canExport = clips.isNotEmpty(),
-                        // 横並びのときはプレビューが左ペインを丸ごと使える
-                        previewWeight = 1f,
-                        onAdd = openGallery,
-                        onOpenSaves = { showSaves = true },
-                        onExport = onExport
-                    )
-                }
+                // 横並びのときはプレビューが左ペインを丸ごと使える(weight=1f)
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) { preview(1f) }
 
                 // ── 右ペイン：タイムラインとひとこと ──────────────────
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    EditSection(
-                        viewModel = viewModel,
-                        clips = clips,
-                        selectedIndex = selectedIndex,
-                        selectedClip = selectedClip,
-                        isExporting = isExporting,
-                        timelineWeight = timelineWeight,
-                        editorWeight = editorWeight
-                    )
-                }
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) { edit() }
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                PreviewSection(
-                    selectedClip = selectedClip,
-                    viewModel = viewModel,
-                    hitokotoFontFamily = hitokotoFontFamily,
-                    timeFontFamily = timeFontFamily,
-                    exportState = exportState,
-                    isExporting = isExporting,
-                    canExport = clips.isNotEmpty(),
-                    previewWeight = previewWeight,
-                    onAdd = openGallery,
-                    onOpenSaves = { showSaves = true },
-                    onExport = onExport
-                )
-                Spacer(Modifier.height(12.dp))
-                EditSection(
-                    viewModel = viewModel,
-                    clips = clips,
-                    selectedIndex = selectedIndex,
-                    selectedClip = selectedClip,
-                    isExporting = isExporting,
-                    timelineWeight = timelineWeight,
-                    editorWeight = editorWeight
-                )
+                preview(previewWeight)
+                Spacer(Modifier.height(SECTION_GAP))
+                edit()
             }
         }
     }
@@ -388,6 +423,7 @@ private fun ColumnScope.PreviewSection(
     viewModel: VlogViewModel,
     hitokotoFontFamily: FontFamily,
     timeFontFamily: FontFamily,
+    positionMs: Long,
     exportState: ExportState,
     isExporting: Boolean,
     canExport: Boolean,
@@ -396,9 +432,6 @@ private fun ColumnScope.PreviewSection(
     onOpenSaves: () -> Unit,
     onExport: () -> Unit
 ) {
-    // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける
-    val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
-
     PreviewPane(
         selectedClip = selectedClip,
         positionMs = positionMs,
@@ -407,7 +440,7 @@ private fun ColumnScope.PreviewSection(
         timeFontFamily = timeFontFamily,
         modifier = Modifier.fillMaxWidth().weight(previewWeight)
     )
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(SECTION_GAP))
     ActionButtons(
         isExporting = isExporting,
         canExport = canExport,
@@ -426,20 +459,20 @@ private fun ColumnScope.EditSection(
     clips: List<VlogClip>,
     selectedIndex: Int,
     selectedClip: VlogClip?,
+    positionMs: Long,
     isExporting: Boolean,
     timelineWeight: Float,
     editorWeight: Float
 ) {
-    val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
-
     TimelinePane(
         viewModel = viewModel,
         clips = clips,
         selectedIndex = selectedIndex,
+        positionMs = positionMs,
         isExporting = isExporting,
         modifier = Modifier.fillMaxWidth().weight(timelineWeight)
     )
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(SECTION_GAP))
     EditorPane(
         selectedClip = selectedClip,
         positionMs = positionMs,
@@ -578,7 +611,7 @@ private fun ActionButtons(
             Icon(
                 VlogIcons.File,
                 contentDescription = "編集内容の保存と読み出し",
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(TOOLBAR_ICON_SIZE)
             )
         }
 
@@ -624,6 +657,7 @@ private fun TimelinePane(
     viewModel: VlogViewModel,
     clips: List<VlogClip>,
     selectedIndex: Int,
+    positionMs: Long,
     isExporting: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -631,7 +665,6 @@ private fun TimelinePane(
     val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
     val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
     val waveforms by viewModel.waveforms.collectAsStateWithLifecycle()
-    val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
 
     // 波形は選択中のクリップだけ用意する。全件を先読みするとデコードが渋滞して、
@@ -660,7 +693,7 @@ private fun TimelinePane(
                 .verticalScroll(rememberScrollState())
         ) {
             // 見出しと操作バーを2行に分ける。
-            // 1行に収めていた頃は、ボタンが8個になった時点で横幅の狭い端末では
+            // 1行に収めていた頃は、ボタンが増えた時点で横幅の狭い端末では
             // 見出しが「タ…」まで潰れ、それでもボタンが画面外へはみ出していた。
             Text(
                 "タイムライン",
@@ -815,13 +848,13 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.MoveLeft,
             contentDescription = "ひとつ前へ移動",
             enabled = enabled && selectedIndex > 0,
             onClick = { viewModel.moveSelected(-1) }
         )
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.MoveRight,
             contentDescription = "ひとつ後ろへ移動",
             enabled = enabled && selectedIndex < clips.lastIndex,
@@ -830,13 +863,13 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.Undo,
             contentDescription = "もとに戻す",
             enabled = canUndo && !isExporting,
             onClick = viewModel::undo
         )
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.Redo,
             contentDescription = "やり直す",
             enabled = canRedo && !isExporting,
@@ -848,7 +881,7 @@ private fun TimelineToolbar(
         // 再生ヘッドが区切りの上にあるときは、同じボタンが解除に変わる。
         // 区切りを消す手段が「もとに戻す」しか無いと、あとから直せなくなるため。
         val splitOnPlayhead = selectedClip?.splitPointNear(positionMs)
-        TimelineIconButton(
+        CompactIconButton(
             icon = if (splitOnPlayhead == null) VlogIcons.SplitText
             else VlogIcons.SplitTextOff,
             contentDescription = if (splitOnPlayhead == null) {
@@ -867,14 +900,14 @@ private fun TimelineToolbar(
         TimelineDivider()
 
         // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.Delete,
             contentDescription = "選択中のクリップを削除",
             enabled = enabled,
             onClick = viewModel::removeSelected,
             tint = MaterialTheme.colorScheme.error
         )
-        TimelineIconButton(
+        CompactIconButton(
             icon = VlogIcons.DeleteSweep,
             contentDescription = "すべて削除",
             enabled = clips.isNotEmpty() && !isExporting,
@@ -942,26 +975,21 @@ private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/**
- * 操作バーのボタン1個の大きさ。
- * Materialの推奨は48dpだが、8個並べると横幅の狭い端末で行からはみ出してしまう。
- * アイコン自体は20dpあるので、密なツールバーとしては触れる範囲に収まっている。
- */
-private val TOOLBAR_BUTTON_SIZE = 32.dp
-
-/** 波形の高さ。つまみを指で掴める大きさが要るので、表示だけだった頃より厚くしてある */
-private val WAVEFORM_HEIGHT = 76.dp
-
-/** トリミングつまみの幅 */
-private val TRIM_HANDLE_WIDTH = 11.dp
-
-/** つまみを掴んだと判定する距離。指の腹の太さを見込んで広めに取る */
-private val TRIM_GRAB_RADIUS = 30.dp
-
-/** これ以上は詰められない長さ。0にできてしまうと書き出しが通らなくなる */
-private const val MIN_TRIM_MS = 300L
-
 private enum class TrimHandle { Start, End }
+
+/**
+ * [WaveformTrimmer] のコールバック群。
+ * 状態を表す引数（waveform/texts/durationMsなど）と分けて1つにまとめることで、
+ * シグネチャの引数の数を減らしている。
+ */
+private data class WaveformTrimmerCallbacks(
+    val onTrimChange: (Long, Long, Long) -> Unit,
+    val onTrimMove: (Long, Long) -> Unit,
+    val onSplitMove: (Int, Long) -> Unit,
+    val onSeek: (Long) -> Unit,
+    val onScrubStart: () -> Unit,
+    val onScrubEnd: () -> Unit
+)
 
 /**
  * 波形そのものがトリミングバーを兼ねる。
@@ -977,20 +1005,6 @@ private enum class TrimHandle { Start, End }
  *
  * つまみが画面端で切れないよう、トラックはつまみの半分ぶん内側に取ってある。
  */
-/**
- * [WaveformTrimmer] のコールバック群。
- * 状態を表す引数（waveform/texts/durationMsなど）と分けて1つにまとめることで、
- * シグネチャの引数の数を減らしている。
- */
-private data class WaveformTrimmerCallbacks(
-    val onTrimChange: (Long, Long, Long) -> Unit,
-    val onTrimMove: (Long, Long) -> Unit,
-    val onSplitMove: (Int, Long) -> Unit,
-    val onSeek: (Long) -> Unit,
-    val onScrubStart: () -> Unit,
-    val onScrubEnd: () -> Unit
-)
-
 @Composable
 private fun WaveformTrimmer(
     waveform: Waveform?,
@@ -1027,12 +1041,9 @@ private fun WaveformTrimmer(
     val latestEnd by rememberUpdatedState(endMs)
     val latestDuration by rememberUpdatedState(durationMs)
     val latestTexts by rememberUpdatedState(texts)
-    val latestTrimChange by rememberUpdatedState(callbacks.onTrimChange)
-    val latestTrimMove by rememberUpdatedState(callbacks.onTrimMove)
-    val latestSplitMove by rememberUpdatedState(callbacks.onSplitMove)
-    val latestSeek by rememberUpdatedState(callbacks.onSeek)
-    val latestScrubStart by rememberUpdatedState(callbacks.onScrubStart)
-    val latestScrubEnd by rememberUpdatedState(callbacks.onScrubEnd)
+    // 6個のコールバックそれぞれをrememberUpdatedStateしていたのを、
+    // データクラスであるcallbacks自体を1回rememberUpdatedStateする形に集約
+    val latestCallbacks by rememberUpdatedState(callbacks)
 
     val density = LocalDensity.current
     val handleHalfPx = with(density) { TRIM_HANDLE_WIDTH.toPx() / 2f }
@@ -1092,8 +1103,8 @@ private fun WaveformTrimmer(
 
                         // つまみと分割ラインのうち、いちばん近いものを探す。
                         // どちらの許容範囲にも入らなければ「本体」として扱う
-                        val distanceToStartHandle = kotlin.math.abs(down.position.x - startX)
-                        val distanceToEndHandle = kotlin.math.abs(down.position.x - endX)
+                        val distanceToStartHandle = abs(down.position.x - startX)
+                        val distanceToEndHandle = abs(down.position.x - endX)
                         val handleKind = if (distanceToStartHandle <= distanceToEndHandle) {
                             TrimHandle.Start
                         } else {
@@ -1105,7 +1116,7 @@ private fun WaveformTrimmer(
                         var nearestSplitDist = Float.MAX_VALUE
                         for (i in 1 until latestTexts.size) {
                             val splitX = track.msToX(latestTexts[i].startMs, latestDuration)
-                            val dist = kotlin.math.abs(down.position.x - splitX)
+                            val dist = abs(down.position.x - splitX)
                             if (dist < nearestSplitDist) {
                                 nearestSplitDist = dist
                                 nearestSplit = i
@@ -1114,8 +1125,10 @@ private fun WaveformTrimmer(
 
                         val grabbedHandle =
                             nearestHandleDistance <= grabRadiusPx && nearestHandleDistance <= nearestSplitDist
-                        val grabbedSplit =
-                            !grabbedHandle && nearestSplit != null && nearestSplitDist <= grabRadiusPx
+                        // valにしてwhenの分岐内でスマートキャストできるようにし、!!を使わずに済ませる
+                        val splitToGrab: Int? = nearestSplit.takeIf {
+                            !grabbedHandle && it != null && nearestSplitDist <= grabRadiusPx
+                        }
 
                         when {
                             // --- 端のつまみ：即ドラッグで伸縮 ---
@@ -1137,22 +1150,22 @@ private fun WaveformTrimmer(
                                             val next = ms.coerceIn(
                                                 0L, (latestEnd - MIN_TRIM_MS).coerceAtLeast(0L)
                                             )
-                                            latestTrimChange(next, latestEnd, next)
+                                            latestCallbacks.onTrimChange(next, latestEnd, next)
                                         }
                                         TrimHandle.End -> {
                                             val next = ms.coerceIn(
                                                 (latestStart + MIN_TRIM_MS).coerceAtMost(latestDuration),
                                                 latestDuration
                                             )
-                                            latestTrimChange(latestStart, next, next)
+                                            latestCallbacks.onTrimChange(latestStart, next, next)
                                         }
                                     }
                                 }
                             }
 
                             // --- 分割ライン：即ドラッグで移動 ---
-                            grabbedSplit -> {
-                                val index = nearestSplit!!
+                            splitToGrab != null -> {
+                                val index = splitToGrab
                                 activeSplitIndex = index
                                 val splitX =
                                     track.msToX(latestTexts[index].startMs, latestDuration)
@@ -1161,7 +1174,7 @@ private fun WaveformTrimmer(
                                 dragUntilRelease(down.id) { change ->
                                     val ms =
                                         track.xToMs(change.position.x - grabOffset, latestDuration)
-                                    latestSplitMove(index, ms)
+                                    latestCallbacks.onSplitMove(index, ms)
                                 }
                             }
 
@@ -1179,14 +1192,14 @@ private fun WaveformTrimmer(
                                     is DragOutcome.Dragged -> {
                                         // すぐ動いた＝なぞって頭出し（従来のシーク）
                                         scrubbing = true
-                                        latestScrubStart()
-                                        latestSeek(
+                                        latestCallbacks.onScrubStart()
+                                        latestCallbacks.onSeek(
                                             track.xToMs(
                                                 outcome.change.position.x, latestDuration
                                             )
                                         )
                                         dragUntilRelease(outcome.change.id) { change ->
-                                            latestSeek(
+                                            latestCallbacks.onSeek(
                                                 track.xToMs(change.position.x, latestDuration)
                                             )
                                         }
@@ -1194,7 +1207,7 @@ private fun WaveformTrimmer(
 
                                     DragOutcome.Released -> {
                                         // 動かさず離した＝タップ。その場へ頭出し
-                                        latestSeek(track.xToMs(down.position.x, latestDuration))
+                                        latestCallbacks.onSeek(track.xToMs(down.position.x, latestDuration))
                                     }
 
                                     null -> {
@@ -1203,7 +1216,7 @@ private fun WaveformTrimmer(
                                         val stillDown = currentEvent.changes
                                             .firstOrNull { it.id == down.id }?.pressed == true
                                         if (!stillDown) {
-                                            latestSeek(
+                                            latestCallbacks.onSeek(
                                                 track.xToMs(down.position.x, latestDuration)
                                             )
                                         } else {
@@ -1221,7 +1234,7 @@ private fun WaveformTrimmer(
                                                     ((change.position.x - anchorX) / pxPerMs)
                                                         .toLong()
                                                 val targetStart = originalStart + deltaMs
-                                                latestTrimMove(targetStart, targetStart)
+                                                latestCallbacks.onTrimMove(targetStart, targetStart)
                                             }
                                         }
                                     }
@@ -1232,7 +1245,7 @@ private fun WaveformTrimmer(
                         activeHandle = null
                         activeSplitIndex = null
                         isMovingTrim = false
-                        if (scrubbing) latestScrubEnd()
+                        if (scrubbing) latestCallbacks.onScrubEnd()
                     }
                 }
             },
@@ -1587,7 +1600,7 @@ private suspend fun AwaitPointerEventScope.awaitSlopOrRelease(
         if (!change.pressed) return DragOutcome.Released
         val dx = change.position.x - initialPosition.x
         val dy = change.position.y - initialPosition.y
-        if (kotlin.math.abs(dx) > slopPx || kotlin.math.abs(dy) > slopPx) {
+        if (abs(dx) > slopPx || abs(dy) > slopPx) {
             return DragOutcome.Dragged(change)
         }
     }
@@ -1636,7 +1649,7 @@ private fun TimelineDivider() {
 
 /**
  * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
- * 中身（アイコンと色）はTimelineIconButton/TimelineToggleButtonそれぞれに任せる。
+ * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
  */
 @Composable
 private fun ToolbarButtonBox(
@@ -1665,12 +1678,12 @@ private fun ToolbarButtonBox(
 }
 
 /**
- * 操作バー用の小さめアイコンボタン。
+ * 操作バー用の小さめアイコンボタン。タイムラインの操作バー以外（一時保存一覧の行など）でも使う。
  *
- * IconButtonは48dp固定で、6個並べると横幅の狭い端末で見出しごと押し出されてしまう。
+ * IconButtonは48dp固定で、並べると横幅の狭い端末で見出しごと押し出されてしまう。
  */
 @Composable
-private fun TimelineIconButton(
+private fun CompactIconButton(
     icon: ImageVector,
     contentDescription: String,
     enabled: Boolean,
@@ -1691,7 +1704,7 @@ private fun TimelineIconButton(
             contentDescription = contentDescription,
             // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
             tint = if (enabled) tint else tint.copy(alpha = 0.38f),
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
         )
     }
 }
@@ -1728,7 +1741,7 @@ private fun TimelineToggleButton(
                 checked -> MaterialTheme.colorScheme.onPrimaryContainer
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
         )
     }
 }
@@ -1861,7 +1874,7 @@ private fun SavedProjectRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            TimelineIconButton(
+            CompactIconButton(
                 icon = VlogIcons.Delete,
                 contentDescription = "「${project.name}」を削除",
                 enabled = true,

@@ -11,6 +11,13 @@ const val CANVAS_WIDTH = 1920
 const val CANVAS_HEIGHT = 1080
 const val CANVAS_FPS = 30
 
+/**
+ * assets内のフォント置き場（assets/fonts/ 以下）。
+ * MainActivity（プレビュー表示）とVlogExporter（書き出し）の両方が同じフォントを
+ * 読み込むため、ディレクトリ名をここに集約して片方だけ変わる事故を防ぐ。
+ */
+const val FONT_ASSET_DIR = "fonts"
+
 /** タイトル「Vlog.」／ ひとこと 用フォント */
 const val TITLE_FONT_ASSET = "LogoTypeGothic.otf"
 
