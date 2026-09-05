@@ -142,9 +142,15 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
         )
     }.sortedBy { it.startMs }
 
-    // 先頭が0から始まらないと textAt が拾えない区間ができてしまう
-    return segments.takeIf { it.isNotEmpty() && it.first().startMs == 0L }
-        ?: listOf(TextSegment())
+    if (segments.isEmpty()) return listOf(TextSegment())
+
+    // 先頭が0から始まらないと textAt が拾えない区間ができてしまう。
+    // 以前はこの場合に全区間を白紙(listOf(TextSegment()))へ丸ごと差し替えていたが、
+    // それだと1件目のstartMsが壊れているだけで残り全部のひとこと文言まで消えてしまう。
+    // 先頭の位置だけ0へ直し、文言はそのまま残す。
+    val first = segments.first()
+    return if (first.startMs == 0L) segments
+    else listOf(first.copy(startMs = 0L)) + segments.drop(1)
 }
 
 /**

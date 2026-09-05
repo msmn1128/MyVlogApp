@@ -15,12 +15,15 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
@@ -40,6 +43,16 @@ class VlogExportException(message: String) : Exception(message)
 object VlogExporter {
 
     /**
+     * 単一パスで書き出せるクリップ数の目安上限。
+     *
+     * 全クリップをFFmpegへ同時に`-i`入力するため、本数が増えるほど
+     * 開くファイルディスクリプタ数・filter_complexのコマンド長が増える。
+     * 際限なく許すと、上限超過時にFFmpeg側の分かりにくいエラーで
+     * 失敗するだけになるため、ここで先に分かりやすいメッセージを出す。
+     */
+    private const val MAX_EXPORT_CLIPS = 50
+
+    /**
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
      */
@@ -49,6 +62,12 @@ object VlogExporter {
         onProgress: suspend (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         require(clips.isNotEmpty()) { "クリップがありません" }
+        if (clips.size > MAX_EXPORT_CLIPS) {
+            throw VlogExportException(
+                "クリップが多すぎます（上限${MAX_EXPORT_CLIPS}本、現在${clips.size}本）。" +
+                        "クリップを減らしてください"
+            )
+        }
 
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
         val workDir = File(context.cacheDir, "vlog_work").apply { mkdirs() }
@@ -361,9 +380,9 @@ object VlogExporter {
             // 区間が1つだけなら enable は付けない（式の評価ぶんだけ無駄になる）
             val enable = if (spans.size <= 1) "" else {
                 // enable式のtはクリップ先頭からの経過時間ではなく、素材動画の絶対時刻のまま
-                // フィルタに渡ってくる（-ssを出力側に置いているため。入力側シークだと
-                // t は 0 から数え直されるが、-ssを出力側に置くと本編部分の切り出しは
-                // エンコード直前に行われ、フィルタは全区間を素材の絶対時刻付きで処理する）。
+                // フィルタに渡ってくる（trimフィルタが単体ではPTSをリセットしないため。
+                // setpts=PTS-STARTPTSは全フィルタの最後、concatへ渡す直前で1回だけ行っており、
+                // それより前のこのdrawtext enable判定の時点ではtは絶対時刻のまま）。
                 // そのためspan.startMs/endMsをそのまま使う。ここでclip.startMsを
                 // 引いてしまうと、前トリムした分だけenableの判定窓がずれて
                 // どのフレームとも一致しなくなり、ひとことが丸ごと出なくなる。
@@ -617,7 +636,7 @@ object VlogExporter {
         }
 
     /** 完成した動画をギャラリー（Movies/MyVlogApp）へ保存する */
-    private fun saveToGallery(context: Context, source: File, displayName: String): String {
+    private suspend fun saveToGallery(context: Context, source: File, displayName: String): String {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
@@ -634,9 +653,17 @@ object VlogExporter {
         val uri = resolver.insert(videoCollection(), values)
             ?: throw VlogExportException("ギャラリーへの保存に失敗しました")
 
-        resolver.openOutputStream(uri)?.use { output ->
-            source.inputStream().use { it.copyTo(output) }
-        } ?: throw VlogExportException("ギャラリーへの書き込みに失敗しました")
+        // コピー自体は中断ポイントを持たない同期I/Oなので、途中でキャンセルされても
+        // 素通りしてコピーが完了してしまう（「中止した」のに保存済みになる不整合）。
+        // バッファ単位でensureActive()を挟み、キャンセル時は挿入済みのMediaStore行を消す。
+        try {
+            resolver.openOutputStream(uri)?.use { output ->
+                source.inputStream().use { input -> copyCancellably(input, output) }
+            } ?: throw VlogExportException("ギャラリーへの書き込みに失敗しました")
+        } catch (e: CancellationException) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.clear()
@@ -644,5 +671,15 @@ object VlogExporter {
             resolver.update(uri, values, null, null)
         }
         return displayName
+    }
+
+    private suspend fun copyCancellably(input: InputStream, output: OutputStream) {
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            coroutineContext.ensureActive()
+            val read = input.read(buffer)
+            if (read < 0) break
+            output.write(buffer, 0, read)
+        }
     }
 }

@@ -5,6 +5,8 @@ import android.net.Uri
 import android.util.Log
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -114,6 +116,13 @@ object ClipStore {
     /** 保存できる本数の上限。SharedPreferencesに全件を1文字列で持つので際限なくは増やさない */
     const val MAX_PROJECTS = 20
 
+    /**
+     * 一時保存一覧の読み込み→書き込みはread-modify-writeなので、保存と削除が
+     * ほぼ同時に呼ばれると片方の変更が後勝ちで消えるレースになる。
+     * 呼び出し全体をこのMutexで直列化して防ぐ。
+     */
+    private val projectsMutex = Mutex()
+
     suspend fun listProjects(context: Context): List<SavedProject> = withContext(Dispatchers.IO) {
         readProjects(context).map { it.toSummary() }
     }
@@ -127,24 +136,27 @@ object ClipStore {
         name: String,
         clips: List<VlogClip>
     ): Boolean = withContext(Dispatchers.IO) {
-        val projects = readProjects(context)
-        if (projects.size >= MAX_PROJECTS) return@withContext false
+        projectsMutex.withLock {
+            val projects = readProjects(context)
+            if (projects.size >= MAX_PROJECTS) return@withLock false
 
-        val entry = JSONObject()
-            .put("id", System.currentTimeMillis())
-            .put("name", name)
-            .put("savedAt", System.currentTimeMillis())
-            .put("clips", clipsToJson(clips))
+            val entry = JSONObject()
+                .put("id", System.currentTimeMillis())
+                .put("name", name)
+                .put("savedAt", System.currentTimeMillis())
+                .put("clips", clipsToJson(clips))
 
-        writeProjects(context, projects + entry)
-        true
+            writeProjects(context, projects + entry)
+            true
+        }
     }
 
     /** 保存した内容を読み出す。見つからなければ null */
     suspend fun loadProject(context: Context, id: Long): RestoredClips? =
         withContext(Dispatchers.IO) {
-            val entry = readProjects(context).firstOrNull { it.optLong("id") == id }
-                ?: return@withContext null
+            val entry = projectsMutex.withLock {
+                readProjects(context).firstOrNull { it.optLong("id") == id }
+            } ?: return@withContext null
             runCatching {
                 fromJson(context, entry.getJSONArray("clips"))
             }.getOrElse { e ->
@@ -154,7 +166,9 @@ object ClipStore {
         }
 
     suspend fun deleteProject(context: Context, id: Long) = withContext(Dispatchers.IO) {
-        writeProjects(context, readProjects(context).filterNot { it.optLong("id") == id })
+        projectsMutex.withLock {
+            writeProjects(context, readProjects(context).filterNot { it.optLong("id") == id })
+        }
     }
 
     /** 新しいものが上に来る並び。読み出したいのはたいてい直近のもの */

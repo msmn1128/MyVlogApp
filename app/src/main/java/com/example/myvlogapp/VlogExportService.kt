@@ -52,10 +52,22 @@ class VlogExportService : Service() {
             )
         }
 
+        /**
+         * 実行中でなければ何もしない。
+         *
+         * 書き出しが終わった直後（サービスは既に停止済み）に「中止」を押すと、
+         * バックグラウンド状態のアプリからの新規startServiceになり、
+         * Android 8以降のバックグラウンド起動制限下ではIllegalStateExceptionが
+         * 投げられうる。runCatchingで包むのは、その場合も「中止できなかった」だけで
+         * アプリ全体を落とさないようにするため。
+         */
         fun cancel(context: Context) {
-            context.startService(
-                Intent(context, VlogExportService::class.java).setAction(ACTION_CANCEL)
-            )
+            if (!ExportStatus.isRunning) return
+            runCatching {
+                context.startService(
+                    Intent(context, VlogExportService::class.java).setAction(ACTION_CANCEL)
+                )
+            }
         }
     }
 
