@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -53,6 +54,9 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
             height = height.coerceAtLeast(1)
         )
     } catch (e: Exception) {
+        // メタデータが1件も取れない動画（壊れたファイル、非対応コーデックなど）。
+        // 「取得できなかった」こと自体は空リストと違って原因を追いたいことが多いのでログに残す。
+        Log.w(LOG_TAG, "動画のメタデータを取得できませんでした: $uri", e)
         VideoMeta(formatTime(null), formatDate(null), 0L, CANVAS_WIDTH, CANVAS_HEIGHT)
     } finally {
         runCatching { retriever.release() }
@@ -79,5 +83,4 @@ private fun formatTime(millis: Long?): String =
 
 /** 撮影日 "yyyy/MM/dd" */
 private fun formatDate(millis: Long?): String =
-    millis?.let { SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(it) }
-        ?: SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(System.currentTimeMillis())
+    SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(millis ?: System.currentTimeMillis())

@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.MediaStore
 import android.net.Uri
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -56,5 +57,11 @@ suspend fun queryGalleryVideos(context: Context): List<GalleryVideo> =
                     }
                 }
             }.orEmpty()
-        }.getOrDefault(emptyList())
+        }.getOrElse { e ->
+            // 権限が無い・MediaStoreへのアクセスに失敗した場合など。
+            // 「動画が見つかりませんでした」と「権限が無くて読めなかった」を
+            // 呼び出し元のUIだけからは区別できないため、原因はログに残しておく。
+            Log.w(LOG_TAG, "ギャラリーの動画一覧を取得できませんでした", e)
+            emptyList()
+        }
     }

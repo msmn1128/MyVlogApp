@@ -57,6 +57,14 @@ object ClipStore {
 
     private fun Context.prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /**
+     * suspendにしていないのは、androidx.core.content.editの既定（apply()）が
+     * 呼び出しスレッドをブロックせず非同期にコミットするため。restore系がsuspend +
+     * Dispatchers.IOなのは、こちらはgetString/getBooleanの読み取り自体はブロッキングであり
+     * （初回アクセス時にSharedPreferencesのバックグラウンド読み込みを待つことがある）、
+     * Composeの呼び出し元スレッドを塞がないようにするため。書き込みと読み取りとで
+     * 方針が違って見えるが、どちらも「呼び出し元スレッドを塞がない」という同じ意図。
+     */
     fun save(context: Context, clips: List<VlogClip>) {
         context.prefs().edit {
             putString(KEY_CLIPS, clipsToJson(clips).toString())
