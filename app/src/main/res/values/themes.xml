@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Composeの配色は MyVlogAppTheme（Kotlin側）が持つ。
+      ここで指定するのは、Composeが最初のフレームを描くまでに見えるウィンドウ背景だけ。
+      値を揃えておかないと、起動直後に一瞬だけ白い板が出る。
+
+      ダーク用は values-night/themes.xml。端末の設定に応じてOSが自動で選ぶ。
+    -->
+    <style name="Theme.MyVlogApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

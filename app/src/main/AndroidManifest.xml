@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Android 9 (API 28) 以下では、MediaStore経由でギャラリーに動画を保存するのに
+      書き込み権限が必要。API 29以上は RELATIVE_PATH + IS_PENDING で権限不要のため
+      maxSdkVersion で対象を28までに限定する。
+
+      動画の読み込み自体には権限が要らない（SAFのOpenMultipleDocumentsも併用している）が、
+      アプリ内のギャラリー画面は下の READ_MEDIA_VIDEO に依存している。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!--
+      アプリ内のギャラリー画面で端末の動画を一覧・選択するために必要。
+      この権限があれば MediaStore の URI を恒久的に読めるので、動画を
+      アプリ内へコピーしなくても、次回起動時に編集の続きを復元できる。
+
+      READ_MEDIA_VISUAL_USER_SELECTED は Android 14 以降の「選択した項目のみ許可」用。
+      全件許可を選ばなかった場合でも、選ばれた動画には継続してアクセスできる。
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!--
+      書き出し処理をフォアグラウンドサービス（VlogExportService）として
+      実行するために必要。アプリがバックグラウンドに回ってもOSに
+      プロセスごと回収されにくくし、書き出しを最後まで完了させる。
+      FOREGROUND_SERVICE_DATA_SYNCはAPI 34以降、サービスの
+      foregroundServiceType="dataSync" 宣言と対で必須。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+      進捗を表示する通知を出すため（API 33以降は実行時の許可も別途必要）。
+      許可されなくても書き出し自体は行われる（通知が出ないだけ）。
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyVlogApp">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.MyVlogApp"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".VlogExportService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+    </application>
+
+</manifest>

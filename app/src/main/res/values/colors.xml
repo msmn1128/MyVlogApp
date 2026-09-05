@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MyVlogAppTheme の background と同じ値。起動時のちらつき防止用 -->
+    <color name="window_background">#FDF7FF</color>
+
+    <!-- アプリアイコンの背景色（ラベンダー）。アダプティブアイコンの背景レイヤーに使う -->
+    <color name="ic_launcher_background">#C9B7E8</color>
+</resources>

@@ -1,0 +1,40 @@
+package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * 書き出しの進行状態を持つ場所。
+ *
+ * ViewModelではなくプロセス全体で共有するシングルトンに置く理由：
+ * 書き出し本体は [VlogExportService]（フォアグラウンドサービス）で動いており、
+ * アプリをバックグラウンドに回してもActivity/ViewModelより長生きする。
+ * ViewModelはここを覗くだけの購読者にすることで、画面が作り直されても
+ * 進行中の書き出しの状態を取りこぼさない。
+ */
+object ExportStatus {
+    private val _state = MutableStateFlow<ExportState>(ExportState.Idle)
+    val state: StateFlow<ExportState> = _state.asStateFlow()
+
+    /**
+     * Activityが購読していない間に飛んだメッセージ（保存完了・失敗など）を
+     * 取りこぼさないよう、直近1件だけ溜めておく。
+     */
+    val events = MutableSharedFlow<VlogEvent>(extraBufferCapacity = 1)
+
+    val isRunning: Boolean get() = _state.value is ExportState.Running
+
+    fun setRunning(message: String) {
+        _state.value = ExportState.Running(message)
+    }
+
+    fun setIdle() {
+        _state.value = ExportState.Idle
+    }
+
+    fun emit(event: VlogEvent) {
+        events.tryEmit(event)
+    }
+}

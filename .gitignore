@@ -1,0 +1,24 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+# ルート直下だけでなくapp/buildなど、どの階層のbuildディレクトリも除外する
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.kotlin/
+
+# Claude Codeのセッション作業用データ（アップロードした一時ファイル等）。
+# プロジェクトの成果物ではないので含めない
+.claude/
+
+# 署名鍵のパスワードを含むため、リポジトリには入れない
+/keystore.properties
