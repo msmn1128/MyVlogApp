@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.graphics.Rect as AndroidRect
 import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -46,10 +47,13 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -956,8 +960,28 @@ private fun WaveformTrimmer(
     val grabRadiusPx = with(density) { TRIM_GRAB_RADIUS.toPx() }
     val haptics = LocalHapticFeedback.current
 
+    // 左右どちらかのつまみが画面のヘリに近いと、掴んだつもりがOSの「戻る」スワイプに
+    // 奪われる端末がある。波形トリマー全体（左端〜右端）をジェスチャー除外領域として
+    // 申告し、この範囲では常に自前のタッチ処理を優先させる。選択中クリップが変わって
+    // 表示が消えるときは除外を解除しないと、別の場所にまで戻るジェスチャーが効かなくなる。
+    val view = LocalView.current
+    DisposableEffect(view) {
+        onDispose { view.systemGestureExclusionRects = emptyList() }
+    }
+
     Box(
         modifier = modifier
+            .onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                view.systemGestureExclusionRects = listOf(
+                    AndroidRect(
+                        bounds.left.toInt(),
+                        bounds.top.toInt(),
+                        bounds.right.toInt(),
+                        bounds.bottom.toInt()
+                    )
+                )
+            }
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .pointerInput(enabled) {

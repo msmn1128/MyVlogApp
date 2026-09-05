@@ -22,6 +22,9 @@ const val TITLE_FONT_ASSET = "LogoTypeGothic.otf"
 /** 撮影時刻／日付 用フォント */
 const val TIME_FONT_ASSET = "MPLUSU-Regular.ttf"
 
+/** タイトルカードの長さ（ミリ秒）。黒背景の尺・フェードのタイミング・効果音の切り詰め先すべての基準 */
+const val TITLE_DURATION_MS = 2000L
+
 /** タイトルカードの効果音（assets/sfx/ 以下のファイル名） */
 const val TITLE_SFX_ASSET = "title.mp3"
 

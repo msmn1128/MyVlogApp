@@ -70,18 +70,25 @@ object VlogExporter {
             runFFmpeg(
                 arrayOf(
                     "-f", "lavfi",
-                    "-i", "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS:d=2",
+                    "-i", "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS:d=${secondsArg(TITLE_DURATION_MS)}",
                     "-i", titleSfx.absolutePath,
                     // 動画側はdrawtextの連なり(buildTitleFilter)をそのまま[vout]に、
                     // 音声側は効果音をTITLE_SFX_FRAME_NUMBER分だけ遅らせて[aout]にする。
-                    // apadで無音を継ぎ足しておかないと、効果音が終わった時点で
-                    // 音声ストリームそのものが尽きてしまい、動画側(2秒)より短く切れる。
+                    //
+                    // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
+                    // 「動画(2秒)の方が短いから-shortestで自動的に切られるはず」と考えて
+                    // 頼ると、ここに-shortestを付けていても実機では音声側が先に
+                    // 何時間ぶんもの無音を吐き出そうとしてしまい、書き出しが
+                    // 実質ハングする（動画のフレーム数が全く進まなくなる）。
+                    // atrimでタイトルの尺ぴったりに強制的に切ることで、
+                    // -shortestに頼らず必ず有限時間で終わるようにする。
                     "-filter_complex",
                     "[0:v]${buildTitleFilter(firstDate, titleFont, timeFont)}[vout];" +
-                            "[1:a]adelay=$sfxDelayMs|$sfxDelayMs,apad[aout]",
+                            "[1:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
+                            "atrim=0:${secondsArg(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[aout]",
                     "-map", "[vout]", "-map", "[aout]",
                     *videoEncodeArgs(),
-                    "-shortest", "-y", titleFile.absolutePath
+                    "-y", titleFile.absolutePath
                 ),
                 "タイトルの生成に失敗しました"
             )
