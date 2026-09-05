@@ -47,6 +47,14 @@ object ClipStore {
     private const val KEY_AUTO_ADVANCE = "auto_advance"
     private const val KEY_PROJECTS = "projects"
 
+    /** 一時保存1件ぶんのJSONオブジェクトで使うキー名 */
+    private object ProjectKeys {
+        const val ID = "id"
+        const val NAME = "name"
+        const val SAVED_AT = "savedAt"
+        const val CLIPS = "clips"
+    }
+
     private fun Context.prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(context: Context, clips: List<VlogClip>) {
@@ -92,7 +100,7 @@ object ClipStore {
         val clips = (0 until array.length()).mapNotNull { index ->
             runCatching {
                 val json = array.getJSONObject(index)
-                val uri = Uri.parse(json.getString("uri"))
+                val uri = Uri.parse(json.getString(VlogClipKeys.URI))
                 if (!isReadable(context, uri)) {
                     dropped++
                     return@runCatching null
@@ -141,10 +149,10 @@ object ClipStore {
             if (projects.size >= MAX_PROJECTS) return@withLock false
 
             val entry = JSONObject()
-                .put("id", System.currentTimeMillis())
-                .put("name", name)
-                .put("savedAt", System.currentTimeMillis())
-                .put("clips", clipsToJson(clips))
+                .put(ProjectKeys.ID, System.currentTimeMillis())
+                .put(ProjectKeys.NAME, name)
+                .put(ProjectKeys.SAVED_AT, System.currentTimeMillis())
+                .put(ProjectKeys.CLIPS, clipsToJson(clips))
 
             writeProjects(context, projects + entry)
             true
@@ -155,10 +163,10 @@ object ClipStore {
     suspend fun loadProject(context: Context, id: Long): RestoredClips? =
         withContext(Dispatchers.IO) {
             val entry = projectsMutex.withLock {
-                readProjects(context).firstOrNull { it.optLong("id") == id }
+                readProjects(context).firstOrNull { it.optLong(ProjectKeys.ID) == id }
             } ?: return@withContext null
             runCatching {
-                fromJson(context, entry.getJSONArray("clips"))
+                fromJson(context, entry.getJSONArray(ProjectKeys.CLIPS))
             }.getOrElse { e ->
                 Log.w(LOG_TAG, "一時保存の読み出しに失敗しました", e)
                 null
@@ -167,7 +175,7 @@ object ClipStore {
 
     suspend fun deleteProject(context: Context, id: Long) = withContext(Dispatchers.IO) {
         projectsMutex.withLock {
-            writeProjects(context, readProjects(context).filterNot { it.optLong("id") == id })
+            writeProjects(context, readProjects(context).filterNot { it.optLong(ProjectKeys.ID) == id })
         }
     }
 
@@ -179,7 +187,7 @@ object ClipStore {
             errorMessage = "一時保存の一覧を読めませんでした"
         ) { array ->
             (0 until array.length()).map { array.getJSONObject(it) }
-                .sortedByDescending { it.optLong("savedAt") }
+                .sortedByDescending { it.optLong(ProjectKeys.SAVED_AT) }
         }
 
     /**
@@ -201,15 +209,18 @@ object ClipStore {
     }
 
     private fun JSONObject.toSummary(): SavedProject {
-        val clips = optJSONArray("clips") ?: JSONArray()
+        val clips = optJSONArray(ProjectKeys.CLIPS) ?: JSONArray()
         val totalMs = (0 until clips.length()).sumOf { index ->
             val clip = clips.getJSONObject(index)
-            trimmedDurationMs(clip.optLong("startMs"), clip.optLong("endMs"))
+            trimmedDurationMs(
+                clip.optLong(VlogClipKeys.START_MS),
+                clip.optLong(VlogClipKeys.END_MS)
+            )
         }
         return SavedProject(
-            id = optLong("id"),
-            name = optString("name"),
-            savedAt = optLong("savedAt"),
+            id = optLong(ProjectKeys.ID),
+            name = optString(ProjectKeys.NAME),
+            savedAt = optLong(ProjectKeys.SAVED_AT),
             clipCount = clips.length(),
             totalMs = totalMs
         )

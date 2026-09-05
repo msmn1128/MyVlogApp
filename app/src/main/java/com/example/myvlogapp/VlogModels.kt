@@ -82,15 +82,15 @@ data class VlogClip(
          */
         fun fromJson(json: JSONObject, id: Long): VlogClip = VlogClip(
             id = id,
-            uri = Uri.parse(json.getString("uri")),
-            timeText = json.getString("timeText"),
-            dateText = json.getString("dateText"),
-            durationMs = json.getLong("durationMs"),
-            width = json.getInt("width"),
-            height = json.getInt("height"),
+            uri = Uri.parse(json.getString(VlogClipKeys.URI)),
+            timeText = json.getString(VlogClipKeys.TIME_TEXT),
+            dateText = json.getString(VlogClipKeys.DATE_TEXT),
+            durationMs = json.getLong(VlogClipKeys.DURATION_MS),
+            width = json.getInt(VlogClipKeys.WIDTH),
+            height = json.getInt(VlogClipKeys.HEIGHT),
             texts = json.readTextSegments(),
-            startMs = json.getLong("startMs"),
-            endMs = json.getLong("endMs")
+            startMs = json.getLong(VlogClipKeys.START_MS),
+            endMs = json.getLong(VlogClipKeys.END_MS)
         )
     }
 }
@@ -102,36 +102,59 @@ data class VlogClip(
  */
 fun trimmedDurationMs(startMs: Long, endMs: Long): Long = (endMs - startMs).coerceAtLeast(0L)
 
+/**
+ * [VlogClip]のJSON保存に使うキー名。
+ *
+ * ClipStore側もいくつかのキー（[START_MS]/[END_MS]/[TEXTS]）をVlogClipを
+ * 組み立てずに直接読む箇所（一時保存一覧の尺集計）があるため、ここに集約して
+ * 両ファイルでキー名がズレて片方だけ壊れる事故を防ぐ。
+ */
+object VlogClipKeys {
+    const val URI = "uri"
+    const val TIME_TEXT = "timeText"
+    const val DATE_TEXT = "dateText"
+    const val DURATION_MS = "durationMs"
+    const val WIDTH = "width"
+    const val HEIGHT = "height"
+    const val TEXTS = "texts"
+    const val TEXT = "text"
+    const val START_MS = "startMs"
+    const val END_MS = "endMs"
+
+    /** 区間(texts)を持たせる前の旧バージョンで使われていたキー。読み込み専用の後方互換 */
+    const val LEGACY_USER_TEXT = "userText"
+}
+
 /** [VlogClip] をJSONへ。ClipStoreの自動保存・一時保存の両方で同じ形を使う */
 fun VlogClip.toJson(): JSONObject = JSONObject().apply {
-    put("uri", uri.toString())
-    put("timeText", timeText)
-    put("dateText", dateText)
-    put("durationMs", durationMs)
-    put("width", width)
-    put("height", height)
-    put("texts", JSONArray().apply {
+    put(VlogClipKeys.URI, uri.toString())
+    put(VlogClipKeys.TIME_TEXT, timeText)
+    put(VlogClipKeys.DATE_TEXT, dateText)
+    put(VlogClipKeys.DURATION_MS, durationMs)
+    put(VlogClipKeys.WIDTH, width)
+    put(VlogClipKeys.HEIGHT, height)
+    put(VlogClipKeys.TEXTS, JSONArray().apply {
         texts.forEach { segment ->
             put(
                 JSONObject()
-                    .put("startMs", segment.startMs)
-                    .put("text", segment.text)
+                    .put(VlogClipKeys.START_MS, segment.startMs)
+                    .put(VlogClipKeys.TEXT, segment.text)
             )
         }
     })
-    put("startMs", startMs)
-    put("endMs", endMs)
+    put(VlogClipKeys.START_MS, startMs)
+    put(VlogClipKeys.END_MS, endMs)
 }
 
 /**
  * ひとことの区間を読む。
  *
- * 区間を持たせる前のバージョンで保存された分は "userText" しか無いので、
- * その1件を先頭区間として読み直す（更新しても前回の続きが消えない）。
+ * 区間を持たせる前のバージョンで保存された分は [VlogClipKeys.LEGACY_USER_TEXT] しか
+ * 無いので、その1件を先頭区間として読み直す（更新しても前回の続きが消えない）。
  */
 private fun JSONObject.readTextSegments(): List<TextSegment> {
-    val array = optJSONArray("texts")
-        ?: return listOf(TextSegment(0L, optString("userText", DEFAULT_HITOKOTO)))
+    val array = optJSONArray(VlogClipKeys.TEXTS)
+        ?: return listOf(TextSegment(0L, optString(VlogClipKeys.LEGACY_USER_TEXT, DEFAULT_HITOKOTO)))
 
     // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
     // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
@@ -139,8 +162,8 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
     val segments = (0 until array.length()).map { index ->
         val item = array.getJSONObject(index)
         TextSegment(
-            startMs = item.optLong("startMs"),
-            text = item.optString("text", DEFAULT_HITOKOTO)
+            startMs = item.optLong(VlogClipKeys.START_MS),
+            text = item.optString(VlogClipKeys.TEXT, DEFAULT_HITOKOTO)
         )
     }.sortedBy { it.startMs }
 
