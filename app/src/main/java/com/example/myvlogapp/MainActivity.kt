@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerId
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -256,86 +258,31 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
         viewModel.addClips(uris)
     }
 
-    if (showGallery) {
-        GalleryPickerDialog(
-            reloadToken = galleryReloadToken,
-            onDismiss = { showGallery = false },
-            onPick = { uris ->
-                showGallery = false
-                viewModel.addClips(uris)
-            },
-            onUseFilePicker = {
-                showGallery = false
-                filePicker.launch(arrayOf("video/*"))
-            },
-            // 権限を再リクエストすると、システムの「動画を選択」画面が再表示される
-            onChangeSelection = { permissionLauncher.launch(mediaPermissions) }
-        )
-    }
+    VlogAppDialogs(
+        showGallery = showGallery,
+        galleryReloadToken = galleryReloadToken,
+        onDismissGallery = { showGallery = false },
+        onPickFromGallery = { uris ->
+            showGallery = false
+            viewModel.addClips(uris)
+        },
+        onUseFilePicker = {
+            showGallery = false
+            filePicker.launch(arrayOf("video/*"))
+        },
+        // 権限を再リクエストすると、システムの「動画を選択」画面が再表示される
+        onChangeSelection = { permissionLauncher.launch(mediaPermissions) },
+        showSaves = showSaves,
+        onDismissSaves = { showSaves = false },
+        canSaveProject = clips.isNotEmpty() && !isExporting,
+        onLoadProject = { id ->
+            showSaves = false
+            viewModel.loadProject(id)
+        },
+        viewModel = viewModel
+    )
 
-    if (showSaves) {
-        val projects by viewModel.projects.collectAsStateWithLifecycle()
-        // 開くたびに読み直す。保存・削除のたびにViewModel側でも更新される
-        LaunchedEffect(Unit) { viewModel.refreshProjects() }
-
-        SaveLoadDialog(
-            projects = projects,
-            canSave = clips.isNotEmpty() && !isExporting,
-            onSave = viewModel::saveProject,
-            onLoad = { id ->
-                showSaves = false
-                viewModel.loadProject(id)
-            },
-            onDelete = viewModel::deleteProject,
-            onDismiss = { showSaves = false }
-        )
-    }
-
-    // Toastなどの一過性イベント
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is VlogEvent.Message -> Toast.makeText(context, event.text, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    // 戻るボタンでActivityが終了するとViewModelごと破棄され、読み込んだ動画が消える。
-    // クリップを読み込んでいる間は、ホームボタンと同じ「バックグラウンドへ回す」動きにして、
-    // 戻ってきたときに作業を続けられるようにする。
-    val activity = context as? Activity
-    BackHandler(enabled = clips.isNotEmpty()) {
-        activity?.moveTaskToBack(true)
-    }
-
-    // アプリが背面に回ったら再生を止める
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.pause()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // 再生位置の更新とトリミング範囲の連続再生。
-    // キーをUnitにしているのは、selectedIndexだとクリップが切り替わるたびに
-    // ループが作り直されて監視が途切れてしまうため。
-    //
-    // repeatOnLifecycleで囲むのは、アプリをバックグラウンドに回しても
-    // （BackHandlerでmoveTaskToBackした場合など）この無限ループ自体は
-    // Composition生存中ずっと動き続け、上のDisposableEffectが再生こそ止めるものの
-    // PLAYBACK_POLL_INTERVAL_MS間隔のポーリングは止まらず無駄にCPU/バッテリーを
-    // 消費していたため。STARTED未満（バックグラウンド）になると自動的に一時停止し、
-    // 前面に戻ると再開する。
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                delay(PLAYBACK_POLL_INTERVAL_MS)
-                viewModel.refreshPlaybackProgress()
-            }
-        }
-    }
+    VlogAppSideEffects(viewModel = viewModel, clips = clips)
 
     // 縦横の判定にはConfigurationの画面サイズを使う。
     // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
@@ -405,6 +352,111 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
                 preview(previewWeight)
                 Spacer(Modifier.height(SECTION_GAP))
                 edit()
+            }
+        }
+    }
+}
+
+/**
+ * 動画を選ぶギャラリー・一時保存の一覧、2つのダイアログをまとめたもの。
+ * [VlogAppScreen] から切り出したもの。
+ *
+ * ここではダイアログの開閉状態と結果コールバックだけを受け取り、
+ * `rememberLauncherForActivityResult` 自体は [VlogAppScreen] 側に置いたままにしてある。
+ * ランチャーをこの関数の中で生成すると、呼び出し位置がisWide分岐の外側であっても
+ * このコンポーザブル自体が再生成されるたびにActivityResultRegistryとの紐付けが
+ * 作り直されるおそれがあり、権限ダイアログのコールバックが失われるリスクを避けるため。
+ */
+@Composable
+private fun VlogAppDialogs(
+    showGallery: Boolean,
+    galleryReloadToken: Int,
+    onDismissGallery: () -> Unit,
+    onPickFromGallery: (List<Uri>) -> Unit,
+    onUseFilePicker: () -> Unit,
+    onChangeSelection: () -> Unit,
+    showSaves: Boolean,
+    onDismissSaves: () -> Unit,
+    canSaveProject: Boolean,
+    onLoadProject: (Long) -> Unit,
+    viewModel: VlogViewModel
+) {
+    if (showGallery) {
+        GalleryPickerDialog(
+            reloadToken = galleryReloadToken,
+            onDismiss = onDismissGallery,
+            onPick = onPickFromGallery,
+            onUseFilePicker = onUseFilePicker,
+            onChangeSelection = onChangeSelection
+        )
+    }
+
+    if (showSaves) {
+        val projects by viewModel.projects.collectAsStateWithLifecycle()
+        // 開くたびに読み直す。保存・削除のたびにViewModel側でも更新される
+        LaunchedEffect(Unit) { viewModel.refreshProjects() }
+
+        SaveLoadDialog(
+            projects = projects,
+            canSave = canSaveProject,
+            onSave = viewModel::saveProject,
+            onLoad = onLoadProject,
+            onDelete = viewModel::deleteProject,
+            onDismiss = onDismissSaves
+        )
+    }
+}
+
+/**
+ * Toast通知・戻るボタン・バックグラウンド時の一時停止・再生位置ポーリングをまとめたもの。
+ * [VlogAppScreen] から切り出したもの。
+ */
+@Composable
+private fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>) {
+    val context = LocalContext.current
+
+    // Toastなどの一過性イベント
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            when (event) {
+                is VlogEvent.Message -> Toast.makeText(context, event.text, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // 戻るボタンでActivityが終了するとViewModelごと破棄され、読み込んだ動画が消える。
+    // クリップを読み込んでいる間は、ホームボタンと同じ「バックグラウンドへ回す」動きにして、
+    // 戻ってきたときに作業を続けられるようにする。
+    val activity = context as? Activity
+    BackHandler(enabled = clips.isNotEmpty()) {
+        activity?.moveTaskToBack(true)
+    }
+
+    // アプリが背面に回ったら再生を止める
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) viewModel.pause()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 再生位置の更新とトリミング範囲の連続再生。
+    // キーをUnitにしているのは、selectedIndexだとクリップが切り替わるたびに
+    // ループが作り直されて監視が途切れてしまうため。
+    //
+    // repeatOnLifecycleで囲むのは、アプリをバックグラウンドに回しても
+    // （BackHandlerでmoveTaskToBackした場合など）この無限ループ自体は
+    // Composition生存中ずっと動き続け、上のDisposableEffectが再生こそ止めるものの
+    // PLAYBACK_POLL_INTERVAL_MS間隔のポーリングは止まらず無駄にCPU/バッテリーを
+    // 消費していたため。STARTED未満（バックグラウンド）になると自動的に一時停止し、
+    // 前面に戻ると再開する。
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(PLAYBACK_POLL_INTERVAL_MS)
+                viewModel.refreshPlaybackProgress()
             }
         }
     }
@@ -743,67 +795,95 @@ private fun TimelinePane(
                 Spacer(Modifier.height(10.dp))
 
                 selectedClip?.let { clip ->
-                    // MIN_TRIM_MS未満の動画はトリムハンドルの可動域が無くなり、
-                    // ドラッグ時にcoerceIn(min, max)のmin>maxで例外を起こす余地があるため、
-                    // 波形トリマー自体を出さない。
-                    if (clip.durationMs >= MIN_TRIM_MS) {
-                        Text(
-                            text = "${clip.timeText}：" +
-                                    "${formatSeconds(clip.startMs)} 〜 ${formatSeconds(clip.endMs)}" +
-                                    "（${formatSeconds(clip.trimmedDurationMs)}）",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        val key = clip.uri.toString()
-                        WaveformTrimmer(
-                            waveform = waveforms[key],
-                            isLoading = !waveforms.containsKey(key),
-                            texts = clip.texts,
-                            durationMs = clip.durationMs,
-                            startMs = clip.startMs,
-                            endMs = clip.endMs,
-                            positionMs = positionMs,
-                            enabled = !isExporting,
-                            callbacks = WaveformTrimmerCallbacks(
-                                onTrimChange = viewModel::updateTrim,
-                                onTrimMove = viewModel::moveTrim,
-                                onSplitMove = viewModel::moveSplit,
-                                onSeek = viewModel::seekWithinTrim,
-                                onScrubStart = viewModel::beginScrub,
-                                onScrubEnd = viewModel::endScrub
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(WAVEFORM_HEIGHT)
-                                .padding(top = 8.dp)
-                        )
-
-                        Text(
-                            if (clip.texts.size > 1) {
-                                "紫のラインがひとことの区切り・つまんで移動、区間内は長押しで範囲ごと移動"
-                            } else {
-                                "波形の端をつまんで長さを調整・内側は長押しで範囲ごと移動"
-                            },
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    } else if (clip.durationMs <= 0) {
-                        Text(
-                            "この動画は長さを取得できませんでした",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else {
-                        Text(
-                            "この動画は短すぎてトリミングできません",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                    val key = clip.uri.toString()
+                    TrimSection(
+                        clip = clip,
+                        waveform = waveforms[key],
+                        isWaveformLoading = !waveforms.containsKey(key),
+                        positionMs = positionMs,
+                        isExporting = isExporting,
+                        viewModel = viewModel
+                    )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 選択中クリップのトリム表示部分。[TimelinePane] から切り出したもの。
+ *
+ * MIN_TRIM_MS未満の動画はトリムハンドルの可動域が無くなり、ドラッグ時に
+ * coerceIn(min, max)のmin>maxで例外を起こす余地があるため、波形トリマー自体を出さない。
+ */
+@Composable
+private fun TrimSection(
+    clip: VlogClip,
+    waveform: Waveform?,
+    isWaveformLoading: Boolean,
+    positionMs: Long,
+    isExporting: Boolean,
+    viewModel: VlogViewModel
+) {
+    when {
+        clip.durationMs >= MIN_TRIM_MS -> {
+            Text(
+                text = "${clip.timeText}：" +
+                        "${formatSeconds(clip.startMs)} 〜 ${formatSeconds(clip.endMs)}" +
+                        "（${formatSeconds(clip.trimmedDurationMs)}）",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            WaveformTrimmer(
+                waveform = waveform,
+                isLoading = isWaveformLoading,
+                texts = clip.texts,
+                durationMs = clip.durationMs,
+                startMs = clip.startMs,
+                endMs = clip.endMs,
+                positionMs = positionMs,
+                enabled = !isExporting,
+                callbacks = WaveformTrimmerCallbacks(
+                    onTrimChange = viewModel::updateTrim,
+                    onTrimMove = viewModel::moveTrim,
+                    onSplitMove = viewModel::moveSplit,
+                    onSeek = viewModel::seekWithinTrim,
+                    onScrubStart = viewModel::beginScrub,
+                    onScrubEnd = viewModel::endScrub
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(WAVEFORM_HEIGHT)
+                    .padding(top = 8.dp)
+            )
+
+            Text(
+                if (clip.texts.size > 1) {
+                    "紫のラインがひとことの区切り・つまんで移動、区間内は長押しで範囲ごと移動"
+                } else {
+                    "波形の端をつまんで長さを調整・内側は長押しで範囲ごと移動"
+                },
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+
+        clip.durationMs <= 0 -> {
+            Text(
+                "この動画は長さを取得できませんでした",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        else -> {
+            Text(
+                "この動画は短すぎてトリミングできません",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error
+            )
         }
     }
 }
@@ -1037,13 +1117,19 @@ private fun WaveformTrimmer(
 
     // pointerInputのラムダは長く生き続けるので、最新値はrememberUpdatedState経由で読む。
     // 直接キャプチャすると、ドラッグ中ずっと掴んだ瞬間の値を見続けてしまう。
-    val latestStart by rememberUpdatedState(startMs)
-    val latestEnd by rememberUpdatedState(endMs)
-    val latestDuration by rememberUpdatedState(durationMs)
+    // State自体（startState等）はドラッグ処理を切り出したトップレベル関数に渡し、
+    // そちらでも「ドラッグ中ずっと最新値を読み続ける」性質を保つのに使う。
+    val startState = rememberUpdatedState(startMs)
+    val endState = rememberUpdatedState(endMs)
+    val durationState = rememberUpdatedState(durationMs)
+    val callbacksState = rememberUpdatedState(callbacks)
+    val latestStart by startState
+    val latestEnd by endState
+    val latestDuration by durationState
     val latestTexts by rememberUpdatedState(texts)
     // 6個のコールバックそれぞれをrememberUpdatedStateしていたのを、
     // データクラスであるcallbacks自体を1回rememberUpdatedStateする形に集約
-    val latestCallbacks by rememberUpdatedState(callbacks)
+    val latestCallbacks by callbacksState
 
     val density = LocalDensity.current
     val handleHalfPx = with(density) { TRIM_HANDLE_WIDTH.toPx() / 2f }
@@ -1098,147 +1184,47 @@ private fun WaveformTrimmer(
                     try {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val track = TrackMetrics.forWidth(size.width.toFloat(), handleHalfPx)
-                        val startX = track.msToX(latestStart, latestDuration)
-                        val endX = track.msToX(latestEnd, latestDuration)
 
-                        // つまみと分割ラインのうち、いちばん近いものを探す。
-                        // どちらの許容範囲にも入らなければ「本体」として扱う
-                        val distanceToStartHandle = abs(down.position.x - startX)
-                        val distanceToEndHandle = abs(down.position.x - endX)
-                        val handleKind = if (distanceToStartHandle <= distanceToEndHandle) {
-                            TrimHandle.Start
-                        } else {
-                            TrimHandle.End
-                        }
-                        val nearestHandleDistance = minOf(distanceToStartHandle, distanceToEndHandle)
-
-                        var nearestSplit: Int? = null
-                        var nearestSplitDist = Float.MAX_VALUE
-                        for (i in 1 until latestTexts.size) {
-                            val splitX = track.msToX(latestTexts[i].startMs, latestDuration)
-                            val dist = abs(down.position.x - splitX)
-                            if (dist < nearestSplitDist) {
-                                nearestSplitDist = dist
-                                nearestSplit = i
-                            }
-                        }
-
-                        val grabbedHandle =
-                            nearestHandleDistance <= grabRadiusPx && nearestHandleDistance <= nearestSplitDist
-                        // valにしてwhenの分岐内でスマートキャストできるようにし、!!を使わずに済ませる
-                        val splitToGrab: Int? = nearestSplit.takeIf {
-                            !grabbedHandle && it != null && nearestSplitDist <= grabRadiusPx
-                        }
-
-                        when {
+                        when (
+                            val grab = hitTestTrim(
+                                down.position.x, track, latestStart, latestEnd, latestDuration,
+                                latestTexts, grabRadiusPx
+                            )
+                        ) {
                             // --- 端のつまみ：即ドラッグで伸縮 ---
-                            grabbedHandle -> {
-                                activeHandle = handleKind
+                            is TrimGrab.Handle -> {
+                                activeHandle = grab.kind
+                                val startX = track.msToX(latestStart, latestDuration)
+                                val endX = track.msToX(latestEnd, latestDuration)
                                 val grabOffset =
-                                    if (handleKind == TrimHandle.Start) down.position.x - startX
+                                    if (grab.kind == TrimHandle.Start) down.position.x - startX
                                     else down.position.x - endX
 
-                                dragUntilRelease(down.id) { change ->
-                                    val ms =
-                                        track.xToMs(change.position.x - grabOffset, latestDuration)
-                                    // coerceIn(min, max)はmin > maxだと例外を投げる。
-                                    // durationMsがMIN_TRIM_MS未満の極端に短い動画では
-                                    // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
-                                    // 「動かせる余地が無ければ現在地のまま」に倒す。
-                                    when (handleKind) {
-                                        TrimHandle.Start -> {
-                                            val next = ms.coerceIn(
-                                                0L, (latestEnd - MIN_TRIM_MS).coerceAtLeast(0L)
-                                            )
-                                            latestCallbacks.onTrimChange(next, latestEnd, next)
-                                        }
-                                        TrimHandle.End -> {
-                                            val next = ms.coerceIn(
-                                                (latestStart + MIN_TRIM_MS).coerceAtMost(latestDuration),
-                                                latestDuration
-                                            )
-                                            latestCallbacks.onTrimChange(latestStart, next, next)
-                                        }
-                                    }
-                                }
+                                dragTrimHandle(
+                                    down.id, grab.kind, grabOffset, track,
+                                    startState, endState, durationState
+                                ) { s, e, seek -> latestCallbacks.onTrimChange(s, e, seek) }
                             }
 
                             // --- 分割ライン：即ドラッグで移動 ---
-                            splitToGrab != null -> {
-                                val index = splitToGrab
-                                activeSplitIndex = index
+                            is TrimGrab.Split -> {
+                                activeSplitIndex = grab.index
                                 val splitX =
-                                    track.msToX(latestTexts[index].startMs, latestDuration)
+                                    track.msToX(latestTexts[grab.index].startMs, latestDuration)
                                 val grabOffset = down.position.x - splitX
 
-                                dragUntilRelease(down.id) { change ->
-                                    val ms =
-                                        track.xToMs(change.position.x - grabOffset, latestDuration)
-                                    latestCallbacks.onSplitMove(index, ms)
-                                }
+                                dragSplitLine(
+                                    down.id, grab.index, grabOffset, track, durationState
+                                ) { index, ms -> latestCallbacks.onSplitMove(index, ms) }
                             }
 
                             // --- 本体：すぐ動かせば従来通りなぞって頭出し、
                             //     長押ししてから動かせば区間ごと移動 ---
-                            else -> {
-                                val outcome =
-                                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                        awaitSlopOrRelease(
-                                            down.id, viewConfiguration.touchSlop, down.position
-                                        )
-                                    }
-
-                                when (outcome) {
-                                    is DragOutcome.Dragged -> {
-                                        // すぐ動いた＝なぞって頭出し（従来のシーク）
-                                        scrubbing = true
-                                        latestCallbacks.onScrubStart()
-                                        latestCallbacks.onSeek(
-                                            track.xToMs(
-                                                outcome.change.position.x, latestDuration
-                                            )
-                                        )
-                                        dragUntilRelease(outcome.change.id) { change ->
-                                            latestCallbacks.onSeek(
-                                                track.xToMs(change.position.x, latestDuration)
-                                            )
-                                        }
-                                    }
-
-                                    DragOutcome.Released -> {
-                                        // 動かさず離した＝タップ。その場へ頭出し
-                                        latestCallbacks.onSeek(track.xToMs(down.position.x, latestDuration))
-                                    }
-
-                                    null -> {
-                                        // 動かさず一定時間経過＝長押し。
-                                        // まだ指が乗っていれば区間ごと移動へ切り替える
-                                        val stillDown = currentEvent.changes
-                                            .firstOrNull { it.id == down.id }?.pressed == true
-                                        if (!stillDown) {
-                                            latestCallbacks.onSeek(
-                                                track.xToMs(down.position.x, latestDuration)
-                                            )
-                                        } else {
-                                            haptics.performHapticFeedback(
-                                                HapticFeedbackType.LongPress
-                                            )
-                                            isMovingTrim = true
-                                            val originalStart = latestStart
-                                            val pxPerMs =
-                                                track.width / latestDuration.coerceAtLeast(1L)
-                                            val anchorX = down.position.x
-
-                                            dragUntilRelease(down.id) { change ->
-                                                val deltaMs =
-                                                    ((change.position.x - anchorX) / pxPerMs)
-                                                        .toLong()
-                                                val targetStart = originalStart + deltaMs
-                                                latestCallbacks.onTrimMove(targetStart, targetStart)
-                                            }
-                                        }
-                                    }
-                                }
+                            TrimGrab.Body -> {
+                                scrubbing = dragBodyOrMove(
+                                    down, track, startState, durationState, viewConfiguration,
+                                    haptics, onMovingTrimChange = { isMovingTrim = it }, latestCallbacks
+                                )
                             }
                         }
                     } finally {
@@ -1613,6 +1599,179 @@ private suspend fun AwaitPointerEventScope.awaitSlopOrRelease(
             return DragOutcome.Dragged(change)
         }
     }
+}
+
+/** [hitTestTrim] の結果。ダウン位置が何を掴んだと判定されたか */
+private sealed interface TrimGrab {
+    data class Handle(val kind: TrimHandle) : TrimGrab
+    data class Split(val index: Int) : TrimGrab
+    data object Body : TrimGrab
+}
+
+/**
+ * 指を置いた位置が、つまみ・分割ライン・本体のどれに最も近いかを判定する純粋関数。
+ *
+ * つまみと分割ラインのうち、いちばん近いものを探し、どちらの許容範囲にも
+ * 入らなければ「本体」として扱う。副作用を持たないため、ドラッグ処理から
+ * 独立してテスト・見通しができる。
+ */
+private fun hitTestTrim(
+    downX: Float,
+    track: TrackMetrics,
+    startMs: Long,
+    endMs: Long,
+    durationMs: Long,
+    texts: List<TextSegment>,
+    grabRadiusPx: Float
+): TrimGrab {
+    val startX = track.msToX(startMs, durationMs)
+    val endX = track.msToX(endMs, durationMs)
+    val distanceToStartHandle = abs(downX - startX)
+    val distanceToEndHandle = abs(downX - endX)
+    val handleKind = if (distanceToStartHandle <= distanceToEndHandle) {
+        TrimHandle.Start
+    } else {
+        TrimHandle.End
+    }
+    val nearestHandleDistance = minOf(distanceToStartHandle, distanceToEndHandle)
+
+    var nearestSplit: Int? = null
+    var nearestSplitDist = Float.MAX_VALUE
+    for (i in 1 until texts.size) {
+        val splitX = track.msToX(texts[i].startMs, durationMs)
+        val dist = abs(downX - splitX)
+        if (dist < nearestSplitDist) {
+            nearestSplitDist = dist
+            nearestSplit = i
+        }
+    }
+
+    val grabbedHandle = nearestHandleDistance <= grabRadiusPx && nearestHandleDistance <= nearestSplitDist
+    // valにしてwhenの分岐内でスマートキャストできるようにし、!!を使わずに済ませる
+    val splitToGrab: Int? = nearestSplit.takeIf {
+        !grabbedHandle && it != null && nearestSplitDist <= grabRadiusPx
+    }
+
+    return when {
+        grabbedHandle -> TrimGrab.Handle(handleKind)
+        splitToGrab != null -> TrimGrab.Split(splitToGrab)
+        else -> TrimGrab.Body
+    }
+}
+
+/**
+ * 端のつまみをドラッグしている間、指の位置をトリム開始・終了位置へ変換して通知し続ける。
+ *
+ * [latestEnd]/[latestDuration] を [State] のまま受け取っているのは、ドラッグ中に
+ * 外側から渡ってくる値（例えば他の変更でstartMs/endMsが変わる）を毎回読み直すため。
+ * 呼び出し時点のLong値を渡してしまうと、掴んだ瞬間の値のまま固定されてしまう。
+ */
+private suspend fun AwaitPointerEventScope.dragTrimHandle(
+    downId: PointerId,
+    handleKind: TrimHandle,
+    grabOffset: Float,
+    track: TrackMetrics,
+    latestStart: State<Long>,
+    latestEnd: State<Long>,
+    latestDuration: State<Long>,
+    onTrimChange: (startMs: Long, endMs: Long, seekMs: Long) -> Unit
+) {
+    dragUntilRelease(downId) { change ->
+        val ms = track.xToMs(change.position.x - grabOffset, latestDuration.value)
+        // coerceIn(min, max)はmin > maxだと例外を投げる。
+        // durationMsがMIN_TRIM_MS未満の極端に短い動画では
+        // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
+        // 「動かせる余地が無ければ現在地のまま」に倒す。
+        when (handleKind) {
+            TrimHandle.Start -> {
+                val next = ms.coerceIn(0L, (latestEnd.value - MIN_TRIM_MS).coerceAtLeast(0L))
+                onTrimChange(next, latestEnd.value, next)
+            }
+            TrimHandle.End -> {
+                val next = ms.coerceIn(
+                    (latestStart.value + MIN_TRIM_MS).coerceAtMost(latestDuration.value),
+                    latestDuration.value
+                )
+                onTrimChange(latestStart.value, next, next)
+            }
+        }
+    }
+}
+
+/** 分割ラインをドラッグしている間、指の位置を区切り位置へ変換して通知し続ける */
+private suspend fun AwaitPointerEventScope.dragSplitLine(
+    downId: PointerId,
+    index: Int,
+    grabOffset: Float,
+    track: TrackMetrics,
+    latestDuration: State<Long>,
+    onSplitMove: (index: Int, ms: Long) -> Unit
+) {
+    dragUntilRelease(downId) { change ->
+        val ms = track.xToMs(change.position.x - grabOffset, latestDuration.value)
+        onSplitMove(index, ms)
+    }
+}
+
+/**
+ * 波形本体を掴んだときの処理。すぐ動かせば従来通りなぞって頭出し（スクラブ）、
+ * 動かさず長押ししてから動かせば区間ごと移動に切り替える。
+ *
+ * @return スクラブ（なぞって頭出し）が始まったかどうか。呼び出し元はこれを見て
+ *   [WaveformTrimmerCallbacks.onScrubEnd] を呼ぶべきか判断する。
+ */
+private suspend fun AwaitPointerEventScope.dragBodyOrMove(
+    down: PointerInputChange,
+    track: TrackMetrics,
+    latestStart: State<Long>,
+    latestDuration: State<Long>,
+    viewConfiguration: ViewConfiguration,
+    haptics: HapticFeedback,
+    onMovingTrimChange: (Boolean) -> Unit,
+    callbacks: WaveformTrimmerCallbacks
+): Boolean {
+    var scrubbing = false
+    val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+        awaitSlopOrRelease(down.id, viewConfiguration.touchSlop, down.position)
+    }
+
+    when (outcome) {
+        is DragOutcome.Dragged -> {
+            // すぐ動いた＝なぞって頭出し（従来のシーク）
+            scrubbing = true
+            callbacks.onScrubStart()
+            callbacks.onSeek(track.xToMs(outcome.change.position.x, latestDuration.value))
+            dragUntilRelease(outcome.change.id) { change ->
+                callbacks.onSeek(track.xToMs(change.position.x, latestDuration.value))
+            }
+        }
+
+        DragOutcome.Released -> {
+            // 動かさず離した＝タップ。その場へ頭出し
+            callbacks.onSeek(track.xToMs(down.position.x, latestDuration.value))
+        }
+
+        null -> {
+            // 動かさず一定時間経過＝長押し。まだ指が乗っていれば区間ごと移動へ切り替える
+            val stillDown = currentEvent.changes.firstOrNull { it.id == down.id }?.pressed == true
+            if (!stillDown) {
+                callbacks.onSeek(track.xToMs(down.position.x, latestDuration.value))
+            } else {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onMovingTrimChange(true)
+                val originalStart = latestStart.value
+                val pxPerMs = track.width / latestDuration.value.coerceAtLeast(1L)
+                val anchorX = down.position.x
+
+                dragUntilRelease(down.id) { change ->
+                    val deltaMs = ((change.position.x - anchorX) / pxPerMs).toLong()
+                    val targetStart = originalStart + deltaMs
+                    callbacks.onTrimMove(targetStart, targetStart)
+                }
+            }
+        }
+    }
+    return scrubbing
 }
 
 /** 縦長の丸ピル＋中央の滑り止め2本。掴んでいる間は少しだけ太らせる */
