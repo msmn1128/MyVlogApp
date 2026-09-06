@@ -77,10 +77,17 @@ private fun queryMediaStoreDateMillis(context: Context, uri: Uri): Long? = runCa
     }
 }.getOrNull()
 
-/** 撮影時刻 "HH:mm"（24時間表記） */
+/**
+ * 撮影時刻 "HH:mm"（24時間表記）。
+ *
+ * Locale.USを明示するのは、この文字列が動画へ焼き込まれるため。
+ * 既定ロケールに任せると、アラビア語ロケールなどで数字の字形が変わってしまい、
+ * 書き出しに使うフォントに字形が無いと文字化けする（表示だけの[formatSeconds]と同じ方針）。
+ * タイムゾーンは既定のまま＝端末のローカル時刻で表示する。
+ */
 private fun formatTime(millis: Long?): String =
-    millis?.let { SimpleDateFormat("HH:mm", Locale.getDefault()).format(it) } ?: "00:00"
+    millis?.let { SimpleDateFormat("HH:mm", Locale.US).format(it) } ?: "00:00"
 
-/** 撮影日 "yyyy/MM/dd" */
+/** 撮影日 "yyyy/MM/dd"。書き出しファイル名にも使うためロケール固定（理由は[formatTime]と同じ） */
 private fun formatDate(millis: Long?): String =
-    SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(millis ?: System.currentTimeMillis())
+    SimpleDateFormat("yyyy/MM/dd", Locale.US).format(millis ?: System.currentTimeMillis())

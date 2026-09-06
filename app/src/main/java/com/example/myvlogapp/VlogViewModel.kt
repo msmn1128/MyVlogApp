@@ -368,11 +368,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 endMs = newEnd,
                 // 先頭の区間は常に絶対位置0（動画そのものの頭）なので動かさない。
                 // 区切りは下限を1msにクランプし、0へ丸めて先頭区間と衝突しないようにする
-                // （区切りだけが0になると「先頭は必ず0」の前提が崩れ、以後の判定が壊れる）
+                // （区切りだけが0になると「先頭は必ず0」の前提が崩れ、以後の判定が壊れる）。
+                // 上限にcoerceAtLeast(1L)を掛けるのは、durationMsが0の壊れたデータで
+                // coerceIn(1L, 0L)（min > max）が例外を投げるのを防ぐため。
                 texts = current.texts.map { segment ->
                     if (segment.startMs == 0L) segment
                     else segment.copy(
-                        startMs = (segment.startMs + delta).coerceIn(1L, current.durationMs)
+                        startMs = (segment.startMs + delta)
+                            .coerceIn(1L, current.durationMs.coerceAtLeast(1L))
                     )
                 }
             )

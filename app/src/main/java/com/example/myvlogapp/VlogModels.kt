@@ -39,8 +39,13 @@ data class VlogClip(
     fun textIndexAt(positionMs: Long): Int =
         texts.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
 
-    /** その位置に出るひとこと */
-    fun textAt(positionMs: Long): String = texts[textIndexAt(positionMs)].text
+    /**
+     * その位置に出るひとこと。
+     * textsが空になる経路は現状無い（生成・復元・編集のどれも必ず1件以上残す）が、
+     * ここで添字アクセスが例外を投げると画面全体が落ちるため、防御的にgetOrNullで読む。
+     */
+    fun textAt(positionMs: Long): String =
+        texts.getOrNull(textIndexAt(positionMs))?.text ?: DEFAULT_HITOKOTO
 
     /**
      * 区切りのうち [positionMs] のすぐ近くにあるもの。無ければ null。

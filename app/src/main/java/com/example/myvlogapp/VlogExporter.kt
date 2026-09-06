@@ -20,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -589,12 +590,19 @@ object VlogExporter {
             { session -> completion.complete(session) },
             { /* ログはセッション完了後にまとめて参照するのでここでは何もしない */ },
             { statistics ->
-                if (totalDurationMs > 0) {
+                if (totalDurationMs > 0 && callerContext.isActive) {
                     val percent = (statistics.time / totalDurationMs.toDouble() * 100)
                         .toInt().coerceIn(0, 100)
                     if (percent != lastPercent) {
                         lastPercent = percent
-                        runBlocking(callerContext) { onProgress("書き出し中... $percent%") }
+                        // 「中止」を押した直後は、この統計コールバックが飛んでくる頃には
+                        // callerContextのJobが既にキャンセル済みのことがある。その状態で
+                        // runBlockingを呼ぶとCancellationExceptionがFFmpegKit側の
+                        // コールバックスレッドへ投げ出され、キャッチされずにアプリごと
+                        // 落ちうる。進捗表示は落としても実害が無いので握り潰す。
+                        runCatching {
+                            runBlocking(callerContext) { onProgress("書き出し中... $percent%") }
+                        }
                     }
                 }
             }
@@ -652,6 +660,9 @@ object VlogExporter {
                 file.outputStream().use { input.copyTo(it) }
             }
         } catch (e: Exception) {
+            // 例外そのものはユーザーに見せても意味が無いが、
+            // 「配置したはずなのに読めない」ときの原因追跡にはログが要る
+            Log.w(LOG_TAG, "アセットを展開できませんでした: assets/$assetPath", e)
             throw VlogExportException("素材を読み込めません: assets/$assetPath を配置してください")
         }
         // 実際に使われた素材の大きさをログに残す。

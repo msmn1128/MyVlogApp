@@ -32,8 +32,13 @@ object ExportStatus {
     val state: StateFlow<ExportState> = _state.asStateFlow()
 
     /**
-     * Activityが購読していない間に飛んだメッセージ（保存完了・失敗など）を
-     * 取りこぼさないよう、直近1件だけ溜めておく。
+     * 保存完了・失敗などの一過性メッセージ。
+     *
+     * replay=0なので、購読者（ViewModel）がいない間に飛んだメッセージは配られずに消える。
+     * これは意図した挙動で、replayを持たせるとアプリを開き直したときに前回の
+     * 「保存しました」がもう一度Toastで出てしまう。extraBufferCapacity=1は、
+     * 購読者の処理が一瞬遅れてもtryEmitが取りこぼさないための余裕。
+     * 書き出し完了そのものは通知（[VlogExportService]）でも伝わる。
      */
     private val _events = MutableSharedFlow<VlogEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<VlogEvent> = _events.asSharedFlow()

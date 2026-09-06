@@ -1221,9 +1221,17 @@ private fun WaveformTrimmer(
                             // --- 本体：すぐ動かせば従来通りなぞって頭出し、
                             //     長押ししてから動かせば区間ごと移動 ---
                             TrimGrab.Body -> {
-                                scrubbing = dragBodyOrMove(
+                                // scrubbingは「戻り値で受け取る」のでは駄目で、開始した時点で
+                                // ここへ反映させる必要がある。ドラッグ中にキャンセルされると
+                                // dragBodyOrMoveは値を返さないまま抜けるため、戻り値方式だと
+                                // finallyのonScrubEnd()が呼ばれず、指を離しても再生が
+                                // 再開しないまま固まってしまう。
+                                dragBodyOrMove(
                                     down, track, startState, durationState, viewConfiguration,
-                                    haptics, onMovingTrimChange = { isMovingTrim = it }, latestCallbacks
+                                    haptics,
+                                    onScrubbingChange = { scrubbing = it },
+                                    onMovingTrimChange = { isMovingTrim = it },
+                                    callbacks = latestCallbacks
                                 )
                             }
                         }
@@ -1717,8 +1725,11 @@ private suspend fun AwaitPointerEventScope.dragSplitLine(
  * 波形本体を掴んだときの処理。すぐ動かせば従来通りなぞって頭出し（スクラブ）、
  * 動かさず長押ししてから動かせば区間ごと移動に切り替える。
  *
- * @return スクラブ（なぞって頭出し）が始まったかどうか。呼び出し元はこれを見て
- *   [WaveformTrimmerCallbacks.onScrubEnd] を呼ぶべきか判断する。
+ * @param onScrubbingChange スクラブ（なぞって頭出し）を始めた時点で true を通知する。
+ *   戻り値ではなくコールバックで即時に伝えるのは、ドラッグ中にジェスチャーごと
+ *   キャンセルされるとこの関数は値を返さないまま抜けるため。戻り値方式だと
+ *   呼び出し元のfinallyが [WaveformTrimmerCallbacks.onScrubEnd] を呼べず、
+ *   指を離しても再生が再開しない状態が残る。
  */
 private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     down: PointerInputChange,
@@ -1727,10 +1738,10 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     latestDuration: State<Long>,
     viewConfiguration: ViewConfiguration,
     haptics: HapticFeedback,
+    onScrubbingChange: (Boolean) -> Unit,
     onMovingTrimChange: (Boolean) -> Unit,
     callbacks: WaveformTrimmerCallbacks
-): Boolean {
-    var scrubbing = false
+) {
     val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
         awaitSlopOrRelease(down.id, viewConfiguration.touchSlop, down.position)
     }
@@ -1738,7 +1749,7 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     when (outcome) {
         is DragOutcome.Dragged -> {
             // すぐ動いた＝なぞって頭出し（従来のシーク）
-            scrubbing = true
+            onScrubbingChange(true)
             callbacks.onScrubStart()
             callbacks.onSeek(track.xToMs(outcome.change.position.x, latestDuration.value))
             dragUntilRelease(outcome.change.id) { change ->
@@ -1771,7 +1782,6 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
             }
         }
     }
-    return scrubbing
 }
 
 /** 縦長の丸ピル＋中央の滑り止め2本。掴んでいる間は少しだけ太らせる */
