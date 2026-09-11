@@ -379,11 +379,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         seekAndPause(previewMs)
     }
 
-    /** 先頭から指定の長さだけを選び直す（操作バーの 2s / 4s プリセット） */
+    /**
+     * いまの再生位置から指定の長さだけを選び直す（操作バーの 2s / 4s プリセット）。
+     * 常に先頭からだと押すたびにシークし直しになって面倒なため、
+     * 触っていた位置をそのまま起点にする。
+     */
     fun applyTrimPreset(lengthMs: Long) {
         val clip = selectedClip ?: return
         if (clip.durationMs <= 0L) return
-        updateTrim(startMs = 0L, endMs = lengthMs.coerceAtMost(clip.durationMs))
+        val startMs = _playbackPositionMs.value.coerceIn(0L, clip.durationMs)
+        updateTrim(startMs = startMs, endMs = (startMs + lengthMs).coerceAtMost(clip.durationMs))
     }
 
     /**
