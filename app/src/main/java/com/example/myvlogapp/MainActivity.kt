@@ -19,7 +19,10 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -401,6 +404,7 @@ private fun VlogAppDialogs(
             canSave = canSaveProject,
             onSave = viewModel::saveProject,
             onLoad = onLoadProject,
+            onOverwrite = { project -> viewModel.overwriteProject(project.id, project.name) },
             onDelete = viewModel::deleteProject,
             onDismiss = onDismissSaves
         )
@@ -857,17 +861,6 @@ private fun TrimSection(
                     .height(WAVEFORM_HEIGHT)
                     .padding(top = 8.dp)
             )
-
-            Text(
-                if (clip.texts.size > 1) {
-                    "紫のラインがひとことの区切り・つまんで移動、区間内は長押しで範囲ごと移動"
-                } else {
-                    "波形の端をつまんで長さを調整・内側は長押しで範囲ごと移動"
-                },
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
         }
 
         clip.durationMs <= 0 -> {
@@ -911,8 +904,9 @@ private fun TimelineToolbar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         val enabled = selectedClip != null && !isExporting
+        val trimPresetEnabled = enabled && (selectedClip?.durationMs ?: 0L) > 0L
 
-        // 並びは 連続再生 → 入れ替え → もとに戻す → やり直す
+        // 並びは 連続再生 → 2s/4sプリセット → 入れ替え → もとに戻す → やり直す
         //        → ひとことを分割 → 削除 → すべて削除
         TimelineToggleButton(
             icon = VlogIcons.Play,
@@ -924,6 +918,21 @@ private fun TimelineToolbar(
             },
             enabled = clips.isNotEmpty() && !isExporting,
             onClick = { viewModel.setAutoAdvance(!autoAdvance) }
+        )
+
+        TimelineDivider()
+
+        TrimPresetButton(
+            label = "2s",
+            contentDescription = "先頭から2秒を選択",
+            enabled = trimPresetEnabled,
+            onClick = { viewModel.applyTrimPreset(2_000L) }
+        )
+        TrimPresetButton(
+            label = "4s",
+            contentDescription = "先頭から4秒を選択",
+            enabled = trimPresetEnabled,
+            onClick = { viewModel.applyTrimPreset(4_000L) }
         )
 
         TimelineDivider()
@@ -1888,6 +1897,42 @@ private fun CompactIconButton(
 }
 
 /**
+ * トリミングのプリセットボタン（「2s」「4s」）。
+ * 他の操作バーボタンが正円のアイコンなのに対し、こちらは文字ラベルなので
+ * 横幅がラベルぶん伸びる楕円にしてある。
+ */
+@Composable
+private fun TrimPresetButton(
+    label: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .height(TOOLBAR_BUTTON_SIZE)
+            .clip(RoundedCornerShape(50))
+            .border(1.dp, tint.copy(alpha = if (enabled) 0.6f else 0.24f), RoundedCornerShape(50))
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick
+            )
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (enabled) tint else tint.copy(alpha = 0.38f)
+        )
+    }
+}
+
+/**
  * オン/オフを持つ操作バーのボタン。
  *
  * 他がすべて「押したら1回起きる」動作なので、状態を持つこれだけは
@@ -1939,6 +1984,7 @@ private fun SaveLoadDialog(
     canSave: Boolean,
     onSave: (String) -> Unit,
     onLoad: (Long) -> Unit,
+    onOverwrite: (SavedProject) -> Unit,
     onDelete: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2007,6 +2053,7 @@ private fun SaveLoadDialog(
                             SavedProjectRow(
                                 project = project,
                                 onLoad = { onLoad(project.id) },
+                                onOverwrite = { onOverwrite(project) },
                                 onDelete = { pendingDelete = project }
                             )
                         }
@@ -2020,18 +2067,29 @@ private fun SaveLoadDialog(
     )
 }
 
-/** 保存1件ぶんの行。行そのものが「読み出す」ボタンを兼ねる */
+/**
+ * 保存1件ぶんの行。タップで「読み出す」、長押しで「上書き保存」を兼ねる
+ * （上書きは確認ダイアログを出さない）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SavedProjectRow(
     project: SavedProject,
     onLoad: () -> Unit,
+    onOverwrite: () -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(
-        onClick = onLoad,
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClickLabel = "読み出す",
+                onLongClickLabel = "上書き保存",
+                onLongClick = onOverwrite,
+                onClick = onLoad
+            )
     ) {
         Row(
             modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),

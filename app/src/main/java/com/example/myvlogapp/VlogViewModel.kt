@@ -159,9 +159,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         preparePaused()
     }
 
-    /** 既存の再生位置を保ったまま末尾に追加する（動画追加用） */
-    private fun appendToPlaylist(clips: List<VlogClip>) {
-        player.addMediaItems(clips.map { MediaItem.fromUri(it.uri) })
+    /**
+     * 既存の再生位置を保ったまま、撮影日時順で決まった位置へ挿入する（動画追加用）。
+     * [insertions] は (挿入先のindex, クリップ) のペアを昇順（indexが小さい順）で渡す。
+     * 昇順に1件ずつ入れていけば後続の挿入先indexは崩れない。
+     */
+    private fun insertIntoPlaylist(insertions: List<Pair<Int, VlogClip>>) {
+        insertions.forEach { (index, clip) ->
+            player.addMediaItems(index, listOf(MediaItem.fromUri(clip.uri)))
+        }
         preparePaused()
     }
 
@@ -281,7 +287,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 選択された動画をタイムラインの末尾に追加する */
+    /** 選択された動画を撮影/作成日時順になる位置へ追加する */
     fun addClips(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
@@ -298,18 +304,28 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                         width = meta.width,
                         height = meta.height,
                         startMs = 0L,
-                        endMs = meta.durationMs
+                        endMs = meta.durationMs,
+                        shotAtMillis = meta.shotAtMillis
                     )
                 }
             }
 
             clipsMutationMutex.withLock {
                 val wasEmpty = _clips.value.isEmpty()
-                recordHistory()
-                _clips.value = _clips.value + added
-                appendToPlaylist(added)
+                val keepSelectedId = _clips.value.getOrNull(_selectedIndex.value)?.id
 
-                if (wasEmpty) select(0)
+                recordHistory()
+                val (merged, insertions) = mergeByShotAt(_clips.value, added)
+                _clips.value = merged
+                insertIntoPlaylist(insertions)
+
+                if (wasEmpty) {
+                    select(0)
+                } else {
+                    keepSelectedId?.let { id ->
+                        _selectedIndex.value = merged.indexOfFirst { it.id == id }.coerceAtLeast(0)
+                    }
+                }
             }
 
             val skipped = added.count { !it.isValid }
@@ -317,6 +333,28 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 _events.send(VlogEvent.Message("$skipped 件の動画は長さを取得できませんでした"))
             }
         }
+    }
+
+    /**
+     * 既存の並び（[current]）はそのままに、新規クリップ（[added]）だけを
+     * 撮影/作成日時（[VlogClip.sortKeyMs]）の位置へ差し込む。
+     *
+     * @return 差し込み後の全件リストと、ExoPlayerのプレイリストへ同じ操作を
+     *   再現するための (挿入先index, クリップ) のペア（indexが小さい順）
+     */
+    private fun mergeByShotAt(
+        current: List<VlogClip>,
+        added: List<VlogClip>
+    ): Pair<List<VlogClip>, List<Pair<Int, VlogClip>>> {
+        val result = current.toMutableList()
+        val insertions = mutableListOf<Pair<Int, VlogClip>>()
+        added.sortedBy { it.sortKeyMs }.forEach { clip ->
+            val index = result.indexOfFirst { it.sortKeyMs > clip.sortKeyMs }
+                .let { if (it < 0) result.size else it }
+            result.add(index, clip)
+            insertions += index to clip
+        }
+        return result to insertions
     }
 
     fun select(index: Int) {
@@ -339,6 +377,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 触った時点で止めて、指の位置のコマを出す。
         val previewMs = previewAtMs.coerceIn(startMs, endMs)
         seekAndPause(previewMs)
+    }
+
+    /** 先頭から指定の長さだけを選び直す（操作バーの 2s / 4s プリセット） */
+    fun applyTrimPreset(lengthMs: Long) {
+        val clip = selectedClip ?: return
+        if (clip.durationMs <= 0L) return
+        updateTrim(startMs = 0L, endMs = lengthMs.coerceAtMost(clip.durationMs))
     }
 
     /**
@@ -577,9 +622,31 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * 既存の保存内容へ上書きする（一覧の日付を長押ししたときの動作）。
+     * 削除と違って取り消し操作が無いわけではない（保存前の中身は失われるが、
+     * タイムライン自体の履歴には影響しない）ため、確認ダイアログは出さない。
+     */
+    fun overwriteProject(id: Long, name: String) {
+        val clipsToSave = _clips.value
+        if (clipsToSave.isEmpty()) {
+            sendMessage("保存できる編集内容がありません")
+            return
+        }
+
+        viewModelScope.launch {
+            val overwritten = ClipStore.overwriteProject(getApplication(), id, clipsToSave)
+            _projects.value = ClipStore.listProjects(getApplication())
+            sendMessage(
+                if (overwritten) "「$name」に上書きしました"
+                else "この保存は上書きできませんでした"
+            )
+        }
+    }
+
+    /**
      * 保存した編集内容へ差し替える。
      *
-     * 履歴に積んでから入れ替えるので、読み出す前の状態には「もとに戻す」で帰れる。
+     * 履歴に積んでから入れ替えるので、読み出す前の状態には「もとに戻す」で戻れる。
      */
     fun loadProject(id: Long) {
         viewModelScope.launch {
@@ -606,7 +673,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 if (restored.dropped > 0) {
                     "読み出しました（${restored.dropped} 件の動画は見つかりませんでした）"
                 } else {
-                    "読み出しました（もとに戻すで読み出す前へ帰れます）"
+                    "読み出しました（もとに戻すで読み出す前へ戻ります）"
                 }
             )
         }

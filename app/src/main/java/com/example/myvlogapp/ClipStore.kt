@@ -167,6 +167,29 @@ object ClipStore {
         }
     }
 
+    /**
+     * 既存の保存内容へ上書きする（名前・idはそのまま、保存日時と中身だけ差し替え）。
+     * @return 該当するidが無くて上書きできなかった場合は false
+     */
+    suspend fun overwriteProject(
+        context: Context,
+        id: Long,
+        clips: List<VlogClip>
+    ): Boolean = withContext(Dispatchers.IO) {
+        projectsMutex.withLock {
+            val projects = readProjects(context)
+            val index = projects.indexOfFirst { it.optLong(ProjectKeys.ID) == id }
+            if (index < 0) return@withLock false
+
+            val updated = JSONObject(projects[index].toString())
+                .put(ProjectKeys.SAVED_AT, System.currentTimeMillis())
+                .put(ProjectKeys.CLIPS, clipsToJson(clips))
+
+            writeProjects(context, projects.toMutableList().apply { set(index, updated) })
+            true
+        }
+    }
+
     /** 保存した内容を読み出す。見つからなければ null */
     suspend fun loadProject(context: Context, id: Long): RestoredClips? =
         withContext(Dispatchers.IO) {

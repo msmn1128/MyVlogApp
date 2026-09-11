@@ -31,9 +31,10 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             ?.toLongOrNull() ?: 0L
 
-        val shotAtMillis = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+        val shotAtMillis = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
             ?.let { parseCreationTime(it) }
-            ?: queryMediaStoreDateMillis(context, uri)
+            ?: queryMediaStoreDateMillis(context, uri))
+            ?: System.currentTimeMillis()
 
         // 生の幅・高さは回転情報(90/270度)を反映していないため補正する。
         // 縦持ち撮影の動画は内部的に横長のままrotation=90が入っていることが多い。
@@ -49,6 +50,7 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
         VideoMeta(
             timeText = formatTime(shotAtMillis),
             dateText = formatDate(shotAtMillis),
+            shotAtMillis = shotAtMillis,
             durationMs = durationMs,
             width = width.coerceAtLeast(1),
             height = height.coerceAtLeast(1)
@@ -57,7 +59,8 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
         // メタデータが1件も取れない動画（壊れたファイル、非対応コーデックなど）。
         // 「取得できなかった」こと自体は空リストと違って原因を追いたいことが多いのでログに残す。
         Log.w(LOG_TAG, "動画のメタデータを取得できませんでした: $uri", e)
-        VideoMeta(formatTime(null), formatDate(null), 0L, CANVAS_WIDTH, CANVAS_HEIGHT)
+        val fallbackMillis = System.currentTimeMillis()
+        VideoMeta(formatTime(fallbackMillis), formatDate(fallbackMillis), fallbackMillis, 0L, CANVAS_WIDTH, CANVAS_HEIGHT)
     } finally {
         runCatching { retriever.release() }
     }

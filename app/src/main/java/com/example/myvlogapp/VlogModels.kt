@@ -27,10 +27,18 @@ data class VlogClip(
     val height: Int,            // 回転補正済みの実表示高さ
     val texts: List<TextSegment> = listOf(TextSegment()),
     val startMs: Long = 0L,
-    val endMs: Long = 0L
+    val endMs: Long = 0L,
+    val shotAtMillis: Long = 0L // 撮影/作成日時（並び替えの基準）。0は未取得・旧データ
 ) {
     val trimmedDurationMs: Long get() = trimmedDurationMs(startMs, endMs)
     val isValid: Boolean get() = durationMs > 0 && endMs > startMs
+
+    /**
+     * 撮影日時順の並び替えに使うキー。
+     * [shotAtMillis] が無い旧データは [dateText]/[timeText] から逆算し、
+     * それも壊れていれば最後尾へ送る（並びを壊さないため）。
+     */
+    val sortKeyMs: Long get() = if (shotAtMillis > 0L) shotAtMillis else parseShotAtText(dateText, timeText)
 
     /** 区切り位置（2番目以降の区間の頭）。波形に紫のラインを引くのに使う */
     val splitPoints: List<Long> get() = texts.drop(1).map { it.startMs }
@@ -95,7 +103,9 @@ data class VlogClip(
             height = json.getInt(VlogClipKeys.HEIGHT),
             texts = json.readTextSegments(),
             startMs = json.getLong(VlogClipKeys.START_MS),
-            endMs = json.getLong(VlogClipKeys.END_MS)
+            endMs = json.getLong(VlogClipKeys.END_MS),
+            // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
+            shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS)
         )
     }
 }
@@ -125,6 +135,7 @@ object VlogClipKeys {
     const val TEXT = "text"
     const val START_MS = "startMs"
     const val END_MS = "endMs"
+    const val SHOT_AT_MILLIS = "shotAtMillis"
 
     /** 区間(texts)を持たせる前の旧バージョンで使われていたキー。読み込み専用の後方互換 */
     const val LEGACY_USER_TEXT = "userText"
@@ -149,6 +160,7 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
     })
     put(VlogClipKeys.START_MS, startMs)
     put(VlogClipKeys.END_MS, endMs)
+    put(VlogClipKeys.SHOT_AT_MILLIS, shotAtMillis)
 }
 
 /**
@@ -204,9 +216,20 @@ data class TextSpan(
     val text: String
 )
 
+/**
+ * [VlogClip.sortKeyMs] 用。[VideoMetadataReader.formatDate]/[formatTime] と同じ書式
+ * （"yyyy/MM/dd" + "HH:mm"、Locale.US、端末ローカルタイムゾーン）の逆変換。
+ * 壊れていれば最後尾へ送るため [Long.MAX_VALUE] を返す。
+ */
+private fun parseShotAtText(dateText: String, timeText: String): Long = runCatching {
+    java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.US)
+        .parse("$dateText $timeText")?.time
+}.getOrNull() ?: Long.MAX_VALUE
+
 data class VideoMeta(
     val timeText: String,
     val dateText: String,
+    val shotAtMillis: Long,
     val durationMs: Long,
     val width: Int,
     val height: Int
