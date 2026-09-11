@@ -882,8 +882,9 @@ private fun TrimSection(
 }
 
 /**
- * タイムラインの操作バー。連続再生・入れ替え・もとに戻す/やり直す・
- * ひとこと分割・削除をまとめて並べる。[TimelinePane] から切り出したもの。
+ * タイムラインの操作バー。削除・連続再生・入れ替え・もとに戻す/やり直す・
+ * 2s/4sプリセット・ひとこと分割をまとめて並べる。[TimelinePane] から切り出したもの。
+ * よく使う2s/4sプリセットとひとこと分割は右端に、削除系は左端に配置している。
  */
 @Composable
 private fun TimelineToolbar(
@@ -906,8 +907,29 @@ private fun TimelineToolbar(
         val enabled = selectedClip != null && !isExporting
         val trimPresetEnabled = enabled && (selectedClip?.durationMs ?: 0L) > 0L
 
-        // 並びは 連続再生 → 2s/4sプリセット → 入れ替え → もとに戻す → やり直す
-        //        → ひとことを分割 → 削除 → すべて削除
+        // 並びは 削除 → すべて削除 → 連続再生 → 入れ替え → もとに戻す → やり直す
+        //        → 2s/4sプリセット → ひとことを分割
+        // よく使う2s/4sプリセットとひとこと分割を右端に、誤タップが怖い
+        // 削除系は逆に左端に置いて、頻用操作を巻き込まないようにしている。
+
+        // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
+        CompactIconButton(
+            icon = VlogIcons.Delete,
+            contentDescription = "選択中のクリップを削除",
+            enabled = enabled,
+            onClick = viewModel::removeSelected,
+            tint = MaterialTheme.colorScheme.error
+        )
+        CompactIconButton(
+            icon = VlogIcons.DeleteSweep,
+            contentDescription = "すべて削除",
+            enabled = clips.isNotEmpty() && !isExporting,
+            onClick = onRequestRemoveAll,
+            tint = MaterialTheme.colorScheme.error
+        )
+
+        TimelineDivider()
+
         TimelineToggleButton(
             icon = VlogIcons.Play,
             checked = autoAdvance,
@@ -918,21 +940,6 @@ private fun TimelineToolbar(
             },
             enabled = clips.isNotEmpty() && !isExporting,
             onClick = { viewModel.setAutoAdvance(!autoAdvance) }
-        )
-
-        TimelineDivider()
-
-        TrimPresetButton(
-            label = "2s",
-            contentDescription = "先頭から2秒を選択",
-            enabled = trimPresetEnabled,
-            onClick = { viewModel.applyTrimPreset(2_000L) }
-        )
-        TrimPresetButton(
-            label = "4s",
-            contentDescription = "先頭から4秒を選択",
-            enabled = trimPresetEnabled,
-            onClick = { viewModel.applyTrimPreset(4_000L) }
         )
 
         TimelineDivider()
@@ -967,6 +974,21 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
+        TrimPresetButton(
+            label = "2s",
+            contentDescription = "先頭から2秒を選択",
+            enabled = trimPresetEnabled,
+            onClick = { viewModel.applyTrimPreset(2_000L) }
+        )
+        TrimPresetButton(
+            label = "4s",
+            contentDescription = "先頭から4秒を選択",
+            enabled = trimPresetEnabled,
+            onClick = { viewModel.applyTrimPreset(4_000L) }
+        )
+
+        TimelineDivider()
+
         // 再生ヘッドが区切りの上にあるときは、同じボタンが解除に変わる。
         // 区切りを消す手段が「もとに戻す」しか無いと、あとから直せなくなるため。
         val splitOnPlayhead = selectedClip?.splitPointNear(positionMs)
@@ -984,24 +1006,6 @@ private fun TimelineToolbar(
                 else viewModel.removeSplit(splitOnPlayhead)
             },
             tint = splitMarkerColor()
-        )
-
-        TimelineDivider()
-
-        // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
-        CompactIconButton(
-            icon = VlogIcons.Delete,
-            contentDescription = "選択中のクリップを削除",
-            enabled = enabled,
-            onClick = viewModel::removeSelected,
-            tint = MaterialTheme.colorScheme.error
-        )
-        CompactIconButton(
-            icon = VlogIcons.DeleteSweep,
-            contentDescription = "すべて削除",
-            enabled = clips.isNotEmpty() && !isExporting,
-            onClick = onRequestRemoveAll,
-            tint = MaterialTheme.colorScheme.error
         )
     }
 }
