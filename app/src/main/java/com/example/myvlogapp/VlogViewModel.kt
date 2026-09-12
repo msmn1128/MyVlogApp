@@ -295,7 +295,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 選択された動画を撮影/作成日時順になる位置へ追加する */
+    /** 選択された動画を撮影/作成日時順になる位置へ追加し、追加した中で最も古いものを選択する */
     fun addClips(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
@@ -319,20 +319,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             clipsMutationMutex.withLock {
-                val wasEmpty = _clips.value.isEmpty()
-                val keepSelectedId = _clips.value.getOrNull(_selectedIndex.value)?.id
+                val oldestAddedId = added.minByOrNull { it.sortKeyMs }?.id
 
                 recordHistory()
                 val (merged, insertions) = mergeByShotAt(_clips.value, added)
                 _clips.value = merged
                 insertIntoPlaylist(insertions)
 
-                if (wasEmpty) {
-                    select(0)
-                } else {
-                    keepSelectedId?.let { id ->
-                        _selectedIndex.value = merged.indexOfFirst { it.id == id }.coerceAtLeast(0)
-                    }
+                oldestAddedId?.let { id ->
+                    val index = merged.indexOfFirst { it.id == id }
+                    if (index >= 0) select(index)
                 }
             }
 
