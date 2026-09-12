@@ -493,12 +493,22 @@ object VlogExporter {
                 "if(between(n,$FADE_START_FRAME,$fadeEndFrame)," +
                 "1-(n-${FADE_START_FRAME - 1})/$FADE_FRAME_COUNT,0))"
         return listOf(
-            "drawtext=fontfile='${fonts.logoType.absolutePath}':text='Vlog.'" +
-                    ":fontsize=${TITLE_FONT_PT.toInt()}:fontcolor=white" +
-                    ":x=(w-text_w)/2:y=${centeredY(TITLE_Y_OFFSET_PT)}:alpha='$alpha'",
-            "drawtext=fontfile='${fonts.time.absolutePath}':text='${escapeForDrawtext(dateText)}'" +
-                    ":fontsize=${TITLE_DATE_FONT_PT.toInt()}:fontcolor=white" +
-                    ":x=(w-text_w)/2:y=${centeredY(TITLE_DATE_Y_OFFSET_PT)}:alpha='$alpha'"
+            drawText(
+                fontfile = fonts.logoType,
+                fontsizePt = TITLE_FONT_PT,
+                x = centeredX(),
+                y = centeredY(TITLE_Y_OFFSET_PT),
+                text = "Vlog.",
+                alpha = alpha
+            ),
+            drawText(
+                fontfile = fonts.time,
+                fontsizePt = TITLE_DATE_FONT_PT,
+                x = centeredX(),
+                y = centeredY(TITLE_DATE_Y_OFFSET_PT),
+                text = escapeForDrawtext(dateText),
+                alpha = alpha
+            )
         ).joinToString(",")
     }
 
@@ -550,10 +560,14 @@ object VlogExporter {
             lineFiles.mapIndexedNotNull { lineIndex, file ->
                 if (file == null) return@mapIndexedNotNull null
                 val offset = (lineIndex - (lineFiles.size - 1) / 2.0) * lineHeight
-                "drawtext=fontfile='${fonts.logoType.absolutePath}'" +
-                        ":textfile='${file.absolutePath}'" +
-                        ":fontsize=${HITOKOTO_FONT_PT.toInt()}:fontcolor=white" +
-                        ":x=(w-text_w)/2:y=${centeredY(offset.toFloat())}$enable"
+                drawText(
+                    fontfile = fonts.logoType,
+                    fontsizePt = HITOKOTO_FONT_PT,
+                    x = centeredX(),
+                    y = centeredY(offset.toFloat()),
+                    textFile = file,
+                    enable = enable
+                )
             }
         }
 
@@ -562,13 +576,48 @@ object VlogExporter {
             add("pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black")
             addAll(hitokotoLayers)
             add(
-                "drawtext=fontfile='${fonts.time.absolutePath}'" +
-                        ":text='${escapeForDrawtext(clip.timeText)}'" +
-                        ":fontsize=${TIME_FONT_PT.toInt()}:fontcolor=white@0.85" +
-                        ":x=$visibleRightEdge-text_w-${TIME_MARGIN_PT.toInt()}:y=(h-text_h)/2"
+                drawText(
+                    fontfile = fonts.time,
+                    fontsizePt = TIME_FONT_PT,
+                    x = "$visibleRightEdge-text_w-${TIME_MARGIN_PT.toInt()}",
+                    y = centeredY(0f),
+                    text = escapeForDrawtext(clip.timeText)
+                )
             )
         }.joinToString(",")
     }
+
+    /**
+     * drawtextフィルタ1つぶんの式を組み立てる。
+     * fontfile/fontsize/fontcolor/x/yの並びと書式を1箇所に集約し、
+     * タイトル・ひとこと・時刻の見た目が食い違わないようにする。
+     *
+     * @param text テキストを直接埋め込む場合（あらかじめ[escapeForDrawtext]でエスケープ済みのこと）。
+     *   [textFile]と排他。
+     * @param textFile 別ファイルの内容を読ませる場合（改行や引用符を含むテキスト用）。[text]と排他。
+     * @param enable 出し分け条件。付けない場合は空文字列のまま。
+     */
+    private fun drawText(
+        fontfile: File,
+        fontsizePt: Float,
+        x: String,
+        y: String,
+        text: String? = null,
+        textFile: File? = null,
+        color: String = "white",
+        alpha: String? = null,
+        enable: String = ""
+    ): String {
+        val content = if (textFile != null) "textfile='${textFile.absolutePath}'" else "text='$text'"
+        val alphaPart = if (alpha != null) ":alpha='$alpha'" else ""
+        return "drawtext=fontfile='${fontfile.absolutePath}'" +
+                ":$content" +
+                ":fontsize=${fontsizePt.toInt()}:fontcolor=$color" +
+                ":x=$x:y=$y$alphaPart$enable"
+    }
+
+    /** 横方向の中央揃え式。text_wを使うので文字数やフォントサイズが変わっても中央のまま。 */
+    private fun centeredX() = "(w-text_w)/2"
 
     /**
      * 画面中央から上下にずらしたy座標式をつくる。
