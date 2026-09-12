@@ -126,7 +126,7 @@ fun WaveformTrimmer(
     modifier: Modifier = Modifier
 ) {
     val activeColor = MaterialTheme.colorScheme.primary
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
+    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
     val handleColor = MaterialTheme.colorScheme.primary
     val gripColor = MaterialTheme.colorScheme.onPrimary
     val playheadColor = MaterialTheme.colorScheme.tertiary

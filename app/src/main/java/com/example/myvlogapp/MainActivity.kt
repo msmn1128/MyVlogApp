@@ -1547,7 +1547,7 @@ private fun EditorPane(
                 Text("ひとこと", style = MaterialTheme.typography.titleSmall)
                 // 分割しているときだけ、いま何番目を触っているのかを出す
                 if (segmentCount > 1) {
-                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 6.dp)
+                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
                     Text(
                         "／$segmentCount 区間目を編集中",
                         fontSize = 11.sp,
