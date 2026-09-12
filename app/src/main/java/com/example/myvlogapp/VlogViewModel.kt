@@ -245,6 +245,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 val index = player.currentMediaItemIndex
                 val clip = _clips.value.getOrNull(index) ?: return
                 _selectedIndex.value = index
+                applyVolume()
                 // 自動遷移すると次のクリップは0秒から始まってしまうため、
                 // トリミング開始位置へ合わせ直す
                 if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && clip.startMs > 0) {
@@ -364,7 +365,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     fun select(index: Int) {
         if (index !in _clips.value.indices) return
         _selectedIndex.value = index
+        applyVolume()
         seekAndPause(_clips.value[index].startMs)
+    }
+
+    /** 再生中の音量を、タイムライン全体のミュートと選択中クリップ個別のミュートから合わせ直す */
+    private fun applyVolume() {
+        val clipMuted = _clips.value.getOrNull(_selectedIndex.value)?.isMuted ?: false
+        player.volume = if (_timelineMuted.value || clipMuted) 0f else 1f
     }
 
     /**
@@ -560,6 +568,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         _clips.value = _clips.value.toMutableList().apply {
             this[index] = this[index].copy(isMuted = !this[index].isMuted)
         }
+        applyVolume()
     }
 
     /**
@@ -876,7 +885,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun setTimelineMuted(muted: Boolean) {
         _timelineMuted.value = muted
-        player.volume = if (muted) 0f else 1f
+        applyVolume()
     }
 
     /**

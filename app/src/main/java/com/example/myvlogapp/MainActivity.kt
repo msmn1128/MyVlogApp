@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -934,7 +935,10 @@ private fun TimelineToolbar(
     onRequestRemoveAll: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp)
+            .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
