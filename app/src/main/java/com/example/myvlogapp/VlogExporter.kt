@@ -91,6 +91,8 @@ object VlogExporter {
     /**
      * @param includeTitle 先頭にタイトルカード（黒背景＋日付＋効果音）を付けるかどうか。
      *   falseのときは全クリップを結合するだけで、タイトルカードもその効果音も含めない。
+     * @param muted タイムライン全体のミュート。trueのときは各クリップの音声
+     *   （[VlogClip.isMuted] の状態に関わらず全て）とタイトルカードの効果音を無音にする。
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
      */
@@ -98,6 +100,7 @@ object VlogExporter {
         context: Context,
         clips: List<VlogClip>,
         includeTitle: Boolean = true,
+        muted: Boolean = false,
         onProgress: suspend (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         require(clips.isNotEmpty()) { "クリップがありません" }
@@ -120,7 +123,10 @@ object VlogExporter {
                 logoType = copyFontAsset(context, TITLE_FONT_ASSET),
                 time = copyFontAsset(context, TIME_FONT_ASSET)
             )
-            val titleSfx = if (includeTitle) copySfxAsset(context, TITLE_SFX_ASSET) else null
+            // タイムラインミュート中はタイトルの効果音も鳴らさないので、
+            // そもそも効果音素材を展開する必要がない（-iの入力も1本減る）。
+            val needsTitleSfxInput = includeTitle && !muted
+            val titleSfx = if (needsTitleSfxInput) copySfxAsset(context, TITLE_SFX_ASSET) else null
 
             onProgress("書き出し中...")
             coroutineContext.ensureActive()
@@ -137,12 +143,12 @@ object VlogExporter {
             // 生の素材から直接1回だけエンコードすることで、圧縮は1回で済み、
             // 30fps変換も結合後の連続した1本の映像に対して1回で完結する。
             //
-            // 入力は（タイトルありのとき）0=タイトル効果音、1..N=各クリップ（SAF経由）。
-            // タイトルなしのときは効果音の-iを省き、0..N-1=各クリップになる。
+            // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
+            // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
             // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
             // 要求しない生成フィルタなので、追加の-iは不要。
             val safInputs = clips.map { FFmpegKitConfig.getSafParameterForRead(context, it.uri) }
-            val inputs = if (includeTitle) {
+            val inputs = if (needsTitleSfxInput) {
                 arrayOf("-i", titleSfx!!.absolutePath) +
                         safInputs.flatMap { listOf("-i", it) }.toTypedArray()
             } else {
@@ -150,7 +156,8 @@ object VlogExporter {
             }
 
             val filterGraph = buildFilterGraph(
-                context, clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles, includeTitle
+                context, clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles,
+                includeTitle, muted
             )
             val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
                     clips.sumOf { it.trimmedDurationMs }
@@ -327,12 +334,15 @@ object VlogExporter {
         workDir: File,
         id: Long,
         textFiles: MutableList<File>,
-        includeTitle: Boolean
+        includeTitle: Boolean,
+        muted: Boolean
     ): String {
         val graph = mutableListOf<String>()
-        // タイトルカードを入れる分だけ、各クリップの-i入力インデックスが後ろへずれる
-        // （0=タイトル効果音、1..N=各クリップ）。タイトルなしなら0..N-1になる。
-        val clipInputOffset = if (includeTitle) 1 else 0
+        // タイトル効果音の-iを入れる分だけ、各クリップの-i入力インデックスが
+        // 後ろへずれる（0=タイトル効果音、1..N=各クリップ）。効果音を入れない
+        // （タイトルなし、またはタイムラインミュート中）なら0..N-1になる。
+        val needsTitleSfxInput = includeTitle && !muted
+        val clipInputOffset = if (needsTitleSfxInput) 1 else 0
 
         if (includeTitle) {
             // --- タイトルカード（黒背景 / TITLE_DURATION_MSぶんの尺 /
@@ -341,13 +351,20 @@ object VlogExporter {
             graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
                     ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[vtitlesrc]"
             graph += "[vtitlesrc]${buildTitleFilter(firstDate, fonts)}[vtitle]"
-            // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
-            // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と考えて頼ると、
-            // 実機では音声側が先に何時間ぶんもの無音を吐き出そうとして書き出しが
-            // 実質ハングする。atrimでタイトルの尺ぴったりに強制的に切ることで、
-            // -shortestに頼らず必ず有限時間で終わるようにする。
-            graph += "[0:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
-                    "atrim=0:${ffmpegSeconds(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[atitle]"
+            graph += if (needsTitleSfxInput) {
+                // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
+                // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と
+                // 考えて頼ると、実機では音声側が先に何時間ぶんもの無音を吐き出そうとして
+                // 書き出しが実質ハングする。atrimでタイトルの尺ぴったりに強制的に切ることで、
+                // -shortestに頼らず必ず有限時間で終わるようにする。
+                "[0:a]adelay=$sfxDelayMs|$sfxDelayMs,apad," +
+                        "atrim=0:${ffmpegSeconds(TITLE_DURATION_MS)},asetpts=PTS-STARTPTS[atitle]"
+            } else {
+                // タイムラインミュート中は効果音の入力自体が無いので、
+                // タイトルの尺ぴったりの無音を生成して音声トラックを埋める。
+                "anullsrc=r=$AUDIO_SAMPLE_RATE:cl=$AUDIO_CHANNEL_LAYOUT" +
+                        ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[atitle]"
+            }
         }
 
         // --- 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
@@ -368,7 +385,8 @@ object VlogExporter {
 
             // concatは各セグメントの音声ストリームを明示参照するため、
             // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
-            graph += if (hasAudioTrack(context, clip.uri)) {
+            // クリップ自体のミュート、またはタイムラインミュート中は無音を強制する。
+            graph += if (hasAudioTrack(context, clip.uri) && !clip.isMuted && !muted) {
                 "[$inputIndex:a]${trimFilter(startSec, endSec, audio = true)}," +
                         "asetpts=PTS-STARTPTS[${aTag(index)}]"
             } else {
@@ -385,7 +403,8 @@ object VlogExporter {
             if (includeTitle) append("[vtitle][atitle]")
             clips.indices.forEach { append("[${vTag(it)}][${aTag(it)}]") }
         }
-        graph += "${segmentLabels}concat=n=${clips.size + clipInputOffset}:v=1:a=1[vraw][aout]"
+        val segmentCount = clips.size + if (includeTitle) 1 else 0
+        graph += "${segmentLabels}concat=n=$segmentCount:v=1:a=1[vraw][aout]"
         graph += "[vraw]fps=$CANVAS_FPS[vout]"
 
         return graph.joinToString(";")

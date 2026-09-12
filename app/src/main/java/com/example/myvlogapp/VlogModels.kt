@@ -28,7 +28,8 @@ data class VlogClip(
     val texts: List<TextSegment> = listOf(TextSegment()),
     val startMs: Long = 0L,
     val endMs: Long = 0L,
-    val shotAtMillis: Long = 0L // 撮影/作成日時（並び替えの基準）。0は未取得・旧データ
+    val shotAtMillis: Long = 0L, // 撮影/作成日時（並び替えの基準）。0は未取得・旧データ
+    val isMuted: Boolean = false // このクリップの音声を書き出しで無音にするか
 ) {
     val trimmedDurationMs: Long get() = trimmedDurationMs(startMs, endMs)
     val isValid: Boolean get() = durationMs > 0 && endMs > startMs
@@ -105,7 +106,9 @@ data class VlogClip(
             startMs = json.getLong(VlogClipKeys.START_MS),
             endMs = json.getLong(VlogClipKeys.END_MS),
             // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
-            shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS)
+            shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS),
+            // ミュート機能を追加する前の保存データにはキー自体が無いので optBoolean でfalseにフォールバック
+            isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false)
         )
     }
 }
@@ -136,6 +139,7 @@ object VlogClipKeys {
     const val START_MS = "startMs"
     const val END_MS = "endMs"
     const val SHOT_AT_MILLIS = "shotAtMillis"
+    const val IS_MUTED = "isMuted"
 
     /** 区間(texts)を持たせる前の旧バージョンで使われていたキー。読み込み専用の後方互換 */
     const val LEGACY_USER_TEXT = "userText"
@@ -161,6 +165,7 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
     put(VlogClipKeys.START_MS, startMs)
     put(VlogClipKeys.END_MS, endMs)
     put(VlogClipKeys.SHOT_AT_MILLIS, shotAtMillis)
+    put(VlogClipKeys.IS_MUTED, isMuted)
 }
 
 /**

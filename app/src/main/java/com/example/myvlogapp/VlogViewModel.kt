@@ -90,6 +90,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private val _autoAdvance = MutableStateFlow(true)
     val autoAdvance: StateFlow<Boolean> = _autoAdvance.asStateFlow()
 
+    /**
+     * タイムライン全体のミュート。プレビュー（ExoPlayerの音量）と書き出しの両方に効く。
+     * クリップ個別のミュート（[VlogClip.isMuted]）とは独立していて、こちらがonの間は
+     * 個別の設定に関わらず全クリップとタイトル効果音が無音になる。
+     */
+    private val _timelineMuted = MutableStateFlow(false)
+    val timelineMuted: StateFlow<Boolean> = _timelineMuted.asStateFlow()
+
     /** 選択中クリップの再生位置。波形の再生ヘッド表示に使う */
     private val _playbackPositionMs = MutableStateFlow(0L)
     val playbackPositionMs: StateFlow<Long> = _playbackPositionMs.asStateFlow()
@@ -544,6 +552,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * 指定したクリップのミュートを切り替える。タイムラインのクリップタイルの
+     * 長押しで呼ぶ想定のため、選択中インデックスではなくidで対象を探す
+     * （長押しされたクリップが選択中とは限らないため）。
+     */
+    fun toggleClipMute(clipId: Long) {
+        val index = _clips.value.indexOfFirst { it.id == clipId }
+        if (index < 0) return
+
+        recordHistory()
+        _clips.value = _clips.value.toMutableList().apply {
+            this[index] = this[index].copy(isMuted = !this[index].isMuted)
+        }
+    }
+
+    /**
      * 選択中のクリップを前後に動かす（書き出し順もこの並びになる）。
      * ExoPlayerのプレイリストも同時に動かして、プレビューと順番をずらさない。
      */
@@ -852,6 +875,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * タイムライン全体のミュートを切り替える。プレビュー中の音量を直接動かすのに加え、
+     * 現在の状態は[export]が読んで書き出し音声にも反映する（起動時の引き継ぎはしない）。
+     */
+    fun setTimelineMuted(muted: Boolean) {
+        _timelineMuted.value = muted
+        player.volume = if (muted) 0f else 1f
+    }
+
+    /**
      * pauseAtEndOfMediaItems も合わせて切り替える。
      * [PLAYBACK_POLL_INTERVAL_MS]間隔の監視だけだと、トリミング終端が動画の
      * 実際の末尾と一致している場合にExoPlayerの自動遷移が先に走ってしまい、
@@ -907,7 +939,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         player.playWhenReady = false
-        VlogExportService.start(getApplication(), target, includeTitle)
+        VlogExportService.start(getApplication(), target, includeTitle, _timelineMuted.value)
     }
 
     fun cancelExport() {

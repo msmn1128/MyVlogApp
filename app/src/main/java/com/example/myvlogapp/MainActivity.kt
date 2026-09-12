@@ -773,6 +773,7 @@ private fun TimelinePane(
     val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
     val waveforms by viewModel.waveforms.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
+    val timelineMuted by viewModel.timelineMuted.collectAsStateWithLifecycle()
 
     // 波形は選択中のクリップだけ用意する。全件を先読みするとデコードが渋滞して、
     // 肝心の「いま触っているクリップ」の表示が後回しになる。
@@ -816,6 +817,7 @@ private fun TimelinePane(
                 selectedClip = selectedClip,
                 positionMs = positionMs,
                 autoAdvance = autoAdvance,
+                timelineMuted = timelineMuted,
                 canUndo = canUndo,
                 canRedo = canRedo,
                 isExporting = isExporting,
@@ -842,7 +844,8 @@ private fun TimelinePane(
                         ClipTile(
                             clip = clip,
                             isSelected = index == selectedIndex,
-                            onClick = { viewModel.select(index) }
+                            onClick = { viewModel.select(index) },
+                            onLongClick = { viewModel.toggleClipMute(clip.id) }
                         )
                     }
                 }
@@ -946,6 +949,7 @@ private fun TimelineToolbar(
     selectedClip: VlogClip?,
     positionMs: Long,
     autoAdvance: Boolean,
+    timelineMuted: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
     isExporting: Boolean,
@@ -997,6 +1001,18 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
+        // タイムラインのミュートと連続再生を1グループにまとめ、連続再生を右に置く
+        TimelineToggleButton(
+            icon = if (timelineMuted) VlogIcons.VolumeOff else VlogIcons.VolumeUp,
+            checked = timelineMuted,
+            contentDescription = if (timelineMuted) {
+                "タイムラインのミュート：オン（プレビューと書き出しの音を消します）"
+            } else {
+                "タイムラインのミュート：オフ"
+            },
+            enabled = clips.isNotEmpty() && !isExporting,
+            onClick = { viewModel.setTimelineMuted(!timelineMuted) }
+        )
         TimelineToggleButton(
             icon = VlogIcons.Play,
             checked = autoAdvance,
@@ -1064,14 +1080,22 @@ private fun TimelineToolbar(
 
 /**
  * タイムラインのクリップ1件ぶんのタイル。[TimelinePane] から切り出したもの。
+ * タップで選択、長押しでそのクリップのミュートを切り替える。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit) {
+private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     Surface(
-        onClick = onClick,
         // 高さは中身に任せる。固定にすると端末の文字サイズ設定を
         // 上げたときに尺の行がタイルからはみ出して切れる
-        modifier = Modifier.width(104.dp),
+        modifier = Modifier
+            .width(104.dp)
+            .combinedClickable(
+                onClickLabel = "選択",
+                onLongClickLabel = if (clip.isMuted) "ミュートを解除" else "ミュート",
+                onLongClick = onLongClick,
+                onClick = onClick
+            ),
         shape = RoundedCornerShape(6.dp),
         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1113,6 +1137,15 @@ private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit) {
                         "1-${clip.texts.size}",
                         fontSize = 9.sp,
                         horizontalPadding = 4.dp
+                    )
+                }
+                // ミュート中のクリップは長押ししないと気付けないので、常時アイコンで示す
+                if (clip.isMuted) {
+                    Icon(
+                        VlogIcons.VolumeOff,
+                        contentDescription = "ミュート中",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp)
                     )
                 }
             }

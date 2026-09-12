@@ -44,10 +44,17 @@ class VlogExportService : Service() {
 
         private var pendingClips: List<VlogClip>? = null
         private var pendingIncludeTitle: Boolean = true
+        private var pendingMuted: Boolean = false
 
-        fun start(context: Context, clips: List<VlogClip>, includeTitle: Boolean = true) {
+        fun start(
+            context: Context,
+            clips: List<VlogClip>,
+            includeTitle: Boolean = true,
+            muted: Boolean = false
+        ) {
             pendingClips = clips
             pendingIncludeTitle = includeTitle
+            pendingMuted = muted
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, VlogExportService::class.java)
@@ -102,6 +109,7 @@ class VlogExportService : Service() {
         val clips = pendingClips
         pendingClips = null
         val includeTitle = pendingIncludeTitle
+        val muted = pendingMuted
         if (clips.isNullOrEmpty()) {
             stopSelf()
             return START_NOT_STICKY
@@ -116,6 +124,7 @@ class VlogExportService : Service() {
                     context = applicationContext,
                     clips = clips,
                     includeTitle = includeTitle,
+                    muted = muted,
                     onProgress = { message ->
                         ExportStatus.setRunning(message)
                         updateNotification(message)
