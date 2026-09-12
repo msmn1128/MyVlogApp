@@ -778,11 +778,12 @@ object VlogExporter {
      * MediaStore側でも名前の重複は解決されるため書き出し自体は成功する。
      */
     private fun existingDisplayNames(context: Context, base: String): Set<String> = runCatching {
+        val escapedBase = base.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
         context.contentResolver.query(
             videoCollection(),
             arrayOf(MediaStore.Video.Media.DISPLAY_NAME),
-            "${MediaStore.Video.Media.DISPLAY_NAME} LIKE ?",
-            arrayOf("$base%"),
+            "${MediaStore.Video.Media.DISPLAY_NAME} LIKE ? ESCAPE '\\'",
+            arrayOf("$escapedBase%"),
             null
         )?.use { cursor ->
             buildSet {
