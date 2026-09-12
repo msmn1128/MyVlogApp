@@ -101,11 +101,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 // =====================================================================================
 
 /**
- * 操作バーのボタン1個の大きさ。
- * Materialの推奨は48dpだが、ボタンを並べると横幅の狭い端末で行からはみ出してしまう。
- * アイコン自体は[TOOLBAR_ICON_SIZE]あるので、密なツールバーとしては触れる範囲に収まっている。
+ * 操作バーのボタン1個の大きさ。Materialの推奨に合わせて48dp。
+ * 横幅の狭い端末ではみ出す分は、操作バー自体の横スクロールで吸収する。
  */
-private val TOOLBAR_BUTTON_SIZE = 32.dp
+private val TOOLBAR_BUTTON_SIZE = 48.dp
 
 /** 操作バーのアイコンサイズ */
 private val TOOLBAR_ICON_SIZE = 20.dp
