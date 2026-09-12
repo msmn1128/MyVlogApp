@@ -713,7 +713,7 @@ private fun ExportButton(
         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     ) {
         Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
-            Text("書き出し", maxLines = 1)
+            Text("書き出し", maxLines = 1, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
