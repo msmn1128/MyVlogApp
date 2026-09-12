@@ -1348,8 +1348,10 @@ private fun SaveLoadDialog(
     onDelete: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // 既定の保存名は開いた時刻。そのままでも後から見分けが付く
-    var name by remember { mutableStateOf(formatSavedAt(System.currentTimeMillis())) }
+    // 既定の保存名は今日の日付。同じ日に複数回保存したときは "(1)" のように連番を付ける
+    var name by remember {
+        mutableStateOf(defaultSaveName(System.currentTimeMillis(), projects.map { it.name }))
+    }
     var pendingDelete by remember { mutableStateOf<SavedProject?>(null) }
 
     // 削除だけは「もとに戻す」で戻せないので確認を挟む
@@ -1386,7 +1388,7 @@ private fun SaveLoadDialog(
                     onClick = { onSave(name) },
                     enabled = canSave,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("いまの内容を保存") }
+                ) { Text("この内容を保存") }
 
                 Spacer(Modifier.height(14.dp))
                 HorizontalDivider()
