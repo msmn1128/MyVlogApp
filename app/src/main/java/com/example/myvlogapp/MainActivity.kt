@@ -1542,7 +1542,7 @@ private fun EditorPane(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("ひとこと", style = MaterialTheme.typography.titleMedium)
+                Text("ひとこと", style = MaterialTheme.typography.titleSmall)
                 // 分割しているときだけ、いま何番目を触っているのかを出す
                 if (segmentCount > 1) {
                     SegmentBadge("$segmentNumber", fontSize = 11.sp, horizontalPadding = 6.dp)
