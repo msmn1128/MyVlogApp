@@ -123,10 +123,13 @@ object VlogExporter {
                 logoType = copyFontAsset(context, TITLE_FONT_ASSET),
                 time = copyFontAsset(context, TIME_FONT_ASSET)
             )
-            // タイムラインミュート中はタイトルの効果音も鳴らさないので、
-            // そもそも効果音素材を展開する必要がない（-iの入力も1本減る）。
-            val needsTitleSfxInput = includeTitle && !muted
-            val titleSfx = if (needsTitleSfxInput) copySfxAsset(context, TITLE_SFX_ASSET) else null
+
+            // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ
+            // まとめておく。以降はこのAudioPlanを読むだけで、下の処理は分岐を持たない。
+            val audioPlan = AudioPlan.build(context, clips, includeTitle, muted)
+            val titleSfx = if (audioPlan.needsTitleSfxInput) {
+                copySfxAsset(context, TITLE_SFX_ASSET)
+            } else null
 
             onProgress("書き出し中...")
             coroutineContext.ensureActive()
@@ -148,7 +151,7 @@ object VlogExporter {
             // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
             // 要求しない生成フィルタなので、追加の-iは不要。
             val safInputs = clips.map { FFmpegKitConfig.getSafParameterForRead(context, it.uri) }
-            val inputs = if (needsTitleSfxInput) {
+            val inputs = if (audioPlan.needsTitleSfxInput) {
                 arrayOf("-i", titleSfx!!.absolutePath) +
                         safInputs.flatMap { listOf("-i", it) }.toTypedArray()
             } else {
@@ -156,8 +159,8 @@ object VlogExporter {
             }
 
             val filterGraph = buildFilterGraph(
-                context, clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles,
-                includeTitle, muted
+                clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles,
+                includeTitle, audioPlan
             )
             val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
                     clips.sumOf { it.trimmedDurationMs }
@@ -320,13 +323,44 @@ object VlogExporter {
     private data class SpanLines(val span: TextSpan, val lineFiles: List<File?>)
 
     /**
+     * includeTitle・タイムラインミュート・クリップ個別ミュートの組み合わせから、
+     * 実際にどう音声を組み立てるかを1回で決めておくもの。
+     *
+     * これが無いと「タイトル効果音の-iを足すか」「各クリップのinputIndexがいくつずれるか」
+     * 「各クリップを実音声にするか無音にするか」の3つの分岐がbuildFilterGraph内に
+     * ばらばらに散り、書き出しオプションが増えるたびに複数箇所を同時に直す必要が出る。
+     */
+    private class AudioPlan(
+        val needsTitleSfxInput: Boolean,
+        private val clipHasRealAudio: List<Boolean>
+    ) {
+        /** タイトル効果音の-iを入れる分だけ、各クリップの-i入力インデックスが後ろへずれる */
+        val clipInputOffset: Int get() = if (needsTitleSfxInput) 1 else 0
+
+        fun hasRealAudio(clipIndex: Int): Boolean = clipHasRealAudio[clipIndex]
+
+        companion object {
+            fun build(
+                context: Context,
+                clips: List<VlogClip>,
+                includeTitle: Boolean,
+                muted: Boolean
+            ): AudioPlan = AudioPlan(
+                needsTitleSfxInput = includeTitle && !muted,
+                clipHasRealAudio = clips.map { clip ->
+                    !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri)
+                }
+            )
+        }
+    }
+
+    /**
      * タイトルカード・全クリップ・結合をまとめた1本のfilter_complex文字列を組み立てる。
      *
      * @param textFiles 生成した行ごとのテキストファイルをここへ積む（呼び出し元がexport()の
      *   finallyでまとめて掃除するため）
      */
     private suspend fun buildFilterGraph(
-        context: Context,
         clips: List<VlogClip>,
         fonts: ExportFonts,
         firstDate: String,
@@ -335,14 +369,9 @@ object VlogExporter {
         id: Long,
         textFiles: MutableList<File>,
         includeTitle: Boolean,
-        muted: Boolean
+        audioPlan: AudioPlan
     ): String {
         val graph = mutableListOf<String>()
-        // タイトル効果音の-iを入れる分だけ、各クリップの-i入力インデックスが
-        // 後ろへずれる（0=タイトル効果音、1..N=各クリップ）。効果音を入れない
-        // （タイトルなし、またはタイムラインミュート中）なら0..N-1になる。
-        val needsTitleSfxInput = includeTitle && !muted
-        val clipInputOffset = if (needsTitleSfxInput) 1 else 0
 
         if (includeTitle) {
             // --- タイトルカード（黒背景 / TITLE_DURATION_MSぶんの尺 /
@@ -351,7 +380,7 @@ object VlogExporter {
             graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
                     ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[vtitlesrc]"
             graph += "[vtitlesrc]${buildTitleFilter(firstDate, fonts)}[vtitle]"
-            graph += if (needsTitleSfxInput) {
+            graph += if (audioPlan.needsTitleSfxInput) {
                 // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
                 // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と
                 // 考えて頼ると、実機では音声側が先に何時間ぶんもの無音を吐き出そうとして
@@ -370,7 +399,7 @@ object VlogExporter {
         // --- 各クリップ：トリミング → 1920x1080整形 → テロップ焼き込み ---
         clips.forEachIndexed { index, clip ->
             coroutineContext.ensureActive()
-            val inputIndex = index + clipInputOffset
+            val inputIndex = index + audioPlan.clipInputOffset
             val startSec = ffmpegSeconds(clip.startMs)
             val endSec = ffmpegSeconds(clip.startMs + clip.trimmedDurationMs)
             val spans = writeSpanTextFiles(workDir, id, index, clip, textFiles)
@@ -385,8 +414,7 @@ object VlogExporter {
 
             // concatは各セグメントの音声ストリームを明示参照するため、
             // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
-            // クリップ自体のミュート、またはタイムラインミュート中は無音を強制する。
-            graph += if (hasAudioTrack(context, clip.uri) && !clip.isMuted && !muted) {
+            graph += if (audioPlan.hasRealAudio(index)) {
                 "[$inputIndex:a]${trimFilter(startSec, endSec, audio = true)}," +
                         "asetpts=PTS-STARTPTS[${aTag(index)}]"
             } else {

@@ -42,9 +42,19 @@ class VlogExportService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_CANCEL = "com.example.myvlogapp.action.CANCEL_EXPORT"
 
-        private var pendingClips: List<VlogClip>? = null
-        private var pendingIncludeTitle: Boolean = true
-        private var pendingMuted: Boolean = false
+        /**
+         * [start]から[onStartCommand]まで、書き出し内容をIntentを経由せず直接受け渡すための
+         * 保留状態。1つのdata classにまとめてあるのは、書き出しオプションが増えるたびに
+         * ここ・[start]の引数・[onStartCommand]の読み出し・[VlogExporter.export]呼び出しの
+         * 4箇所を機械的に増やす作業を、フィールド追加1箇所で済ませるため。
+         */
+        private data class PendingExport(
+            val clips: List<VlogClip>,
+            val includeTitle: Boolean,
+            val muted: Boolean
+        )
+
+        private var pendingExport: PendingExport? = null
 
         fun start(
             context: Context,
@@ -52,9 +62,7 @@ class VlogExportService : Service() {
             includeTitle: Boolean = true,
             muted: Boolean = false
         ) {
-            pendingClips = clips
-            pendingIncludeTitle = includeTitle
-            pendingMuted = muted
+            pendingExport = PendingExport(clips, includeTitle, muted)
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, VlogExportService::class.java)
@@ -106,14 +114,13 @@ class VlogExportService : Service() {
         // 既に実行中なら多重起動しない（連打・二重タップ対策）
         if (exportJob?.isActive == true) return START_NOT_STICKY
 
-        val clips = pendingClips
-        pendingClips = null
-        val includeTitle = pendingIncludeTitle
-        val muted = pendingMuted
-        if (clips.isNullOrEmpty()) {
+        val pending = pendingExport
+        pendingExport = null
+        if (pending == null || pending.clips.isEmpty()) {
             stopSelf()
             return START_NOT_STICKY
         }
+        val (clips, includeTitle, muted) = pending
 
         startForegroundWithNotification("準備中...")
         ExportStatus.setRunning("準備中...")

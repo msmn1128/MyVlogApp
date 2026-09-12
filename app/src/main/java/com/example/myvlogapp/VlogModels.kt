@@ -41,6 +41,13 @@ data class VlogClip(
      */
     val sortKeyMs: Long get() = if (shotAtMillis > 0L) shotAtMillis else parseShotAtText(dateText, timeText)
 
+    /**
+     * 書き出しでこのクリップの音声を無音にすべきか。
+     * クリップ個別の[isMuted]と、タイムライン全体のミュート（呼び出し側が持つ
+     * 状態なので引数で受け取る）のどちらか一方でも立っていれば無音にする。
+     */
+    fun isSilentInExport(timelineMuted: Boolean): Boolean = isMuted || timelineMuted
+
     /** 区切り位置（2番目以降の区間の頭）。波形に紫のラインを引くのに使う */
     val splitPoints: List<Long> get() = texts.drop(1).map { it.startMs }
 
