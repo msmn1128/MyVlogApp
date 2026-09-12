@@ -882,7 +882,7 @@ private fun TrimSection(
 }
 
 /**
- * タイムラインの操作バー。削除・連続再生・入れ替え・もとに戻す/やり直す・
+ * タイムラインの操作バー。削除・入れ替え・連続再生・もとに戻す/やり直す・
  * 2s/4sプリセット・ひとこと分割をまとめて並べる。[TimelinePane] から切り出したもの。
  * よく使う2s/4sプリセットとひとこと分割は右端に、削除系は左端に配置している。
  */
@@ -907,7 +907,7 @@ private fun TimelineToolbar(
         val enabled = selectedClip != null && !isExporting
         val trimPresetEnabled = enabled && (selectedClip?.durationMs ?: 0L) > 0L
 
-        // 並びは 削除 → すべて削除 → 連続再生 → 入れ替え → もとに戻す → やり直す
+        // 並びは 削除 → すべて削除 → 入れ替え → 連続再生 → もとに戻す → やり直す
         //        → 2s/4sプリセット → ひとことを分割
         // よく使う2s/4sプリセットとひとこと分割を右端に、誤タップが怖い
         // 削除系は逆に左端に置いて、頻用操作を巻き込まないようにしている。
@@ -930,20 +930,6 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
-        TimelineToggleButton(
-            icon = VlogIcons.Play,
-            checked = autoAdvance,
-            contentDescription = if (autoAdvance) {
-                "連続再生：オン（終わったら次のクリップへ進みます）"
-            } else {
-                "連続再生：オフ（クリップの終わりで止まります）"
-            },
-            enabled = clips.isNotEmpty() && !isExporting,
-            onClick = { viewModel.setAutoAdvance(!autoAdvance) }
-        )
-
-        TimelineDivider()
-
         CompactIconButton(
             icon = VlogIcons.MoveLeft,
             contentDescription = "ひとつ前へ移動",
@@ -955,6 +941,20 @@ private fun TimelineToolbar(
             contentDescription = "ひとつ後ろへ移動",
             enabled = enabled && selectedIndex < clips.lastIndex,
             onClick = { viewModel.moveSelected(1) }
+        )
+
+        TimelineDivider()
+
+        TimelineToggleButton(
+            icon = VlogIcons.Play,
+            checked = autoAdvance,
+            contentDescription = if (autoAdvance) {
+                "連続再生：オン（終わったら次のクリップへ進みます）"
+            } else {
+                "連続再生：オフ（クリップの終わりで止まります）"
+            },
+            enabled = clips.isNotEmpty() && !isExporting,
+            onClick = { viewModel.setAutoAdvance(!autoAdvance) }
         )
 
         TimelineDivider()
