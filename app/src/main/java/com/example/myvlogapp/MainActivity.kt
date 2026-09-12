@@ -556,7 +556,7 @@ private fun PreviewPane(
     if (selectedClip == null) {
         Box(
             modifier = modifier
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center
         ) {
@@ -654,10 +654,12 @@ private fun ActionButtons(
             modifier = Modifier.weight(1f)
         ) { Text("動画を追加", maxLines = 1) }
 
-        // 一時保存。文字を置くと左右のボタンの取り分が減るのでアイコンだけにする
+        // 一時保存。文字を置くと左右のボタンの取り分が減るのでアイコンだけにする。
+        // 形は他のアイコン専用ボタン（操作バー等）と揃えて正円にする。
         FilledTonalIconButton(
             onClick = onOpenSaves,
-            enabled = !isExporting
+            enabled = !isExporting,
+            shape = CircleShape
         ) {
             Icon(
                 VlogIcons.File,
@@ -1263,7 +1265,8 @@ private fun TrimPresetButton(
         modifier = Modifier
             .height(TOOLBAR_BUTTON_SIZE)
             .clip(RoundedCornerShape(50))
-            .border(1.dp, tint.copy(alpha = if (enabled) 0.6f else 0.24f), RoundedCornerShape(50))
+            // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
+            .border(1.dp, if (enabled) tint else tint.copy(alpha = 0.38f), RoundedCornerShape(50))
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -1537,7 +1540,7 @@ private fun EditorPane(
     val segmentNumber = (selectedClip?.textIndexAt(positionMs) ?: 0) + 1
 
     Card(modifier = modifier) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)

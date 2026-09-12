@@ -7,11 +7,11 @@ import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,7 +100,9 @@ fun GalleryPickerDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
+            // 画面端からの余白（8dp）と内側のコンテンツ余白（12dp、他のCard類と同じ値）を
+            // 分けて、同じ値の二重適用に見えないようにしている
+            modifier = Modifier.fillMaxSize().padding(8.dp),
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
@@ -231,6 +235,13 @@ private fun VideoTile(
 ) {
     val thumbnail = rememberThumbnail(video.uri)
 
+    // 選択状態と順番を、枠線・バッジだけでなくスクリーンリーダーにも伝える
+    val stateDescription = if (selectionOrder != null) {
+        "選択中：$selectionOrder 番目"
+    } else {
+        "未選択"
+    }
+
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -243,12 +254,15 @@ private fun VideoTile(
                     Modifier
                 }
             )
-            .clickable(onClick = onClick)
+            .selectable(selected = selectionOrder != null, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${video.name}（$stateDescription）"
+            }
     ) {
         if (thumbnail != null) {
             Image(
                 bitmap = thumbnail.asImageBitmap(),
-                contentDescription = video.name,
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
