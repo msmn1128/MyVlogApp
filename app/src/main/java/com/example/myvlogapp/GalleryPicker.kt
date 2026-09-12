@@ -139,7 +139,7 @@ private fun GalleryPickerHeader(onUseFilePicker: () -> Unit) {
         TextButton(
             onClick = onUseFilePicker,
             contentPadding = PaddingValues(horizontal = 8.dp)
-        ) { Text("ファイル", fontSize = 13.sp) }
+        ) { Text("ファイル") }
     }
 }
 
@@ -158,7 +158,7 @@ private fun PartialAccessBanner(onChangeSelection: () -> Unit) {
         TextButton(
             onClick = onChangeSelection,
             contentPadding = PaddingValues(horizontal = 8.dp)
-        ) { Text("選択を変更", fontSize = 13.sp) }
+        ) { Text("選択を変更") }
     }
 }
 

@@ -810,7 +810,7 @@ private fun TimelinePane(
                 ) {
                     Text(
                         "動画を追加するとここに並びます",
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -1448,7 +1448,7 @@ private fun SavedProjectRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     project.name,
-                    fontSize = 14.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1545,7 +1545,7 @@ private fun EditorPane(
                 Text("ひとこと", style = MaterialTheme.typography.titleSmall)
                 // 分割しているときだけ、いま何番目を触っているのかを出す
                 if (segmentCount > 1) {
-                    SegmentBadge("$segmentNumber", fontSize = 11.sp, horizontalPadding = 6.dp)
+                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 6.dp)
                     Text(
                         "／$segmentCount 区間目を編集中",
                         fontSize = 11.sp,
