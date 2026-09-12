@@ -887,8 +887,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * viewModelScopeで直接実行しないのは、バックグラウンドに回すとOSに
      * プロセスごと回収されうるため。サービス化してActivity/ViewModelより
      * 長生きさせる。
+     *
+     * @param includeTitle 先頭のタイトルカード（黒背景＋日付＋効果音）を付けるかどうか。
+     *   書き出しボタンのタップ（true）／長押し（false）で呼び分ける。
      */
-    fun export() {
+    fun export(includeTitle: Boolean = true) {
         if (ExportStatus.isRunning) return
 
         val target = _clips.value
@@ -904,7 +907,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         player.playWhenReady = false
-        VlogExportService.start(getApplication(), target)
+        VlogExportService.start(getApplication(), target, includeTitle)
     }
 
     fun cancelExport() {

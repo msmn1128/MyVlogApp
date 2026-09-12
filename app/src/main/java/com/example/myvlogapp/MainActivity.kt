@@ -124,6 +124,22 @@ private val TRIM_GRAB_RADIUS = 30.dp
 /** これ以上は詰められない長さ。0にできてしまうと書き出しが通らなくなる */
 private const val MIN_TRIM_MS = 300L
 
+/**
+ * 選択範囲が全体の尺のこの割合以上あれば、ズームせず全体表示のままにする。
+ * 長い動画の一部だけを選んでいるときだけ拡大したいので、大部分を選んでいる
+ * ときにまでズームすると逆に見づらくなる。
+ */
+private const val WAVEFORM_FIT_FULL_THRESHOLD = 0.6
+
+/** ズーム時、選択範囲の前後に確保する余白（選択範囲の長さに対する比率） */
+private const val WAVEFORM_FIT_MARGIN_RATIO = 0.5
+
+/** ズーム時に確保する余白の下限。選択範囲が短すぎても手がかりが残るように */
+private const val WAVEFORM_FIT_MIN_MARGIN_MS = 300L
+
+/** ズーム時の表示幅の下限。選択範囲がごく短くても波形が潰れないように */
+private const val WAVEFORM_FIT_MIN_WINDOW_MS = 3_000L
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -239,11 +255,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
-    val onExport = {
+    val onExport = { includeTitle: Boolean ->
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
-        viewModel.export()
+        viewModel.export(includeTitle)
     }
 
     val filePicker = rememberLauncherForActivityResult(
@@ -486,7 +502,7 @@ private fun ColumnScope.PreviewSection(
     previewWeight: Float,
     onAdd: () -> Unit,
     onOpenSaves: () -> Unit,
-    onExport: () -> Unit
+    onExport: (includeTitle: Boolean) -> Unit
 ) {
     PreviewPane(
         selectedClip = selectedClip,
@@ -639,7 +655,7 @@ private fun ActionButtons(
     canExport: Boolean,
     onAdd: () -> Unit,
     onOpenSaves: () -> Unit,
-    onExport: () -> Unit,
+    onExport: (includeTitle: Boolean) -> Unit,
     onCancel: () -> Unit
 ) {
     Row(
@@ -678,12 +694,47 @@ private fun ActionButtons(
                 modifier = Modifier.weight(1f)
             ) { Text("中止", maxLines = 1) }
         } else {
-            Button(
-                onClick = onExport,
+            ExportButton(
                 enabled = canExport,
                 contentPadding = labelPadding,
+                onExport = onExport,
                 modifier = Modifier.weight(1f)
-            ) { Text("書き出し", maxLines = 1) }
+            )
+        }
+    }
+}
+
+/**
+ * 書き出しボタン。タップ＝タイトルカードあり、長押し＝タイトルカードなしで書き出す。
+ * 通常の[Button]は長押しを扱えないため、見た目だけ真似た[Surface]を
+ * [combinedClickable]で組んでいる。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ExportButton(
+    enabled: Boolean,
+    contentPadding: PaddingValues,
+    onExport: (includeTitle: Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .heightIn(min = ButtonDefaults.MinHeight)
+            .combinedClickable(
+                enabled = enabled,
+                onClickLabel = "書き出し（タイトルあり）",
+                onLongClickLabel = "タイトルなしで書き出し",
+                onLongClick = { onExport(false) },
+                onClick = { onExport(true) }
+            ),
+        shape = ButtonDefaults.shape,
+        color = if (enabled) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+        contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    ) {
+        Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
+            Text("書き出し", maxLines = 1)
         }
     }
 }
@@ -840,6 +891,7 @@ private fun TrimSection(
             )
 
             WaveformTrimmer(
+                clipId = clip.id,
                 waveform = waveform,
                 isLoading = isWaveformLoading,
                 texts = clip.texts,
@@ -1100,6 +1152,7 @@ private data class WaveformTrimmerCallbacks(
  */
 @Composable
 private fun WaveformTrimmer(
+    clipId: Long,
     waveform: Waveform?,
     isLoading: Boolean,
     texts: List<TextSegment>,
@@ -1127,6 +1180,20 @@ private fun WaveformTrimmer(
     var activeHandle by remember { mutableStateOf<TrimHandle?>(null) }
     var activeSplitIndex by remember { mutableStateOf<Int?>(null) }
     var isMovingTrim by remember { mutableStateOf(false) }
+    val isInteracting = activeHandle != null || activeSplitIndex != null || isMovingTrim
+
+    // 波形の表示範囲（ズーム）。選択範囲を掴んで動かしている最中はここを据え置き、
+    // 操作の区切り（プリセット適用・つまみを離した瞬間など）でだけ選択範囲に
+    // フィットさせる。操作中にも追従させると、表示が動いて指の下から的がずれてしまう。
+    var waveformViewport by remember(clipId) {
+        mutableStateOf(fitWaveformViewport(startMs, endMs, durationMs))
+    }
+    LaunchedEffect(clipId, startMs, endMs, durationMs, isInteracting) {
+        if (!isInteracting) {
+            waveformViewport = fitWaveformViewport(startMs, endMs, durationMs)
+        }
+    }
+    val viewportState = rememberUpdatedState(waveformViewport)
 
     // pointerInputのラムダは長く生き続けるので、最新値はrememberUpdatedState経由で読む。
     // 直接キャプチャすると、ドラッグ中ずっと掴んだ瞬間の値を見続けてしまう。
@@ -1196,19 +1263,22 @@ private fun WaveformTrimmer(
                     var scrubbing = false
                     try {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        val track = TrackMetrics.forWidth(size.width.toFloat(), handleHalfPx)
+                        val viewport = viewportState.value
+                        val track = TrackMetrics.forWidth(
+                            size.width.toFloat(), handleHalfPx, viewport.first, viewport.last
+                        )
 
                         when (
                             val grab = hitTestTrim(
-                                down.position.x, track, latestStart, latestEnd, latestDuration,
+                                down.position.x, track, latestStart, latestEnd,
                                 latestTexts, grabRadiusPx
                             )
                         ) {
                             // --- 端のつまみ：即ドラッグで伸縮 ---
                             is TrimGrab.Handle -> {
                                 activeHandle = grab.kind
-                                val startX = track.msToX(latestStart, latestDuration)
-                                val endX = track.msToX(latestEnd, latestDuration)
+                                val startX = track.msToX(latestStart)
+                                val endX = track.msToX(latestEnd)
                                 val grabOffset =
                                     if (grab.kind == TrimHandle.Start) down.position.x - startX
                                     else down.position.x - endX
@@ -1222,12 +1292,11 @@ private fun WaveformTrimmer(
                             // --- 分割ライン：即ドラッグで移動 ---
                             is TrimGrab.Split -> {
                                 activeSplitIndex = grab.index
-                                val splitX =
-                                    track.msToX(latestTexts[grab.index].startMs, latestDuration)
+                                val splitX = track.msToX(latestTexts[grab.index].startMs)
                                 val grabOffset = down.position.x - splitX
 
                                 dragSplitLine(
-                                    down.id, grab.index, grabOffset, track, durationState
+                                    down.id, grab.index, grabOffset, track
                                 ) { index, ms -> latestCallbacks.onSplitMove(index, ms) }
                             }
 
@@ -1240,7 +1309,7 @@ private fun WaveformTrimmer(
                                 // finallyのonScrubEnd()が呼ばれず、指を離しても再生が
                                 // 再開しないまま固まってしまう。
                                 dragBodyOrMove(
-                                    down, track, startState, durationState, viewConfiguration,
+                                    down, track, startState, viewConfiguration,
                                     haptics,
                                     onScrubbingChange = { scrubbing = it },
                                     onMovingTrimChange = { isMovingTrim = it },
@@ -1263,6 +1332,7 @@ private fun WaveformTrimmer(
                 waveform = waveform,
                 texts = texts,
                 durationMs = durationMs,
+                viewport = waveformViewport,
                 startMs = startMs,
                 endMs = endMs,
                 positionMs = positionMs,
@@ -1320,6 +1390,7 @@ private fun DrawScope.drawWaveformTrimmer(
     waveform: Waveform?,
     texts: List<TextSegment>,
     durationMs: Long,
+    viewport: LongRange,
     startMs: Long,
     endMs: Long,
     positionMs: Long,
@@ -1331,11 +1402,11 @@ private fun DrawScope.drawWaveformTrimmer(
     colors: WaveformTrimmerColors
 ) {
     if (durationMs <= 0L) return
-    val track = TrackMetrics.forWidth(size.width, handleHalfPx)
-    val startX = track.msToX(startMs, durationMs)
-    val endX = track.msToX(endMs, durationMs)
+    val track = TrackMetrics.forWidth(size.width, handleHalfPx, viewport.first, viewport.last)
+    val startX = track.msToX(startMs)
+    val endX = track.msToX(endMs)
 
-    drawWaveformBars(waveform, track, startX, endX, colors)
+    drawWaveformBars(waveform, track, durationMs, startX, endX, colors)
 
     // 長押しで区間ごと移動している間は太くして、動かしていることを示す
     val railHeight = if (isMovingTrim) 5.dp.toPx() else 3.dp.toPx()
@@ -1343,11 +1414,11 @@ private fun DrawScope.drawWaveformTrimmer(
 
     // 動画は切っていないので、ひとことの切れ目は自分で描かないと分からない
     if (texts.size > 1) {
-        drawSegmentSplits(texts, track, durationMs, startMs, startX, activeSplitIndex, textMeasurer, colors)
+        drawSegmentSplits(texts, track, startMs, startX, activeSplitIndex, textMeasurer, colors)
     }
 
-    if (positionMs in startMs..endMs) {
-        drawPlayhead(track.msToX(positionMs, durationMs), railHeight, colors.playhead)
+    if (positionMs in viewport.first..viewport.last && positionMs in startMs..endMs) {
+        drawPlayhead(track.msToX(positionMs), railHeight, colors.playhead)
     }
 
     drawTrimHandle(
@@ -1370,6 +1441,7 @@ private fun DrawScope.drawWaveformTrimmer(
 private fun DrawScope.drawWaveformBars(
     waveform: Waveform?,
     track: TrackMetrics,
+    durationMs: Long,
     startX: Float,
     endX: Float,
     colors: WaveformTrimmerColors
@@ -1377,18 +1449,22 @@ private fun DrawScope.drawWaveformBars(
     val centerY = size.height / 2f
     val amplitudes = waveform?.takeIf { it.hasAudio }?.amplitudes
     if (amplitudes != null && amplitudes.isNotEmpty()) {
-        val slot = track.width / amplitudes.size
-        val barWidth = (slot * 0.68f).coerceAtLeast(1f)
+        // 各バケットは「クリップ全体」の均等な時間幅を持つ。ズーム時は表示範囲が
+        // クリップ全体より狭くなるので、バケットごとの中心時刻をmsToXで変換して
+        // 実際の位置に描き直す（ズームしていないときは以前の等間隔配置と一致する）。
+        val bucketMs = durationMs.toFloat() / amplitudes.size
+        val barWidth = (bucketMs * track.pxPerMs * 0.68f).coerceAtLeast(1f)
         val minHalf = 0.75.dp.toPx()
         val maxHalf = (size.height / 2f - 10.dp.toPx()).coerceAtLeast(minHalf)
 
         amplitudes.forEachIndexed { index, amplitude ->
-            val left = track.left + index * slot + (slot - barWidth) / 2f
+            val bucketCenterMs = ((index + 0.5f) * bucketMs).toLong()
+            val center = track.msToX(bucketCenterMs)
+            if (center < track.left - barWidth || center > track.right + barWidth) return@forEachIndexed
             val half = (amplitude * maxHalf).coerceAtLeast(minHalf)
-            val center = left + barWidth / 2f
             drawRoundRect(
                 color = if (center in startX..endX) colors.active else colors.inactive,
-                topLeft = Offset(left, centerY - half),
+                topLeft = Offset(center - barWidth / 2f, centerY - half),
                 size = Size(barWidth, half * 2f),
                 cornerRadius = CornerRadius(barWidth / 2f)
             )
@@ -1412,7 +1488,6 @@ private fun DrawScope.drawTrimRails(startX: Float, endX: Float, railHeight: Floa
 private fun DrawScope.drawSegmentSplits(
     texts: List<TextSegment>,
     track: TrackMetrics,
-    durationMs: Long,
     startMs: Long,
     startX: Float,
     activeSplitIndex: Int?,
@@ -1424,7 +1499,7 @@ private fun DrawScope.drawSegmentSplits(
     val firstVisibleSegmentIndex = texts.indexOfLast { it.startMs <= startMs }.coerceAtLeast(0)
 
     texts.forEachIndexed { index, segment ->
-        val splitX = track.msToX(segment.startMs, durationMs)
+        val splitX = track.msToX(segment.startMs)
         if (index > 0) {
             drawLine(
                 color = colors.split,
@@ -1552,23 +1627,77 @@ private fun SegmentBadge(
 /**
  * つまみの中心を置ける範囲。
  * 左右をつまみの半分ぶん内側にしてあるので、0%・100%でも端が切れない。
+ *
+ * [viewStartMs]〜[viewEndMs] が「いま画面に表示している時間範囲」で、
+ * クリップ全体ではなくこのビューポートを基準にpx⇔msを変換する。
+ * ズームしていない（全体表示の）ときは viewStartMs=0, viewEndMs=durationMs になる。
  */
-private class TrackMetrics(val left: Float, val right: Float) {
+private class TrackMetrics(
+    val left: Float,
+    val right: Float,
+    private val viewStartMs: Long,
+    private val viewEndMs: Long
+) {
     val width: Float get() = (right - left).coerceAtLeast(1f)
+    private val viewSpanMs: Long get() = (viewEndMs - viewStartMs).coerceAtLeast(1L)
 
-    fun msToX(ms: Long, durationMs: Long): Float =
-        left + (ms.toFloat() / durationMs.coerceAtLeast(1L)) * width
+    fun msToX(ms: Long): Float =
+        left + ((ms - viewStartMs).toFloat() / viewSpanMs) * width
 
-    fun xToMs(x: Float, durationMs: Long): Long =
-        // durationMsが負値だとcoerceIn(0L, 負値)がmin>maxで例外を投げる。
-        // 呼び出し元は現状durationMs>0を保証しているが、防御的にクランプしておく。
-        (((x - left) / width) * durationMs).toLong().coerceIn(0L, durationMs.coerceAtLeast(0L))
+    fun xToMs(x: Float): Long =
+        (viewStartMs + ((x - left) / width) * viewSpanMs).toLong().coerceIn(viewStartMs, viewEndMs)
+
+    /** 1msあたりのpx幅。区間ごと移動のドラッグ量計算に使う */
+    val pxPerMs: Float get() = width / viewSpanMs
 
     companion object {
         /** つまみの半径ぶん内側に縮めたトラック範囲を作る（左右0%・100%でもつまみが切れないように） */
-        fun forWidth(totalWidth: Float, handleHalfPx: Float) =
-            TrackMetrics(handleHalfPx, (totalWidth - handleHalfPx).coerceAtLeast(handleHalfPx + 1f))
+        fun forWidth(totalWidth: Float, handleHalfPx: Float, viewStartMs: Long, viewEndMs: Long) =
+            TrackMetrics(
+                handleHalfPx,
+                (totalWidth - handleHalfPx).coerceAtLeast(handleHalfPx + 1f),
+                viewStartMs,
+                viewEndMs
+            )
     }
+}
+
+/**
+ * 現在の選択範囲（[startMs]〜[endMs]）に合わせて波形の表示範囲を決める。
+ *
+ * 選択範囲が全体の大部分を占めるときは全体表示のまま返し、
+ * 一部分だけを選んでいるときは選択範囲＋余白へズームした範囲を返す。
+ * 呼び出し側はこれをドラッグ中は据え置き、ドラッグの区切り（プリセット適用・
+ * ハンドルを離した瞬間など）でだけ呼び直すことで、操作中に表示が動いて
+ * 掴んでいる指の下から的がずれる事故を避けている。
+ */
+private fun fitWaveformViewport(startMs: Long, endMs: Long, durationMs: Long): LongRange {
+    if (durationMs <= 0L) return 0L..0L
+    val selectionSpan = (endMs - startMs).coerceAtLeast(0L)
+    if (selectionSpan >= (durationMs * WAVEFORM_FIT_FULL_THRESHOLD).toLong()) return 0L..durationMs
+
+    val margin = (selectionSpan * WAVEFORM_FIT_MARGIN_RATIO).toLong()
+        .coerceAtLeast(WAVEFORM_FIT_MIN_MARGIN_MS)
+    var viewStart = startMs - margin
+    var viewEnd = endMs + margin
+
+    val shortfall = WAVEFORM_FIT_MIN_WINDOW_MS - (viewEnd - viewStart)
+    if (shortfall > 0L) {
+        viewStart -= shortfall / 2
+        viewEnd += shortfall - shortfall / 2
+    }
+
+    // 動画の端に近い選択範囲では、片側に伸ばせないぶんを反対側へ回して
+    // 表示幅そのものは変えずに全体の範囲内へ収める
+    if (viewStart < 0L) {
+        viewEnd -= viewStart
+        viewStart = 0L
+    }
+    if (viewEnd > durationMs) {
+        viewStart -= (viewEnd - durationMs)
+        viewEnd = durationMs
+    }
+    return viewStart.coerceAtLeast(0L)..viewEnd.coerceAtMost(durationMs)
 }
 
 /** [awaitSlopOrRelease] の結果。長押し（動かさず時間切れ）はこれとは別に呼び出し側で判定する */
@@ -1641,12 +1770,11 @@ private fun hitTestTrim(
     track: TrackMetrics,
     startMs: Long,
     endMs: Long,
-    durationMs: Long,
     texts: List<TextSegment>,
     grabRadiusPx: Float
 ): TrimGrab {
-    val startX = track.msToX(startMs, durationMs)
-    val endX = track.msToX(endMs, durationMs)
+    val startX = track.msToX(startMs)
+    val endX = track.msToX(endMs)
     val distanceToStartHandle = abs(downX - startX)
     val distanceToEndHandle = abs(downX - endX)
     val handleKind = if (distanceToStartHandle <= distanceToEndHandle) {
@@ -1659,7 +1787,7 @@ private fun hitTestTrim(
     var nearestSplit: Int? = null
     var nearestSplitDist = Float.MAX_VALUE
     for (i in 1 until texts.size) {
-        val splitX = track.msToX(texts[i].startMs, durationMs)
+        val splitX = track.msToX(texts[i].startMs)
         val dist = abs(downX - splitX)
         if (dist < nearestSplitDist) {
             nearestSplitDist = dist
@@ -1698,7 +1826,7 @@ private suspend fun AwaitPointerEventScope.dragTrimHandle(
     onTrimChange: (startMs: Long, endMs: Long, seekMs: Long) -> Unit
 ) {
     dragUntilRelease(downId) { change ->
-        val ms = track.xToMs(change.position.x - grabOffset, latestDuration.value)
+        val ms = track.xToMs(change.position.x - grabOffset)
         // coerceIn(min, max)はmin > maxだと例外を投げる。
         // durationMsがMIN_TRIM_MS未満の極端に短い動画では
         // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
@@ -1725,11 +1853,10 @@ private suspend fun AwaitPointerEventScope.dragSplitLine(
     index: Int,
     grabOffset: Float,
     track: TrackMetrics,
-    latestDuration: State<Long>,
     onSplitMove: (index: Int, ms: Long) -> Unit
 ) {
     dragUntilRelease(downId) { change ->
-        val ms = track.xToMs(change.position.x - grabOffset, latestDuration.value)
+        val ms = track.xToMs(change.position.x - grabOffset)
         onSplitMove(index, ms)
     }
 }
@@ -1748,7 +1875,6 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     down: PointerInputChange,
     track: TrackMetrics,
     latestStart: State<Long>,
-    latestDuration: State<Long>,
     viewConfiguration: ViewConfiguration,
     haptics: HapticFeedback,
     onScrubbingChange: (Boolean) -> Unit,
@@ -1764,27 +1890,27 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
             // すぐ動いた＝なぞって頭出し（従来のシーク）
             onScrubbingChange(true)
             callbacks.onScrubStart()
-            callbacks.onSeek(track.xToMs(outcome.change.position.x, latestDuration.value))
+            callbacks.onSeek(track.xToMs(outcome.change.position.x))
             dragUntilRelease(outcome.change.id) { change ->
-                callbacks.onSeek(track.xToMs(change.position.x, latestDuration.value))
+                callbacks.onSeek(track.xToMs(change.position.x))
             }
         }
 
         DragOutcome.Released -> {
             // 動かさず離した＝タップ。その場へ頭出し
-            callbacks.onSeek(track.xToMs(down.position.x, latestDuration.value))
+            callbacks.onSeek(track.xToMs(down.position.x))
         }
 
         null -> {
             // 動かさず一定時間経過＝長押し。まだ指が乗っていれば区間ごと移動へ切り替える
             val stillDown = currentEvent.changes.firstOrNull { it.id == down.id }?.pressed == true
             if (!stillDown) {
-                callbacks.onSeek(track.xToMs(down.position.x, latestDuration.value))
+                callbacks.onSeek(track.xToMs(down.position.x))
             } else {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onMovingTrimChange(true)
                 val originalStart = latestStart.value
-                val pxPerMs = track.width / latestDuration.value.coerceAtLeast(1L)
+                val pxPerMs = track.pxPerMs
                 val anchorX = down.position.x
 
                 dragUntilRelease(down.id) { change ->

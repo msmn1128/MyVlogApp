@@ -43,9 +43,11 @@ class VlogExportService : Service() {
         private const val ACTION_CANCEL = "com.example.myvlogapp.action.CANCEL_EXPORT"
 
         private var pendingClips: List<VlogClip>? = null
+        private var pendingIncludeTitle: Boolean = true
 
-        fun start(context: Context, clips: List<VlogClip>) {
+        fun start(context: Context, clips: List<VlogClip>, includeTitle: Boolean = true) {
             pendingClips = clips
+            pendingIncludeTitle = includeTitle
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, VlogExportService::class.java)
@@ -99,6 +101,7 @@ class VlogExportService : Service() {
 
         val clips = pendingClips
         pendingClips = null
+        val includeTitle = pendingIncludeTitle
         if (clips.isNullOrEmpty()) {
             stopSelf()
             return START_NOT_STICKY
@@ -112,6 +115,7 @@ class VlogExportService : Service() {
                 val name = VlogExporter.export(
                     context = applicationContext,
                     clips = clips,
+                    includeTitle = includeTitle,
                     onProgress = { message ->
                         ExportStatus.setRunning(message)
                         updateNotification(message)
