@@ -518,11 +518,7 @@ object VlogExporter {
      * - ひとこと：[fonts].logoType、[HITOKOTO_FONT_PT]、上下左右中央
      *   1行につき1つのdrawtextを積む（このFFmpegビルドにはtext_alignが無いため、
      *   1つのdrawtextに複数行を渡すと左揃えになってしまう）
-     * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、映像が実際に映っている領域の右端に配置
-     *
-     * 縦動画を横長キャンバスに収めると左右に大きな黒帯ができるため、
-     * キャンバス右端を基準にすると時刻が黒帯の中に浮いてしまう。
-     * そこで実際の映像右端座標を計算して基準にする。
+     * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）
      *
      * @param spans ひとことの区間と、その各行のテキストファイル。
      *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
@@ -532,12 +528,6 @@ object VlogExporter {
         clip: VlogClip,
         fonts: ExportFonts
     ): String {
-        val scale = minOf(
-            CANVAS_WIDTH.toDouble() / clip.width,
-            CANVAS_HEIGHT.toDouble() / clip.height
-        )
-        val visibleRightEdge = ((CANVAS_WIDTH + clip.width * scale) / 2).toInt()
-
         // 行の高さぶんだけ上下にずらして、行の集まり全体が画面中央に来るようにする
         val lineHeight = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT
         val hitokotoLayers = spans.flatMapIndexed { spanIndex, (span, lineFiles) ->
@@ -579,7 +569,7 @@ object VlogExporter {
                 drawText(
                     fontfile = fonts.time,
                     fontsizePt = TIME_FONT_PT,
-                    x = "$visibleRightEdge-text_w-${TIME_MARGIN_PT.toInt()}",
+                    x = "$CANVAS_WIDTH-text_w-${TIME_MARGIN_PT.toInt()}",
                     y = centeredY(0f),
                     text = escapeForDrawtext(clip.timeText)
                 )

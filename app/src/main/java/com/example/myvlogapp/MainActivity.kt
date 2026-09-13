@@ -584,15 +584,8 @@ private fun PreviewPane(
                 CANVAS_HEIGHT * PREVIEW_FONT_SCALE
         val hitokotoSize = with(density) { (HITOKOTO_FONT_PT * canvasScale).toSp() }
         val timeSize = with(density) { (TIME_FONT_PT * canvasScale).toSp() }
-        // 縦動画などでレターボックスの黒帯ができると、キャンバス右端基準では
-        // 時刻が黒帯の中に浮いてしまう（書き出し側のvisibleRightEdgeと同じ理由）。
-        // 黒帯の幅ぶんを余白に足して、映像の可視範囲の右端基準に揃える。
-        val videoScale = minOf(
-            CANVAS_WIDTH.toFloat() / selectedClip.width,
-            CANVAS_HEIGHT.toFloat() / selectedClip.height
-        )
-        val blackBarWidthPt = (CANVAS_WIDTH - selectedClip.width * videoScale) / 2f
-        val timeMargin = with(density) { ((TIME_MARGIN_PT + blackBarWidthPt) * canvasScale).toDp() }
+        // 縦横問わずキャンバス右端基準に揃える（書き出し側と同じ位置）。
+        val timeMargin = with(density) { (TIME_MARGIN_PT * canvasScale).toDp() }
 
         Box(
             modifier = Modifier
