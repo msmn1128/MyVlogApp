@@ -1,6 +1,11 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -477,8 +482,13 @@ private fun ClipTile(
                     fontSize = 10.sp
                 )
                 // ひとことを分割してあるクリップは、区間の数を出す。
-                // タイルを見ただけで「途中で文字が変わる」と分かる
-                if (clip.texts.size > 1) {
+                // タイルを見ただけで「途中で文字が変わる」と分かる。
+                // AnimatedVisibilityで、分割/結合した瞬間にポップせずふわっと出入りさせる
+                AnimatedVisibility(
+                    visible = clip.texts.size > 1,
+                    enter = fadeIn() + expandHorizontally(),
+                    exit = fadeOut() + shrinkHorizontally()
+                ) {
                     SegmentBadge(
                         "1-${clip.texts.size}",
                         fontSize = 9.sp,
@@ -486,7 +496,11 @@ private fun ClipTile(
                     )
                 }
                 // ミュート中のクリップは長押ししないと気付けないので、常時アイコンで示す
-                if (clip.isMuted) {
+                AnimatedVisibility(
+                    visible = clip.isMuted,
+                    enter = fadeIn() + expandHorizontally(),
+                    exit = fadeOut() + shrinkHorizontally()
+                ) {
                     Icon(
                         VlogIcons.VolumeOff,
                         contentDescription = "ミュート中",
@@ -525,13 +539,22 @@ private fun EditorPane(
             ) {
                 Text("ひとこと", style = MaterialTheme.typography.titleSmall)
                 // 分割しているときだけ、いま何番目を触っているのかを出す
-                if (segmentCount > 1) {
-                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
-                    Text(
-                        "／$segmentCount 区間目を編集中",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                AnimatedVisibility(
+                    visible = segmentCount > 1,
+                    enter = fadeIn() + expandHorizontally(),
+                    exit = fadeOut() + shrinkHorizontally()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
+                        Text(
+                            "／$segmentCount 区間目を編集中",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(6.dp))

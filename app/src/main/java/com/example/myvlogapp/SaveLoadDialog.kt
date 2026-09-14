@@ -10,9 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -115,19 +115,20 @@ internal fun SaveLoadDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    // 件数は上限20なので、まとめてスクロールできれば足りる
-                    Column(
-                        modifier = Modifier
-                            .heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState()),
+                    // 件数は上限20なので、まとめてスクロールできれば足りる。
+                    // LazyColumn + animateItem()で、削除した行が瞬時に消えず
+                    // フェードアウトしながら後続の行が詰まるようにする
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 220.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        projects.forEach { project ->
+                        items(projects, key = { it.id }) { project ->
                             SavedProjectRow(
                                 project = project,
                                 onLoad = { onLoad(project.id) },
                                 onOverwrite = { onOverwrite(project) },
-                                onDelete = { pendingDelete = project }
+                                onDelete = { pendingDelete = project },
+                                modifier = Modifier.animateItem()
                             )
                         }
                     }
@@ -150,12 +151,13 @@ private fun SavedProjectRow(
     project: SavedProject,
     onLoad: () -> Unit,
     onOverwrite: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClickLabel = "読み出す",

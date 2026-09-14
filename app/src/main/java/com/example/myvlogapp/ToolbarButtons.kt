@@ -1,5 +1,11 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -131,6 +138,11 @@ internal fun CompactIconButton(
     modifier: Modifier = Modifier,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
+    // 有効/無効はundo/redoなど編集のたびに切り替わるため、色の濃淡を補間する
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (enabled) 1f else 0.38f,
+        label = "compactIconButtonAlpha"
+    )
     ToolbarButtonBox(
         background = Color.Transparent,
         role = Role.Button,
@@ -142,8 +154,7 @@ internal fun CompactIconButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
-            tint = if (enabled) tint else tint.copy(alpha = 0.38f),
+            tint = tint.copy(alpha = contentAlpha),
             modifier = Modifier.size(TOOLBAR_ICON_SIZE)
         )
     }
@@ -162,12 +173,16 @@ internal fun TrimPresetButton(
     onClick: () -> Unit
 ) {
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    // CompactIconButtonと同じく、有効/無効の切り替わりを色の濃淡で補間する
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (enabled) 1f else 0.38f,
+        label = "trimPresetButtonAlpha"
+    )
     Box(
         modifier = Modifier
             .height(TOOLBAR_BUTTON_SIZE)
             .clip(RoundedCornerShape(50))
-            // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
-            .border(1.dp, if (enabled) tint else tint.copy(alpha = 0.38f), RoundedCornerShape(50))
+            .border(1.dp, tint.copy(alpha = contentAlpha), RoundedCornerShape(50))
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -181,7 +196,7 @@ internal fun TrimPresetButton(
             label,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
-            color = if (enabled) tint else tint.copy(alpha = 0.38f)
+            color = tint.copy(alpha = contentAlpha)
         )
     }
 }
@@ -201,24 +216,41 @@ internal fun TimelineToggleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    ToolbarButtonBox(
-        background = if (checked && enabled) MaterialTheme.colorScheme.primaryContainer
+    // 背景・アイコン色・アイコンそのもの（ミュート⇔ミュート解除など）の
+    // どれも真偽値の即切り替えだったため、色はクロスフェード、アイコンは
+    // AnimatedContentでフェード入れ替えする
+    val background by animateColorAsState(
+        targetValue = if (checked && enabled) MaterialTheme.colorScheme.primaryContainer
         else Color.Transparent,
+        label = "timelineToggleButtonBackground"
+    )
+    val tint by animateColorAsState(
+        targetValue = when {
+            !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            checked -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        label = "timelineToggleButtonTint"
+    )
+    ToolbarButtonBox(
+        background = background,
         role = Role.Switch,
         contentDescription = contentDescription,
         enabled = enabled,
         onClick = onClick,
         modifier = modifier
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = when {
-                !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                checked -> MaterialTheme.colorScheme.onPrimaryContainer
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
-        )
+        AnimatedContent(
+            targetState = icon,
+            label = "timelineToggleButtonIcon",
+            transitionSpec = { fadeIn() togetherWith fadeOut() }
+        ) { currentIcon ->
+            Icon(
+                imageVector = currentIcon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(TOOLBAR_ICON_SIZE)
+            )
+        }
     }
 }

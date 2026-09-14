@@ -1,12 +1,21 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,6 +39,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -240,19 +250,27 @@ private fun ActionButtons(
             )
         }
 
-        if (isExporting) {
-            OutlinedButton(
-                onClick = onCancel,
-                contentPadding = labelPadding,
-                modifier = Modifier.weight(1f)
-            ) { Text("中止", maxLines = 1) }
-        } else {
-            ExportButton(
-                enabled = canExport,
-                contentPadding = labelPadding,
-                onExport = onExport,
-                modifier = Modifier.weight(1f)
-            )
+        // 書き出し開始/終了の瞬間にボタンが入れ替わって見えないよう、フェードで橋渡しする
+        AnimatedContent(
+            targetState = isExporting,
+            label = "exportOrCancelButton",
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            modifier = Modifier.weight(1f)
+        ) { exporting ->
+            if (exporting) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    contentPadding = labelPadding,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("中止", maxLines = 1) }
+            } else {
+                ExportButton(
+                    enabled = canExport,
+                    contentPadding = labelPadding,
+                    onExport = onExport,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }
@@ -270,6 +288,17 @@ private fun ExportButton(
     onExport: (includeTitle: Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 通常のButtonと違い自前でenabled色を出しているため、ここも切り替わりを補間する
+    val containerColor by animateColorAsState(
+        targetValue = if (enabled) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+        label = "exportButtonContainerColor"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (enabled) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+        label = "exportButtonContentColor"
+    )
     Surface(
         modifier = modifier
             .heightIn(min = ButtonDefaults.MinHeight)
@@ -281,10 +310,8 @@ private fun ExportButton(
                 onClick = { onExport(true) }
             ),
         shape = ButtonDefaults.shape,
-        color = if (enabled) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-        contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary
-        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        color = containerColor,
+        contentColor = contentColor
     ) {
         Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
             Text("書き出し", maxLines = 1, style = MaterialTheme.typography.labelLarge)
@@ -294,14 +321,28 @@ private fun ExportButton(
 
 @Composable
 private fun ExportProgress(exportState: ExportState) {
-    (exportState as? ExportState.Running)?.let { state ->
-        Spacer(Modifier.height(8.dp))
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = state.message,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+    // 書き出し開始/終了でこのブロックごと瞬時に出入りせず、ふわっと現れる/消えるようにする
+    AnimatedVisibility(
+        visible = exportState is ExportState.Running,
+        enter = fadeIn() + expandVertically(),
+        exit = fadeOut() + shrinkVertically()
+    ) {
+        Column {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            // メッセージ（工程の切り替わり）も差し替わる瞬間にチラつかせず、文字だけフェードする
+            AnimatedContent(
+                targetState = (exportState as? ExportState.Running)?.message.orEmpty(),
+                label = "exportProgressMessage",
+                transitionSpec = { fadeIn() togetherWith fadeOut() }
+            ) { message ->
+                Text(
+                    text = message,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
