@@ -2,13 +2,18 @@ package com.example.myvlogapp // ← ご自身のパッケージ名に合わせ�
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -23,9 +28,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -34,6 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.example.myvlogapp.ui.theme.DarkOnSplitMarker
 import com.example.myvlogapp.ui.theme.DarkSplitMarker
 import com.example.myvlogapp.ui.theme.LightOnSplitMarker
@@ -98,6 +107,7 @@ internal fun TimelineDivider() {
  * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
  * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ToolbarButtonBox(
     background: Color,
@@ -106,6 +116,8 @@ private fun ToolbarButtonBox(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
@@ -113,10 +125,12 @@ private fun ToolbarButtonBox(
             .size(TOOLBAR_BUTTON_SIZE)
             .clip(CircleShape)
             .background(background)
-            .clickable(
+            .combinedClickable(
                 enabled = enabled,
                 role = role,
                 onClickLabel = contentDescription,
+                onLongClickLabel = onLongClickLabel,
+                onLongClick = onLongClick,
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center,
@@ -136,26 +150,46 @@ internal fun CompactIconButton(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null
 ) {
     // 有効/無効はundo/redoなど編集のたびに切り替わるため、色の濃淡を補間する
     val contentAlpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.38f,
         label = "compactIconButtonAlpha"
     )
+    // 長押しの操作（すべて削除など）は確認ダイアログを出さない代わりに、
+    // 効いた瞬間が分かるようアイコンを一瞬だけ弾ませる。1件ずつの削除で
+    // タイルがふわっと消えるのと動きの質を揃えて、操作の一体感を出すため
+    val scale = remember { Animatable(1f) }
+    val scope = rememberCoroutineScope()
+    val wrappedOnLongClick = onLongClick?.let { longClick ->
+        {
+            scope.launch {
+                scale.snapTo(0.8f)
+                scale.animateTo(1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow))
+            }
+            longClick()
+        }
+    }
     ToolbarButtonBox(
         background = Color.Transparent,
         role = Role.Button,
         contentDescription = contentDescription,
         enabled = enabled,
         onClick = onClick,
+        onLongClick = wrappedOnLongClick,
+        onLongClickLabel = onLongClickLabel,
         modifier = modifier
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = tint.copy(alpha = contentAlpha),
-            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
+            modifier = Modifier
+                .size(TOOLBAR_ICON_SIZE)
+                .scale(scale.value)
         )
     }
 }
