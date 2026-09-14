@@ -1,5 +1,6 @@
 package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -168,7 +169,10 @@ private fun TimelinePane(
                             clip = clip,
                             isSelected = index == selectedIndex,
                             onClick = { viewModel.select(index) },
-                            onLongClick = { viewModel.toggleClipMute(clip.id) }
+                            onLongClick = { viewModel.toggleClipMute(clip.id) },
+                            // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
+                            // 新しい位置へ滑らかにスライドするようにする
+                            modifier = Modifier.animateItem()
                         )
                     }
                 }
@@ -412,11 +416,28 @@ private fun TimelineToolbar(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun ClipTile(
+    clip: VlogClip,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // 選択状態の切り替わりで色・枠線が一瞬で変わらず、じわっと変化するようにする
+    val containerColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        label = "clipTileContainerColor"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.outlineVariant,
+        label = "clipTileBorderColor"
+    )
     Surface(
         // 高さは中身に任せる。固定にすると端末の文字サイズ設定を
         // 上げたときに尺の行がタイルからはみ出して切れる
-        modifier = Modifier
+        modifier = modifier
             .width(104.dp)
             .combinedClickable(
                 onClickLabel = "選択",
@@ -425,13 +446,10 @@ private fun ClipTile(clip: VlogClip, isSelected: Boolean, onClick: () -> Unit, o
                 onClick = onClick
             ),
         shape = RoundedCornerShape(6.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = containerColor,
         // 未選択にも枠を付ける。カードと明度が近く、無地だと
         // どこまでが1クリップなのか輪郭が見えないため
-        border = if (isSelected)
-            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor)
     ) {
         Column(
             modifier = Modifier.padding(6.dp),
