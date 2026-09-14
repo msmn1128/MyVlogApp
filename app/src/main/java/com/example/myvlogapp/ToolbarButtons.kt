@@ -1,0 +1,224 @@
+package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.myvlogapp.ui.theme.DarkOnSplitMarker
+import com.example.myvlogapp.ui.theme.DarkSplitMarker
+import com.example.myvlogapp.ui.theme.LightOnSplitMarker
+import com.example.myvlogapp.ui.theme.LightSplitMarker
+
+// =====================================================================================
+// MainActivity.kt から切り出した、操作バー・一時保存一覧など複数画面で共通に使う
+// 小さなUI部品一式。TimelineToolbar固有ではなく、SavedProjectRow・EditorPaneの
+// 区間バッジのように別の場所でも使うため独立したファイルに置いてある。
+// =====================================================================================
+
+/**
+ * ひとことの区切りに使う紫。
+ *
+ * 波形のprimaryと同じ色にすると切れ目が埋もれて読めないため、
+ * ライトでは一段濃く、ダークでは（濃い紫が背景に沈むので）同系色で明るくする。
+ */
+@Composable
+fun splitMarkerColor(): Color =
+    if (isSystemInDarkTheme()) DarkSplitMarker else LightSplitMarker
+
+/** [splitMarkerColor] を下地にしたときの文字色。WaveformTrimmer.kt側からも使うため公開している */
+@Composable
+fun onSplitMarkerColor(): Color =
+    if (isSystemInDarkTheme()) DarkOnSplitMarker else LightOnSplitMarker
+
+/**
+ * 分割済みの区間を示す紫のバッジ。
+ * タイムラインのクリップタイル（"1-3"のような区間数）と、
+ * 「ひとこと」入力欄（"2"のような編集中の区間番号）の2箇所で共通の見た目を使う。
+ */
+@Composable
+internal fun SegmentBadge(
+    text: String,
+    fontSize: TextUnit,
+    horizontalPadding: Dp
+) {
+    Text(
+        text,
+        fontSize = fontSize,
+        fontWeight = FontWeight.Bold,
+        color = onSplitMarkerColor(),
+        modifier = Modifier
+            .background(splitMarkerColor(), RoundedCornerShape(50))
+            .padding(horizontal = horizontalPadding, vertical = 1.dp)
+    )
+}
+
+/** タイムライン操作バーの仕切り */
+@Composable
+internal fun TimelineDivider() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .width(1.dp)
+            .height(18.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant)
+    )
+}
+
+/**
+ * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
+ * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
+ */
+@Composable
+private fun ToolbarButtonBox(
+    background: Color,
+    role: Role,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    Box(
+        modifier = modifier
+            .size(TOOLBAR_BUTTON_SIZE)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(
+                enabled = enabled,
+                role = role,
+                onClickLabel = contentDescription,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+/**
+ * 操作バー用の小さめアイコンボタン。タイムラインの操作バー以外（一時保存一覧の行など）でも使う。
+ *
+ * IconButtonは48dp固定で、並べると横幅の狭い端末で見出しごと押し出されてしまう。
+ */
+@Composable
+internal fun CompactIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    ToolbarButtonBox(
+        background = Color.Transparent,
+        role = Role.Button,
+        contentDescription = contentDescription,
+        enabled = enabled,
+        onClick = onClick,
+        modifier = modifier
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
+            tint = if (enabled) tint else tint.copy(alpha = 0.38f),
+            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
+        )
+    }
+}
+
+/**
+ * トリミングのプリセットボタン（「2s」「4s」）。
+ * 他の操作バーボタンが正円のアイコンなのに対し、こちらは文字ラベルなので
+ * 横幅がラベルぶん伸びる楕円にしてある。
+ */
+@Composable
+internal fun TrimPresetButton(
+    label: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .height(TOOLBAR_BUTTON_SIZE)
+            .clip(RoundedCornerShape(50))
+            // 無効時はM3の既定と同じ38%まで落として、押せないことを色で示す
+            .border(1.dp, if (enabled) tint else tint.copy(alpha = 0.38f), RoundedCornerShape(50))
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick
+            )
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (enabled) tint else tint.copy(alpha = 0.38f)
+        )
+    }
+}
+
+/**
+ * オン/オフを持つ操作バーのボタン。
+ *
+ * 他がすべて「押したら1回起きる」動作なので、状態を持つこれだけは
+ * オンのとき下地を塗って区別する（M3のicon toggle buttonと同じ見せ方）。
+ */
+@Composable
+internal fun TimelineToggleButton(
+    icon: ImageVector,
+    checked: Boolean,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ToolbarButtonBox(
+        background = if (checked && enabled) MaterialTheme.colorScheme.primaryContainer
+        else Color.Transparent,
+        role = Role.Switch,
+        contentDescription = contentDescription,
+        enabled = enabled,
+        onClick = onClick,
+        modifier = modifier
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = when {
+                !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                checked -> MaterialTheme.colorScheme.onPrimaryContainer
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(TOOLBAR_ICON_SIZE)
+        )
+    }
+}

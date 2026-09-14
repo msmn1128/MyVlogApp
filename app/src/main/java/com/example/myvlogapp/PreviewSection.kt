@@ -1,0 +1,307 @@
+package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+
+import androidx.annotation.OptIn
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+
+// =====================================================================================
+// MainActivity.kt から切り出した、プレビュー・操作ボタン・書き出し進捗のまとまり。
+// =====================================================================================
+
+/**
+ * プレビュー・操作ボタン・進捗のまとまり。
+ *
+ * 縦1カラムと横2ペインで中身は同じなので、それぞれの分岐に書き写さず1箇所にまとめる。
+ * 分けて書いていると、片方だけ直して縦と横で挙動が食い違う事故が起きる。
+ * 違うのは「プレビューに何割を割り当てるか」だけなので、そこだけ引数で受ける。
+ */
+@Composable
+internal fun ColumnScope.PreviewSection(
+    selectedClip: VlogClip?,
+    viewModel: VlogViewModel,
+    hitokotoFontFamily: FontFamily,
+    timeFontFamily: FontFamily,
+    positionMs: Long,
+    exportState: ExportState,
+    isExporting: Boolean,
+    canExport: Boolean,
+    previewWeight: Float,
+    onAdd: () -> Unit,
+    onOpenSaves: () -> Unit,
+    onExport: (includeTitle: Boolean) -> Unit
+) {
+    PreviewPane(
+        selectedClip = selectedClip,
+        positionMs = positionMs,
+        player = viewModel.player,
+        hitokotoFontFamily = hitokotoFontFamily,
+        timeFontFamily = timeFontFamily,
+        modifier = Modifier.fillMaxWidth().weight(previewWeight)
+    )
+    Spacer(Modifier.height(SECTION_GAP))
+    ActionButtons(
+        isExporting = isExporting,
+        canExport = canExport,
+        onAdd = onAdd,
+        onOpenSaves = onOpenSaves,
+        onExport = onExport,
+        onCancel = viewModel::cancelExport
+    )
+    ExportProgress(exportState)
+}
+
+/**
+ * プレビュー。出力と同じ 1920:1080 のキャンバス比率で表示する。
+ *
+ * キャンバスの実寸から文字サイズを換算するので、どの端末・どのペイン幅でも
+ * 書き出し結果と同じ見た目になる。
+ *
+ * 黒い下地を敷くのは、外枠ではなくキャンバスそのもの。
+ * 外枠に塗ると、縦画面のように枠がキャンバスより背の高いときに上下へ黒帯が伸び、
+ * 「どこまでが動画になる範囲か」が見た目から分からなくなる。
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun PreviewPane(
+    selectedClip: VlogClip?,
+    positionMs: Long,
+    player: ExoPlayer,
+    hitokotoFontFamily: FontFamily,
+    timeFontFamily: FontFamily,
+    modifier: Modifier = Modifier
+) {
+    if (selectedClip == null) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "「動画を追加」から動画を選んでください",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(24.dp)
+            )
+        }
+        return
+    }
+
+    BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
+        // 幅・高さのどちらが効いても収まるように、キャンバスの寸法を自分で出す。
+        // aspectRatioだけに任せると、横長のペインでは高さがはみ出して切れてしまう。
+        val canvasRatio = CANVAS_WIDTH.toFloat() / CANVAS_HEIGHT
+        val canvasWidth = minOf(maxWidth, maxHeight * canvasRatio)
+        val canvasHeight = canvasWidth / canvasRatio
+
+        val density = LocalDensity.current
+        // toSp()を使うのがポイント。端末の「文字サイズ」設定に左右されず、
+        // 常に書き出し結果と同じ物理サイズで表示される。
+        val canvasScale = with(density) { canvasHeight.toPx() } /
+                CANVAS_HEIGHT * PREVIEW_FONT_SCALE
+        val hitokotoSize = with(density) { (HITOKOTO_FONT_PT * canvasScale).toSp() }
+        // 書き出し側（buildClipFilterのlineHeight = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT）と
+        // 同じ行間になるよう明示する。指定しないとComposeがフォントの既定の行送りを使ってしまい、
+        // 2行以上になったときに書き出し結果とプレビューで行間がずれる。
+        val hitokotoLineHeight = with(density) {
+            ((HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT) * canvasScale).toSp()
+        }
+        val timeSize = with(density) { (TIME_FONT_PT * canvasScale).toSp() }
+        // 縦横問わずキャンバス右端基準に揃える（書き出し側と同じ位置）。
+        val timeMargin = with(density) { (TIME_MARGIN_PT * canvasScale).toDp() }
+
+        Box(
+            modifier = Modifier
+                .size(canvasWidth, canvasHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = {
+                    PlayerView(it).apply {
+                        this.player = player
+                        useController = true
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            // ここから下は書き出しに焼き込まれる文字。配色はテーマに追従させず、
+            // 出力と同じ白のままにしておく。
+            Text(
+                text = selectedClip.textAt(positionMs),
+                color = Color.White,
+                fontSize = hitokotoSize,
+                lineHeight = hitokotoLineHeight,
+                style = LocalTextStyle.current.copy(
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    )
+                ),
+                fontFamily = hitokotoFontFamily,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 24.dp)
+            )
+            Text(
+                text = selectedClip.timeText,
+                color = Color.White,
+                fontSize = timeSize,
+                fontFamily = timeFontFamily,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = timeMargin)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionButtons(
+    isExporting: Boolean,
+    canExport: Boolean,
+    onAdd: () -> Unit,
+    onOpenSaves: () -> Unit,
+    onExport: (includeTitle: Boolean) -> Unit,
+    onCancel: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左右のボタンは既定の余白(24dp)だと、真ん中にアイコンを挟んだ幅では
+        // 「動画を追加」が2行に折り返してしまうので詰めてある
+        val labelPadding = PaddingValues(horizontal = 12.dp)
+
+        // 主役は「書き出し」なので、こちらは一段控えめなトーナルボタンにする
+        FilledTonalButton(
+            onClick = onAdd,
+            enabled = !isExporting,
+            contentPadding = labelPadding,
+            modifier = Modifier.weight(1f)
+        ) { Text("動画を追加", maxLines = 1) }
+
+        // 一時保存。文字を置くと左右のボタンの取り分が減るのでアイコンだけにする。
+        // 形は他のアイコン専用ボタン（操作バー等）と揃えて正円にする。
+        FilledTonalIconButton(
+            onClick = onOpenSaves,
+            enabled = !isExporting,
+            shape = CircleShape
+        ) {
+            Icon(
+                VlogIcons.File,
+                contentDescription = "編集内容の保存と読み出し",
+                modifier = Modifier.size(TOOLBAR_ICON_SIZE)
+            )
+        }
+
+        if (isExporting) {
+            OutlinedButton(
+                onClick = onCancel,
+                contentPadding = labelPadding,
+                modifier = Modifier.weight(1f)
+            ) { Text("中止", maxLines = 1) }
+        } else {
+            ExportButton(
+                enabled = canExport,
+                contentPadding = labelPadding,
+                onExport = onExport,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+/**
+ * 書き出しボタン。タップ＝タイトルカードあり、長押し＝タイトルカードなしで書き出す。
+ * 通常の[androidx.compose.material3.Button]は長押しを扱えないため、見た目だけ真似た
+ * [Surface]を[combinedClickable]で組んでいる。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ExportButton(
+    enabled: Boolean,
+    contentPadding: PaddingValues,
+    onExport: (includeTitle: Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .heightIn(min = ButtonDefaults.MinHeight)
+            .combinedClickable(
+                enabled = enabled,
+                onClickLabel = "書き出し（タイトルあり）",
+                onLongClickLabel = "タイトルなしで書き出し",
+                onLongClick = { onExport(false) },
+                onClick = { onExport(true) }
+            ),
+        shape = ButtonDefaults.shape,
+        color = if (enabled) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+        contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    ) {
+        Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
+            Text("書き出し", maxLines = 1, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Composable
+private fun ExportProgress(exportState: ExportState) {
+    (exportState as? ExportState.Running)?.let { state ->
+        Spacer(Modifier.height(8.dp))
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = state.message,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
