@@ -44,7 +44,8 @@ internal fun DrawScope.drawWaveformTrimmer(
     endMs: Long,
     positionMs: Long,
     handleHalfPx: Float,
-    activeHandle: TrimHandle?,
+    startHandleScale: Float,
+    endHandleScale: Float,
     activeSplitIndex: Int?,
     isMovingTrim: Boolean,
     textMeasurer: TextMeasurer,
@@ -72,15 +73,13 @@ internal fun DrawScope.drawWaveformTrimmer(
 
     drawTrimHandle(
         centerX = startX,
-        halfWidth = handleHalfPx,
-        grown = activeHandle == TrimHandle.Start,
+        half = handleHalfPx * startHandleScale,
         fill = colors.handle,
         grip = colors.grip
     )
     drawTrimHandle(
         centerX = endX,
-        halfWidth = handleHalfPx,
-        grown = activeHandle == TrimHandle.End,
+        half = handleHalfPx * endHandleScale,
         fill = colors.handle,
         grip = colors.grip
     )
@@ -219,12 +218,10 @@ private fun DrawScope.drawSegmentNumber(
 /** 縦長の丸ピル＋中央の滑り止め2本。掴んでいる間は少しだけ太らせる */
 private fun DrawScope.drawTrimHandle(
     centerX: Float,
-    halfWidth: Float,
-    grown: Boolean,
+    half: Float,
     fill: Color,
     grip: Color
 ) {
-    val half = if (grown) halfWidth * 1.35f else halfWidth
     drawRoundRect(
         color = fill,
         topLeft = Offset(centerX - half, 0f),

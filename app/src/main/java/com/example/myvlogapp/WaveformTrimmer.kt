@@ -2,6 +2,7 @@ package com.example.myvlogapp // ← ご自身のパッケージ名に合わせ�
 
 import android.graphics.Rect as AndroidRect
 import android.os.Build
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -299,6 +300,15 @@ fun WaveformTrimmer(
             },
         contentAlignment = Alignment.Center
     ) {
+        // つまみを掴んだ瞬間に太さが一段階で切り替わらないよう、太さそのものを補間する
+        val startHandleScale by animateFloatAsState(
+            targetValue = if (activeHandle == TrimHandle.Start) 1.35f else 1f,
+            label = "startHandleScale"
+        )
+        val endHandleScale by animateFloatAsState(
+            targetValue = if (activeHandle == TrimHandle.End) 1.35f else 1f,
+            label = "endHandleScale"
+        )
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawWaveformTrimmer(
                 waveform = waveform,
@@ -309,7 +319,8 @@ fun WaveformTrimmer(
                 endMs = endMs,
                 positionMs = positionMs,
                 handleHalfPx = handleHalfPx,
-                activeHandle = activeHandle,
+                startHandleScale = startHandleScale,
+                endHandleScale = endHandleScale,
                 activeSplitIndex = activeSplitIndex,
                 isMovingTrim = isMovingTrim,
                 textMeasurer = textMeasurer,
