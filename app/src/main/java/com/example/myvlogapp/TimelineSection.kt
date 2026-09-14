@@ -2,6 +2,7 @@ package com.example.myvlogapp // ← ご自身のパッケージ名に合わせ�
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -20,7 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -440,10 +442,11 @@ private fun ClipTile(
         label = "clipTileBorderColor"
     )
     Surface(
-        // 高さは中身に任せる。固定にすると端末の文字サイズ設定を
-        // 上げたときに尺の行がタイルからはみ出して切れる
+        // 高さも幅も中身に任せる（最小幅だけ104dp）。固定にすると、端末の文字サイズ設定を
+        // 上げたときや区間バッジが付いたときに、尺の行がタイルの丸角からはみ出して
+        // 切れて見える（＝枠の右下だけ幅が変わったように見える）
         modifier = modifier
-            .width(104.dp)
+            .widthIn(min = 104.dp)
             .combinedClickable(
                 onClickLabel = "選択",
                 onLongClickLabel = if (clip.isMuted) "ミュートを解除" else "ミュート",
@@ -465,12 +468,16 @@ private fun ClipTile(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
-            // 途中で切り替わる場合も、タイルには頭に出る文字を載せる
+            // 途中で切り替わる場合も、タイルには頭に出る文字を載せる。
+            // タイル自体の幅は区間バッジぶんに合わせて伸びられるようにしたが、
+            // この行だけは幅の基準（104dpから左右の padding を引いた分）に固定して、
+            // 長いひとことでタイルごと際限なく横に伸びないようにする
             Text(
                 clip.textAt(clip.startMs).ifBlank { DEFAULT_HITOKOTO },
                 fontSize = 11.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 104.dp - 12.dp)
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -483,12 +490,17 @@ private fun ClipTile(
                 )
                 // ひとことを分割してあるクリップは、区間の数を出す。
                 // タイルを見ただけで「途中で文字が変わる」と分かる。
-                // AnimatedVisibilityで、分割/結合した瞬間にポップせずふわっと出入りさせる
-                AnimatedVisibility(
-                    visible = clip.texts.size > 1,
-                    enter = fadeIn() + expandHorizontally(),
-                    exit = fadeOut() + shrinkHorizontally()
-                ) {
+                //
+                // AnimatedVisibilityで出し入れせず、常にレイアウトへ含めて
+                // 透明度だけを変える。高さ・幅を条件で増減させると、
+                // 端末の文字サイズ設定によってはバッジの実サイズを固定値で
+                // 見積もりきれず、分割した瞬間にタイルの枠自体が動いて見える。
+                // 常に場所を確保しておけば、分割前から最終サイズになっている
+                val segmentBadgeAlpha by animateFloatAsState(
+                    targetValue = if (clip.texts.size > 1) 1f else 0f,
+                    label = "clipTileSegmentBadgeAlpha"
+                )
+                Box(modifier = Modifier.alpha(segmentBadgeAlpha)) {
                     SegmentBadge(
                         "1-${clip.texts.size}",
                         fontSize = 9.sp,
@@ -538,23 +550,27 @@ private fun EditorPane(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("ひとこと", style = MaterialTheme.typography.titleSmall)
-                // 分割しているときだけ、いま何番目を触っているのかを出す
-                AnimatedVisibility(
-                    visible = segmentCount > 1,
-                    enter = fadeIn() + expandHorizontally(),
-                    exit = fadeOut() + shrinkHorizontally()
+                // 分割しているときだけ、いま何番目を触っているのかを出す。
+                //
+                // AnimatedVisibilityで出し入れせず、常にレイアウトへ含めて
+                // 透明度だけを変える。端末の文字サイズ設定によってはバッジの
+                // 実サイズを固定値で見積もりきれず、分割した瞬間に「ひとこと」欄の
+                // 枠自体が動いて見えるため、常に場所を確保しておく
+                val segmentInfoAlpha by animateFloatAsState(
+                    targetValue = if (segmentCount > 1) 1f else 0f,
+                    label = "editorPaneSegmentInfoAlpha"
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.alpha(segmentInfoAlpha)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
-                        Text(
-                            "／$segmentCount 区間目を編集中",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
+                    Text(
+                        "／$segmentCount 区間目を編集中",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             Spacer(Modifier.height(6.dp))
