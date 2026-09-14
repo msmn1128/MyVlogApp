@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -583,6 +584,12 @@ private fun PreviewPane(
         val canvasScale = with(density) { canvasHeight.toPx() } /
                 CANVAS_HEIGHT * PREVIEW_FONT_SCALE
         val hitokotoSize = with(density) { (HITOKOTO_FONT_PT * canvasScale).toSp() }
+        // 書き出し側（buildClipFilterのlineHeight = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT）と
+        // 同じ行間になるよう明示する。指定しないとComposeがフォントの既定の行送りを使ってしまい、
+        // 2行以上になったときに書き出し結果とプレビューで行間がずれる。
+        val hitokotoLineHeight = with(density) {
+            ((HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT) * canvasScale).toSp()
+        }
         val timeSize = with(density) { (TIME_FONT_PT * canvasScale).toSp() }
         // 縦横問わずキャンバス右端基準に揃える（書き出し側と同じ位置）。
         val timeMargin = with(density) { (TIME_MARGIN_PT * canvasScale).toDp() }
@@ -609,6 +616,13 @@ private fun PreviewPane(
                 text = selectedClip.textAt(positionMs),
                 color = Color.White,
                 fontSize = hitokotoSize,
+                lineHeight = hitokotoLineHeight,
+                style = LocalTextStyle.current.copy(
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    )
+                ),
                 fontFamily = hitokotoFontFamily,
                 textAlign = TextAlign.Center,
                 modifier = Modifier

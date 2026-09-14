@@ -149,13 +149,21 @@ fun WaveformTrimmer(
     // 波形の表示範囲（ズーム）。選択範囲を掴んで動かしている最中はここを据え置き、
     // 操作の区切り（プリセット適用・つまみを離した瞬間など）でだけ選択範囲に
     // フィットさせる。操作中にも追従させると、表示が動いて指の下から的がずれてしまう。
-    var waveformViewport by remember(clipId) {
-        mutableStateOf(fitWaveformViewport(startMs, endMs, durationMs))
-    }
-    LaunchedEffect(clipId, startMs, endMs, durationMs, isInteracting) {
-        if (!isInteracting) {
-            waveformViewport = fitWaveformViewport(startMs, endMs, durationMs)
-        }
+    //
+    // 以前はLaunchedEffect(clipId, startMs, endMs, durationMs, isInteracting)で
+    // 「操作中でなければ計算し直す」形にしていたが、これはコルーチンの起動・
+    // キャンセルを経由するため、キー変化のタイミング次第で更新が1フレーム遅れたり
+    // 取りこぼされたりする余地があった（iOS版で同種の設計が実際に「自動ズームが
+    // 発動しないことがある」不具合を起こし、「操作中でなければ毎回計算し直す」
+    // 方式へ作り直した実績がある）。ここでも同じ考え方で、操作中でなければ
+    // 毎回のコンポジションでcomputedし直し、操作中だけSideEffectで値を据え置く
+    // （SideEffectは非同期のLaunchedEffectと違い、コンポジションのたびに同期的に
+    // 実行されるため、キー変化を取りこぼす余地がない）。
+    var lockedViewport by remember(clipId) { mutableStateOf<LongRange?>(null) }
+    val computedViewport = fitWaveformViewport(startMs, endMs, durationMs)
+    val waveformViewport = if (isInteracting) (lockedViewport ?: computedViewport) else computedViewport
+    SideEffect {
+        lockedViewport = if (isInteracting) (lockedViewport ?: computedViewport) else null
     }
     val viewportState = rememberUpdatedState(waveformViewport)
 

@@ -40,6 +40,11 @@ class VlogExportService : Service() {
     companion object {
         private const val CHANNEL_ID = "vlog_export"
         private const val NOTIFICATION_ID = 1
+        // 完了/中止/失敗の結果通知は進行中の通知（NOTIFICATION_ID）とは別IDにする。
+        // stopSelf()で進行中の通知は消えるが、結果通知は別IDなので残り続け、
+        // アプリを完全に閉じていても（ExportStatus.emitのToast購読者がいなくても）
+        // ユーザーに結果が伝わる（iOS版のローカル通知相当）。
+        private const val RESULT_NOTIFICATION_ID = 2
         private const val ACTION_CANCEL = "com.example.myvlogapp.action.CANCEL_EXPORT"
 
         /**
@@ -137,11 +142,16 @@ class VlogExportService : Service() {
                         updateNotification(message)
                     }
                 )
-                ExportStatus.emit(VlogEvent.Message("ギャラリーに保存しました\n$name"))
+                val message = "ギャラリーに保存しました\n$name"
+                ExportStatus.emit(VlogEvent.Message(message))
+                notifyResult("書き出し完了", message)
             } catch (e: CancellationException) {
                 ExportStatus.emit(VlogEvent.Message("書き出しを中止しました"))
+                notifyResult("書き出しを中止しました", "書き出しを中止しました")
             } catch (e: Exception) {
-                ExportStatus.emit(VlogEvent.Message(e.message ?: "書き出しに失敗しました"))
+                val message = e.message ?: "書き出しに失敗しました"
+                ExportStatus.emit(VlogEvent.Message(message))
+                notifyResult("書き出しに失敗しました", message)
             } finally {
                 ExportStatus.setIdle()
                 // stopForeground(true)相当。onDestroyに任せず自分で止める
@@ -195,5 +205,20 @@ class VlogExportService : Service() {
     private fun updateNotification(message: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(message))
+    }
+
+    /// 完了・中止・失敗の結果を、進行中の通知とは別の通知として出す。
+    /// setOngoing(true)の進行中通知はstopSelf()で消えてしまうため、それとは
+    /// 独立に結果だけを伝える（Activityが破棄されていても届く）。
+    private fun notifyResult(title: String, message: String) {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .build()
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(RESULT_NOTIFICATION_ID, notification)
     }
 }
