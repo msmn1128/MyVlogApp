@@ -87,7 +87,12 @@ data class WaveformTrimmerCallbacks(
     val onSplitMove: (Int, Long) -> Unit,
     val onSeek: (Long) -> Unit,
     val onScrubStart: () -> Unit,
-    val onScrubEnd: () -> Unit
+    val onScrubEnd: () -> Unit,
+    // つまみ/分割線/本体のどれを掴んでいてもドラッグ中は必ず呼ばれる。
+    // ドラッグ中だけSeekParametersを緩めてカクつきを減らすためのフック
+    // （再生の一時停止／再開を伴うonScrubStart/onScrubEndとは別軸）。
+    val onDragStart: () -> Unit,
+    val onDragEnd: () -> Unit
 )
 
 /**
@@ -228,6 +233,7 @@ fun WaveformTrimmer(
                     var scrubbing = false
                     try {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        latestCallbacks.onDragStart()
                         val viewport = viewportState.value
                         val track = TrackMetrics.forWidth(
                             size.width.toFloat(), handleHalfPx, viewport.first, viewport.last
@@ -287,6 +293,7 @@ fun WaveformTrimmer(
                         activeSplitIndex = null
                         isMovingTrim = false
                         if (scrubbing) latestCallbacks.onScrubEnd()
+                        latestCallbacks.onDragEnd()
                     }
                 }
             },

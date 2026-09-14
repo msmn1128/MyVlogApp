@@ -10,6 +10,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -913,6 +914,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     fun endScrub() {
         if (resumeAfterScrub) player.playWhenReady = true
         resumeAfterScrub = false
+    }
+
+    /**
+     * 波形をドラッグしている間（トリム端／分割線／本体のどれでも）だけ
+     * シークを近似（キーフレーム近傍）にして、毎フレームのseekToによる
+     * カクつきを減らす。既定のEXACTだと1回ごとに正確な位置までデコードし直すため重い。
+     */
+    fun beginInteractiveSeek() {
+        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+    }
+
+    /** 指を離したらEXACTへ戻し、最後に一度だけ正確な位置へ合わせ直す */
+    fun endInteractiveSeek() {
+        player.setSeekParameters(SeekParameters.EXACT)
+        seekWithoutPause(_playbackPositionMs.value)
     }
 
     fun pause() {

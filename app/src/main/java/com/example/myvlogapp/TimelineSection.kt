@@ -232,7 +232,9 @@ private fun TrimSection(
                     onSplitMove = viewModel::moveSplit,
                     onSeek = viewModel::seekWithinTrim,
                     onScrubStart = viewModel::beginScrub,
-                    onScrubEnd = viewModel::endScrub
+                    onScrubEnd = viewModel::endScrub,
+                    onDragStart = viewModel::beginInteractiveSeek,
+                    onDragEnd = viewModel::endInteractiveSeek
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
