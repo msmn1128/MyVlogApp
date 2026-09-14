@@ -15,7 +15,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,7 +87,10 @@ fun GalleryPickerDialog(
 ) {
     val context = LocalContext.current
     var videos by remember { mutableStateOf<List<GalleryVideo>?>(null) }
-    val selected = remember { mutableStateListOf<Uri>() }
+    // URI -> 選んだ順番(1始まり)。Listだと1件選ぶだけで全タイルが
+    // selected.indexOf()の読み取りごと再コンポーズされてしまうため、
+    // タイルごとに自分のURIだけを読ませられるMapにしてある。
+    val selected = remember { mutableStateMapOf<Uri, Int>() }
     val isPartial = remember(reloadToken) { hasPartialMediaAccess(context) }
 
     LaunchedEffect(reloadToken) {
@@ -124,7 +127,7 @@ fun GalleryPickerDialog(
                 GalleryPickerFooter(
                     selectedCount = selected.size,
                     onDismiss = onDismiss,
-                    onPick = { onPick(selected.toList()) }
+                    onPick = { onPick(selected.entries.sortedBy { it.value }.map { it.key }) }
                 )
             }
         }
@@ -169,7 +172,7 @@ private fun PartialAccessBanner(onChangeSelection: () -> Unit) {
 @Composable
 private fun VideoGrid(
     videos: List<GalleryVideo>?,
-    selected: SnapshotStateList<Uri>,
+    selected: SnapshotStateMap<Uri, Int>,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -187,18 +190,35 @@ private fun VideoGrid(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(videos, key = { it.uri.toString() }) { video ->
-                    val index = selected.indexOf(video.uri)
+                    // selected[video.uri]だけを読むことで、他のタイルの選択が
+                    // 変わってもこのタイルの値が変わらない限り再コンポーズされない
+                    val order = selected[video.uri]
                     VideoTile(
                         video = video,
-                        selectionOrder = if (index >= 0) index + 1 else null,
-                        onClick = {
-                            if (index >= 0) selected.removeAt(index)
-                            else selected.add(video.uri)
-                        }
+                        selectionOrder = order,
+                        onClick = { toggleSelection(selected, video.uri, order) }
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * 選択の追加・解除。
+ *
+ * 解除のときだけ、後ろの順番を1つずつ詰め直す（表示している「選んだ順」の
+ * 番号を連番に保つため）。詰め直しで値が変わったタイルだけがselected[uri]の
+ * 読み取り経由で再コンポーズされ、無関係なタイルは影響を受けない。
+ */
+private fun toggleSelection(selected: SnapshotStateMap<Uri, Int>, uri: Uri, currentOrder: Int?) {
+    if (currentOrder != null) {
+        selected.remove(uri)
+        selected.entries.toList().forEach { (key, order) ->
+            if (order > currentOrder) selected[key] = order - 1
+        }
+    } else {
+        selected[uri] = selected.size + 1
     }
 }
 
