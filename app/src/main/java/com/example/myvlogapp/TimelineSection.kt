@@ -112,19 +112,6 @@ private fun TimelinePane(
         selectedClip?.let { viewModel.requestWaveform(it) }
     }
 
-    // すべて削除は取り返しがつかないので確認を挟む（取り消しは「もとに戻す」でもできる）
-    var confirmRemoveAll by remember { mutableStateOf(false) }
-
-    if (confirmRemoveAll) {
-        RemoveAllDialog(
-            onDismiss = { confirmRemoveAll = false },
-            onConfirm = {
-                confirmRemoveAll = false
-                viewModel.removeAll()
-            }
-        )
-    }
-
     Card(modifier = modifier) {
         Column(
             modifier = Modifier
@@ -151,52 +138,41 @@ private fun TimelinePane(
                 timelineMuted = timelineMuted,
                 canUndo = canUndo,
                 canRedo = canRedo,
-                isExporting = isExporting,
-                onRequestRemoveAll = { confirmRemoveAll = true }
+                isExporting = isExporting
             )
 
-            if (clips.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "動画を追加するとここに並びます",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            // 全削除のときもタイルが瞬時に消えず1件ずつと同じようにフェードアウトするよう、
+            // 空になってもLazyRow自体は消さない（条件で囲むと、最後の1件が消える
+            // アニメーションの途中でLazyRowごと引っ込んで打ち切られていた）
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
+                    ClipTile(
+                        clip = clip,
+                        isSelected = index == selectedIndex,
+                        onClick = { viewModel.select(index) },
+                        onLongClick = { viewModel.toggleClipMute(clip.id) },
+                        // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
+                        // 新しい位置へ滑らかにスライドするようにする
+                        modifier = Modifier.animateItem()
                     )
                 }
-            } else {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
-                        ClipTile(
-                            clip = clip,
-                            isSelected = index == selectedIndex,
-                            onClick = { viewModel.select(index) },
-                            onLongClick = { viewModel.toggleClipMute(clip.id) },
-                            // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
-                            // 新しい位置へ滑らかにスライドするようにする
-                            modifier = Modifier.animateItem()
-                        )
-                    }
-                }
+            }
 
+            selectedClip?.let { clip ->
                 Spacer(Modifier.height(10.dp))
 
-                selectedClip?.let { clip ->
-                    val key = clip.uri.toString()
-                    TrimSection(
-                        clip = clip,
-                        waveform = waveforms[key],
-                        isWaveformLoading = !waveforms.containsKey(key),
-                        positionMs = positionMs,
-                        isExporting = isExporting,
-                        viewModel = viewModel
-                    )
-                }
+                val key = clip.uri.toString()
+                TrimSection(
+                    clip = clip,
+                    waveform = waveforms[key],
+                    isWaveformLoading = !waveforms.containsKey(key),
+                    positionMs = positionMs,
+                    isExporting = isExporting,
+                    viewModel = viewModel
+                )
             }
         }
     }
@@ -288,8 +264,7 @@ private fun TimelineToolbar(
     timelineMuted: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
-    isExporting: Boolean,
-    onRequestRemoveAll: () -> Unit
+    isExporting: Boolean
 ) {
     Row(
         modifier = Modifier
@@ -302,24 +277,20 @@ private fun TimelineToolbar(
         val enabled = selectedClip != null && !isExporting
         val trimPresetEnabled = enabled && (selectedClip?.durationMs ?: 0L) > 0L
 
-        // 並びは 削除 → すべて削除 → 入れ替え → 連続再生 → もとに戻す → やり直す
+        // 並びは 削除 → 入れ替え → 連続再生 → もとに戻す → やり直す
         //        → 2s/4sプリセット → ひとことを分割
         // よく使う2s/4sプリセットとひとこと分割を右端に、誤タップが怖い
         // 削除系は逆に左端に置いて、頻用操作を巻き込まないようにしている。
 
-        // 押し間違えても「もとに戻す」で復帰できるので、1件の削除は確認なしで消す
+        // タップ＝選択中のクリップだけ削除、長押し＝すべて削除。
+        // どちらも押し間違えたら「もとに戻す」で復帰できるので、確認ダイアログは出さない
         CompactIconButton(
             icon = VlogIcons.Delete,
             contentDescription = "選択中のクリップを削除",
             enabled = enabled,
             onClick = viewModel::removeSelected,
-            tint = MaterialTheme.colorScheme.error
-        )
-        CompactIconButton(
-            icon = VlogIcons.DeleteSweep,
-            contentDescription = "すべて削除",
-            enabled = clips.isNotEmpty() && !isExporting,
-            onClick = onRequestRemoveAll,
+            onLongClick = viewModel::removeAll,
+            onLongClickLabel = "すべて削除",
             tint = MaterialTheme.colorScheme.error
         )
 

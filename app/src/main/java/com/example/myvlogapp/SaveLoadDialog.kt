@@ -196,25 +196,7 @@ private fun SavedProjectRow(
     }
 }
 
-@Composable
-internal fun RemoveAllDialog(
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit
-) {
-    DestructiveConfirmDialog(
-        icon = VlogIcons.DeleteSweep,
-        title = "すべて削除しますか",
-        message = "タイムラインの動画をすべて外します。「もとに戻す」で元に戻せます。",
-        confirmLabel = "すべて削除",
-        onDismiss = onDismiss,
-        onConfirm = onConfirm
-    )
-}
-
-/**
- * 取り消せない操作の確認ダイアログ。
- * 「削除しますか」（一時保存の削除）と「すべて削除しますか」で見た目が同じだったのを共通化。
- */
+/** 取り消せない操作（一時保存の削除）の確認ダイアログ。 */
 @Composable
 private fun DestructiveConfirmDialog(
     icon: ImageVector,
