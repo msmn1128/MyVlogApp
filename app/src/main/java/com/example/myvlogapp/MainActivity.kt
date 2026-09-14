@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -116,13 +117,23 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // safeDrawingPaddingがIMEのぶんだけ表示領域を詰めるため、比率が固定のままだと
     // セクションが一様に潰れて入力欄が読めなくなってしまう。
     val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    // 全開時の高さを覚えておき、0〜1の開閉度に正規化する。
+    // ComposeのWindowInsets.imeはIME自体のスライドと同じフレームで
+    // 値が更新されるため、animateFloatAsStateで別途アニメーションを足すと
+    // 「キーボードはもう閉じているのにレイアウトだけ遅れて縮む」ズレが出る。
+    // ここではその値をそのまま補間の材料にして、キーボードの動きと
+    // 完全に同期させている。
+    var imeMaxBottomPx by remember { mutableIntStateOf(0) }
+    if (imeBottomPx > imeMaxBottomPx) imeMaxBottomPx = imeBottomPx
+    val imeOpenFraction =
+        if (imeMaxBottomPx > 0) (imeBottomPx.toFloat() / imeMaxBottomPx).coerceIn(0f, 1f) else 0f
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
-    val previewWeight = if (imeVisible) 0.25f else 0.42f
-    val timelineWeight = if (imeVisible) 0.20f else 0.40f
-    val editorWeight = if (imeVisible) 0.55f else 0.18f
+    val previewWeight = lerp(0.42f, 0.25f, imeOpenFraction)
+    val timelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
+    val editorWeight = lerp(0.18f, 0.55f, imeOpenFraction)
 
     // プレビューにも書き出しと同じフォントを使う。
     // 既定フォントのままだと、サイズを合わせても書き出し結果と別物に見えてしまう。
