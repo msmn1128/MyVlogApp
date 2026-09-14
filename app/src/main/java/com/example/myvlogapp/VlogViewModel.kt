@@ -838,7 +838,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 再生位置の更新とトリミング終端の監視をまとめて行う。
      */
     fun refreshPlaybackProgress() {
-        if (player.currentMediaItemIndex == _selectedIndex.value) {
+        if (!isInteractiveSeeking && player.currentMediaItemIndex == _selectedIndex.value) {
             _playbackPositionMs.value = player.currentPosition
         }
         enforceTrimBounds()
@@ -922,14 +922,28 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * カクつきを減らす。既定のEXACTだと1回ごとに正確な位置までデコードし直すため重い。
      */
     fun beginInteractiveSeek() {
+        isInteractiveSeeking = true
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
     }
 
     /** 指を離したらEXACTへ戻し、最後に一度だけ正確な位置へ合わせ直す */
     fun endInteractiveSeek() {
+        isInteractiveSeeking = false
         player.setSeekParameters(SeekParameters.EXACT)
         seekWithoutPause(_playbackPositionMs.value)
     }
+
+    /**
+     * ドラッグ中は[refreshPlaybackProgress]による上書きを止めるためのフラグ。
+     *
+     * seekTo()は非同期で、呼んだ直後のplayer.currentPositionはまだ古い値を
+     * 返すことがある。80ms間隔のポーリングがちょうどその隙間に当たると、
+     * なぞっている指に追従して置いたはずの再生位置がプレイヤー側の古い値で
+     * 上書きされ、シークのピンが指の動きと無関係に後ろへ戻って見える
+     * （＝「ぴょんぴょん跳ねる」）。ドラッグ中はポーリングでの上書きだけを止め、
+     * 位置そのものは指の動きに合わせてseekWithinTrim等が直接更新し続ける。
+     */
+    private var isInteractiveSeeking = false
 
     fun pause() {
         player.playWhenReady = false
