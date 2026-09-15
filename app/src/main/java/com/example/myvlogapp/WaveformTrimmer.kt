@@ -34,6 +34,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 // =====================================================================================
@@ -73,6 +74,12 @@ private const val WAVEFORM_FIT_MIN_MARGIN_MS = 300L
 
 /** ズーム時の表示幅の下限。選択範囲がごく短くても波形が潰れないように */
 private const val WAVEFORM_FIT_MIN_WINDOW_MS = 3_000L
+
+/**
+ * トリムつまみ／区間ごと移動をこの幅だけ端に寄せたまま指を動かさずに保持していると、
+ * 波形が自動で連続スクロールし続ける（iOS版WaveformView.edgeScrollZoneと同じ値・考え方）。
+ */
+private val EDGE_SCROLL_ZONE = 24.dp
 
 /** WaveformTrimmerDrawing.ktの描画コードからも参照するためinternal */
 internal enum class TrimHandle { Start, End }
@@ -190,7 +197,51 @@ fun WaveformTrimmer(
     val density = LocalDensity.current
     val handleHalfPx = with(density) { TRIM_HANDLE_WIDTH.toPx() / 2f }
     val grabRadiusPx = with(density) { TRIM_GRAB_RADIUS.toPx() }
+    val edgeScrollZonePx = with(density) { EDGE_SCROLL_ZONE.toPx() }
     val haptics = LocalHapticFeedback.current
+
+    // つまみ／区間ごと移動がビューポート端に張り付いている間、指を動かさなくても
+    // 波形を連続でパンさせ続けるための状態。AwaitPointerEventScopeは
+    // @RestrictsSuspensionでcoroutineScope/launch/delayを直接呼べないため、
+    // ジェスチャー側（dragTrimHandle/dragBodyOrMove）はこのフラグを立てるだけにし、
+    // 実際に毎フレーム進める処理は下のLaunchedEffect（制限のない通常のコルーチン）で行う
+    // （iOS版のTask+Task.sleepループに相当）。
+    val isPinnedAtLeftEdgeState = remember(clipId) { mutableStateOf(false) }
+    val isPinnedAtRightEdgeState = remember(clipId) { mutableStateOf(false) }
+    LaunchedEffect(clipId) {
+        while (true) {
+            delay(16L)
+            val pinnedLeft = isPinnedAtLeftEdgeState.value
+            val pinnedRight = isPinnedAtRightEdgeState.value
+            if (!pinnedLeft && !pinnedRight) continue
+            val direction = if (pinnedLeft) -1L else 1L
+            val tickMs = edgeScrollTickMs(lockedViewportState, latestDuration)
+            when {
+                activeHandle == TrimHandle.Start -> {
+                    val newMs = (latestStart + direction * tickMs)
+                        .coerceIn(0L, (latestEnd - MIN_TRIM_MS).coerceAtLeast(0L))
+                    panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
+                    latestCallbacks.onTrimChange(newMs, latestEnd, newMs)
+                }
+                activeHandle == TrimHandle.End -> {
+                    val newMs = (latestEnd + direction * tickMs).coerceIn(
+                        (latestStart + MIN_TRIM_MS).coerceAtMost(latestDuration), latestDuration
+                    )
+                    panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
+                    latestCallbacks.onTrimChange(latestStart, newMs, newMs)
+                }
+                isMovingTrim -> {
+                    val span = (latestEnd - latestStart).coerceAtLeast(0L)
+                    val maxStart = (latestDuration - span).coerceAtLeast(0L)
+                    val newStart = (latestStart + direction * tickMs).coerceIn(0L, maxStart)
+                    val newEnd = newStart + span
+                    panViewportIfNeeded(newStart, latestDuration, lockedViewportState)
+                    panViewportIfNeeded(newEnd, latestDuration, lockedViewportState)
+                    latestCallbacks.onTrimMove(newStart, newStart)
+                }
+            }
+        }
+    }
 
     // 左右どちらかのつまみが画面のヘリに近いと、掴んだつもりがOSの「戻る」スワイプに
     // 奪われる端末がある。波形トリマー全体（左端〜右端）をジェスチャー除外領域として
@@ -262,7 +313,8 @@ fun WaveformTrimmer(
 
                                 dragTrimHandle(
                                     down.id, grab.kind, grabOffset, track, lockedViewportState,
-                                    startState, endState, durationState
+                                    startState, endState, durationState, edgeScrollZonePx,
+                                    isPinnedAtLeftEdgeState, isPinnedAtRightEdgeState
                                 ) { s, e, seek -> latestCallbacks.onTrimChange(s, e, seek) }
                             }
 
@@ -288,7 +340,8 @@ fun WaveformTrimmer(
                                 dragBodyOrMove(
                                     down, track, startState, endState, durationState,
                                     lockedViewportState, viewConfiguration,
-                                    haptics,
+                                    haptics, edgeScrollZonePx,
+                                    isPinnedAtLeftEdgeState, isPinnedAtRightEdgeState,
                                     onScrubbingChange = { scrubbing = it },
                                     onMovingTrimChange = { isMovingTrim = it },
                                     callbacks = latestCallbacks
@@ -299,6 +352,8 @@ fun WaveformTrimmer(
                         activeHandle = null
                         activeSplitIndex = null
                         isMovingTrim = false
+                        isPinnedAtLeftEdgeState.value = false
+                        isPinnedAtRightEdgeState.value = false
                         if (scrubbing) latestCallbacks.onScrubEnd()
                         latestCallbacks.onDragEnd()
                     }
@@ -440,6 +495,16 @@ private fun panViewportIfNeeded(ms: Long, durationMs: Long, lockedViewportState:
         val newEnd = ms.coerceAtMost(durationMs)
         lockedViewportState.value = (newEnd - span)..newEnd
     }
+}
+
+/**
+ * 端に張り付いたまま指を動かさずにいるときの、1ティックあたりの移動量。
+ * 今のビューポート幅の2%を、[dragTrimHandle]/[dragBodyOrMove]内のスクロール用
+ * コルーチンが約16ms毎に呼ぶ（iOS版WaveformView.edgeScrollTickMsと同じ考え方）。
+ */
+private fun edgeScrollTickMs(lockedViewportState: MutableState<LongRange?>, durationMs: Long): Long {
+    val span = lockedViewportState.value?.let { it.last - it.first } ?: durationMs
+    return (span * 0.02).toLong().coerceAtLeast(1L)
 }
 
 /**
@@ -609,8 +674,15 @@ private suspend fun AwaitPointerEventScope.dragTrimHandle(
     latestStart: State<Long>,
     latestEnd: State<Long>,
     latestDuration: State<Long>,
+    edgeScrollZonePx: Float,
+    isPinnedAtLeftEdgeState: MutableState<Boolean>,
+    isPinnedAtRightEdgeState: MutableState<Boolean>,
     onTrimChange: (startMs: Long, endMs: Long, seekMs: Long) -> Unit
 ) {
+    // coerceIn(min, max)はmin > maxだと例外を投げる。
+    // durationMsがMIN_TRIM_MS未満の極端に短い動画では
+    // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
+    // 「動かせる余地が無ければ現在地のまま」に倒す。
     dragUntilRelease(downId) { change ->
         val rawX = change.position.x - grabOffset
         val locked = lockedViewportState.value
@@ -624,10 +696,6 @@ private suspend fun AwaitPointerEventScope.dragTrimHandle(
             TrackMetrics(track.left, track.right, it.first, it.last)
         } ?: track
         val ms = currentTrack.xToMs(rawX)
-        // coerceIn(min, max)はmin > maxだと例外を投げる。
-        // durationMsがMIN_TRIM_MS未満の極端に短い動画では
-        // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
-        // 「動かせる余地が無ければ現在地のまま」に倒す。
         when (handleKind) {
             TrimHandle.Start -> {
                 val next = ms.coerceIn(0L, (latestEnd.value - MIN_TRIM_MS).coerceAtLeast(0L))
@@ -641,6 +709,11 @@ private suspend fun AwaitPointerEventScope.dragTrimHandle(
                 onTrimChange(latestStart.value, next, next)
             }
         }
+        // 指を動かさなくても、つまみがビューポート端に張り付いている間は波形が
+        // 連続でパンし続ける（実際に毎フレーム進める処理はComposable側の
+        // LaunchedEffectが担う。ここではそのトリガーとなるフラグを立てるだけ）。
+        isPinnedAtLeftEdgeState.value = rawX <= track.left + edgeScrollZonePx
+        isPinnedAtRightEdgeState.value = rawX >= track.right - edgeScrollZonePx
     }
 }
 
@@ -677,6 +750,9 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     lockedViewportState: MutableState<LongRange?>,
     viewConfiguration: ViewConfiguration,
     haptics: HapticFeedback,
+    edgeScrollZonePx: Float,
+    isPinnedAtLeftEdgeState: MutableState<Boolean>,
+    isPinnedAtRightEdgeState: MutableState<Boolean>,
     onScrubbingChange: (Boolean) -> Unit,
     onMovingTrimChange: (Boolean) -> Unit,
     callbacks: WaveformTrimmerCallbacks
@@ -717,19 +793,29 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
                 val anchorX = down.position.x
                 val span = (latestEnd.value - latestStart.value).coerceAtLeast(0L)
 
+                // VlogViewModel.moveTrimと同じ式でクランプ後の位置を出し、
+                // その位置が今のビューポート外に出る分だけパンする
+                // （実際のクランプ・反映はmoveTrim側でも行われる。ここでは
+                // パン判定のためだけに同じ式を使っている）
+                val maxStart = (latestDuration.value - span).coerceAtLeast(0L)
+
                 dragUntilRelease(down.id) { change ->
                     val deltaMs = ((change.position.x - anchorX) / pxPerMs).toLong()
-                    val targetStart = originalStart + deltaMs
-                    // VlogViewModel.moveTrimと同じ式でクランプ後の位置を出し、
-                    // その位置が今のビューポート外に出る分だけパンする
-                    // （実際のクランプ・反映はmoveTrim側でも行われる。ここでは
-                    // パン判定のためだけに同じ式を使っている）
-                    val maxStart = (latestDuration.value - span).coerceAtLeast(0L)
-                    val newStart = targetStart.coerceIn(0L, maxStart)
+                    val newStart = (originalStart + deltaMs).coerceIn(0L, maxStart)
                     val newEnd = newStart + span
                     panViewportIfNeeded(newStart, latestDuration.value, lockedViewportState)
                     panViewportIfNeeded(newEnd, latestDuration.value, lockedViewportState)
-                    callbacks.onTrimMove(targetStart, targetStart)
+                    callbacks.onTrimMove(newStart, newStart)
+                    // 指を動かさなくても、区間が端に張り付いている間は波形が連続で
+                    // パンし続ける（実際に毎フレーム進める処理はComposable側の
+                    // LaunchedEffectが担う。ここではそのトリガーとなるフラグを立てるだけ）。
+                    // 区間ごと移動は左右どちらの端がビューポート外に張り付くか分からないので、
+                    // 実際に描画される位置（パン後のトラックでmsToXした位置）で両方判定する
+                    val pannedTrack = lockedViewportState.value?.let {
+                        TrackMetrics(track.left, track.right, it.first, it.last)
+                    } ?: track
+                    isPinnedAtLeftEdgeState.value = pannedTrack.msToX(newStart) <= track.left + edgeScrollZonePx
+                    isPinnedAtRightEdgeState.value = pannedTrack.msToX(newEnd) >= track.right - edgeScrollZonePx
                 }
             }
         }
