@@ -158,7 +158,12 @@ fun WaveformTrimmer(
     // 毎回のコンポジションでcomputedし直し、操作中だけSideEffectで値を据え置く
     // （SideEffectは非同期のLaunchedEffectと違い、コンポジションのたびに同期的に
     // 実行されるため、キー変化を取りこぼす余地がない）。
-    var lockedViewport by remember(clipId) { mutableStateOf<LongRange?>(null) }
+    // lockedViewportStateは生のMutableStateとして持っておき、dragTrimHandle/
+    // dragBodyOrMoveなどトップレベルのジェスチャー関数からも直接読み書きできるようにする
+    // （トリムつまみ・区間ごと移動が今のビューポート端に達したときにパンさせるため）。
+    // Composable本体では従来通りlockedViewportとしてby委譲で扱う。
+    val lockedViewportState = remember(clipId) { mutableStateOf<LongRange?>(null) }
+    var lockedViewport by lockedViewportState
     val computedViewport = fitWaveformViewport(startMs, endMs, durationMs)
     val waveformViewport = if (isInteracting) (lockedViewport ?: computedViewport) else computedViewport
     SideEffect {
@@ -256,7 +261,7 @@ fun WaveformTrimmer(
                                     else down.position.x - endX
 
                                 dragTrimHandle(
-                                    down.id, grab.kind, grabOffset, track,
+                                    down.id, grab.kind, grabOffset, track, lockedViewportState,
                                     startState, endState, durationState
                                 ) { s, e, seek -> latestCallbacks.onTrimChange(s, e, seek) }
                             }
@@ -281,7 +286,8 @@ fun WaveformTrimmer(
                                 // finallyのonScrubEnd()が呼ばれず、指を離しても再生が
                                 // 再開しないまま固まってしまう。
                                 dragBodyOrMove(
-                                    down, track, startState, viewConfiguration,
+                                    down, track, startState, endState, durationState,
+                                    lockedViewportState, viewConfiguration,
                                     haptics,
                                     onScrubbingChange = { scrubbing = it },
                                     onMovingTrimChange = { isMovingTrim = it },
@@ -396,6 +402,12 @@ internal class TrackMetrics(
     fun xToMs(x: Float): Long =
         (viewStartMs + ((x - left) / width) * viewSpanMs).toLong().coerceIn(viewStartMs, viewEndMs)
 
+    /** クランプなしでx→msへ線形変換する。トリムつまみ／区間ごと移動が今のビューポート端に
+     * 達したときに「どれだけはみ出しているか」を知るために使う（xToMsと違い
+     * viewStartMs..viewEndMsへクランプしない） */
+    fun extrapolatedMs(x: Float): Long =
+        (viewStartMs + ((x - left) / width) * viewSpanMs).toLong()
+
     /** 1msあたりのpx幅。区間ごと移動のドラッグ量計算に使う */
     val pxPerMs: Float get() = width / viewSpanMs
 
@@ -408,6 +420,25 @@ internal class TrackMetrics(
                 viewStartMs,
                 viewEndMs
             )
+    }
+}
+
+/**
+ * トリムつまみ／区間ごと移動が今ロックされているビューポートの外へ出たら、表示幅
+ * （ズーム倍率）は変えずにビューポート自体を指の位置へ追従させてパンする
+ * （iOS版WaveformView.panViewportIfNeededと同じ考え方）。再フィット
+ * （[fitWaveformViewport]）のような再ズーム・再センタリングはしない
+ * （＝操作中に表示が動いて指の下から的がずれる事故を再発させないため）。
+ */
+private fun panViewportIfNeeded(ms: Long, durationMs: Long, lockedViewportState: MutableState<LongRange?>) {
+    val locked = lockedViewportState.value ?: return
+    val span = locked.last - locked.first
+    if (ms < locked.first) {
+        val newStart = ms.coerceAtLeast(0L)
+        lockedViewportState.value = newStart..(newStart + span)
+    } else if (ms > locked.last) {
+        val newEnd = ms.coerceAtMost(durationMs)
+        lockedViewportState.value = (newEnd - span)..newEnd
     }
 }
 
@@ -563,19 +594,36 @@ private fun hitTestTrim(
  * [latestEnd]/[latestDuration] を [State] のまま受け取っているのは、ドラッグ中に
  * 外側から渡ってくる値（例えば他の変更でstartMs/endMsが変わる）を毎回読み直すため。
  * 呼び出し時点のLong値を渡してしまうと、掴んだ瞬間の値のまま固定されてしまう。
+ *
+ * [track]はジェスチャー開始時点のleft/right/handleHalfPxを固定値として使い回すが、
+ * viewStartMs/viewEndMs（ズーム範囲）は[lockedViewportState]がパンで書き換わるたびに
+ * 作り直す。つまみが今のビューポート端をはみ出したら[panViewportIfNeeded]で
+ * ビューポート自体を追従させ、波形が指に付いてくるように見せる。
  */
 private suspend fun AwaitPointerEventScope.dragTrimHandle(
     downId: PointerId,
     handleKind: TrimHandle,
     grabOffset: Float,
     track: TrackMetrics,
+    lockedViewportState: MutableState<LongRange?>,
     latestStart: State<Long>,
     latestEnd: State<Long>,
     latestDuration: State<Long>,
     onTrimChange: (startMs: Long, endMs: Long, seekMs: Long) -> Unit
 ) {
     dragUntilRelease(downId) { change ->
-        val ms = track.xToMs(change.position.x - grabOffset)
+        val rawX = change.position.x - grabOffset
+        val locked = lockedViewportState.value
+        if (locked != null) {
+            val extrapolated = TrackMetrics(track.left, track.right, locked.first, locked.last)
+                .extrapolatedMs(rawX)
+                .coerceIn(0L, latestDuration.value)
+            panViewportIfNeeded(extrapolated, latestDuration.value, lockedViewportState)
+        }
+        val currentTrack = lockedViewportState.value?.let {
+            TrackMetrics(track.left, track.right, it.first, it.last)
+        } ?: track
+        val ms = currentTrack.xToMs(rawX)
         // coerceIn(min, max)はmin > maxだと例外を投げる。
         // durationMsがMIN_TRIM_MS未満の極端に短い動画では
         // 上限・下限が逆転しうるため、coerceAtLeast(0L)で
@@ -624,6 +672,9 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
     down: PointerInputChange,
     track: TrackMetrics,
     latestStart: State<Long>,
+    latestEnd: State<Long>,
+    latestDuration: State<Long>,
+    lockedViewportState: MutableState<LongRange?>,
     viewConfiguration: ViewConfiguration,
     haptics: HapticFeedback,
     onScrubbingChange: (Boolean) -> Unit,
@@ -659,12 +710,25 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onMovingTrimChange(true)
                 val originalStart = latestStart.value
+                // ビューポートをパンしても区間の幅（span）自体は変わらないので、
+                // ジェスチャー開始時点のpxPerMsをそのまま使い続けて問題ない
+                // （パンはstart/endを同じ量だけずらすだけで、表示幅は変えないため）
                 val pxPerMs = track.pxPerMs
                 val anchorX = down.position.x
+                val span = (latestEnd.value - latestStart.value).coerceAtLeast(0L)
 
                 dragUntilRelease(down.id) { change ->
                     val deltaMs = ((change.position.x - anchorX) / pxPerMs).toLong()
                     val targetStart = originalStart + deltaMs
+                    // VlogViewModel.moveTrimと同じ式でクランプ後の位置を出し、
+                    // その位置が今のビューポート外に出る分だけパンする
+                    // （実際のクランプ・反映はmoveTrim側でも行われる。ここでは
+                    // パン判定のためだけに同じ式を使っている）
+                    val maxStart = (latestDuration.value - span).coerceAtLeast(0L)
+                    val newStart = targetStart.coerceIn(0L, maxStart)
+                    val newEnd = newStart + span
+                    panViewportIfNeeded(newStart, latestDuration.value, lockedViewportState)
+                    panViewportIfNeeded(newEnd, latestDuration.value, lockedViewportState)
                     callbacks.onTrimMove(targetStart, targetStart)
                 }
             }
