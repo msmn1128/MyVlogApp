@@ -218,23 +218,23 @@ fun WaveformTrimmer(
             val tickMs = edgeScrollTickMs(lockedViewportState, latestDuration)
             when {
                 activeHandle == TrimHandle.Start -> {
-                    val newMs = (latestStart + direction * tickMs)
-                        .coerceIn(0L, (latestEnd - MIN_TRIM_MS).coerceAtLeast(0L))
+                    val newMs = clampHandleMs(
+                        TrimHandle.Start, latestStart + direction * tickMs, latestStart, latestEnd, latestDuration
+                    )
                     panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
                     latestCallbacks.onTrimChange(newMs, latestEnd, newMs)
                 }
                 activeHandle == TrimHandle.End -> {
-                    val newMs = (latestEnd + direction * tickMs).coerceIn(
-                        (latestStart + MIN_TRIM_MS).coerceAtMost(latestDuration), latestDuration
+                    val newMs = clampHandleMs(
+                        TrimHandle.End, latestEnd + direction * tickMs, latestStart, latestEnd, latestDuration
                     )
                     panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
                     latestCallbacks.onTrimChange(latestStart, newMs, newMs)
                 }
                 isMovingTrim -> {
-                    val span = (latestEnd - latestStart).coerceAtLeast(0L)
-                    val maxStart = (latestDuration - span).coerceAtLeast(0L)
-                    val newStart = (latestStart + direction * tickMs).coerceIn(0L, maxStart)
-                    val newEnd = newStart + span
+                    val (newStart, newEnd) = computeMoveSpan(
+                        latestStart + direction * tickMs, latestStart, latestEnd, latestDuration
+                    )
                     panViewportIfNeeded(newStart, latestDuration, lockedViewportState)
                     panViewportIfNeeded(newEnd, latestDuration, lockedViewportState)
                     latestCallbacks.onTrimMove(newStart, newStart)
@@ -508,6 +508,38 @@ private fun edgeScrollTickMs(lockedViewportState: MutableState<LongRange?>, dura
 }
 
 /**
+ * つまみ（[TrimHandle.Start]/[TrimHandle.End]）を動かした先の候補[ms]を、動画の範囲・
+ * MIN_TRIM_MSの制約へクランプする。指でドラッグしているとき（[dragTrimHandle]）と、
+ * 端に張り付いたまま自動で進めるとき（[WaveformTrimmer]内のオートスクロール
+ * LaunchedEffect）の両方から呼ぶことで、境界の扱いが2箇所でずれないようにする。
+ *
+ * coerceIn(min, max)はmin > maxだと例外を投げる。durationMsがMIN_TRIM_MS未満の
+ * 極端に短い動画では上限・下限が逆転しうるため、coerceAtLeast(0L)で
+ * 「動かせる余地が無ければ現在地のまま」に倒す。
+ */
+private fun clampHandleMs(handleKind: TrimHandle, ms: Long, start: Long, end: Long, duration: Long): Long =
+    when (handleKind) {
+        TrimHandle.Start -> ms.coerceIn(0L, (end - MIN_TRIM_MS).coerceAtLeast(0L))
+        TrimHandle.End -> ms.coerceIn((start + MIN_TRIM_MS).coerceAtMost(duration), duration)
+    }
+
+/** [computeMoveSpan]の結果。区間ごと移動後の新しい開始・終了位置。 */
+private data class MoveSpanResult(val newStart: Long, val newEnd: Long)
+
+/**
+ * 区間ごと移動で、区間開始位置の候補[candidateStart]から新しいstart/endを求める。
+ * 区間の幅（[start]〜[end]）は変えず、動画の範囲内に収まるようclampする。
+ * 指でドラッグしているとき（[dragBodyOrMove]）と、端に張り付いたまま自動で進める
+ * とき（[WaveformTrimmer]内のオートスクロールLaunchedEffect）の両方から呼ぶ。
+ */
+private fun computeMoveSpan(candidateStart: Long, start: Long, end: Long, duration: Long): MoveSpanResult {
+    val span = (end - start).coerceAtLeast(0L)
+    val maxStart = (duration - span).coerceAtLeast(0L)
+    val newStart = candidateStart.coerceIn(0L, maxStart)
+    return MoveSpanResult(newStart, newStart + span)
+}
+
+/**
  * 現在の選択範囲（[startMs]〜[endMs]）に合わせて波形の表示範囲を決める。
  *
  * 選択範囲が全体の大部分を占めるときは全体表示のまま返し、
@@ -696,18 +728,10 @@ private suspend fun AwaitPointerEventScope.dragTrimHandle(
             TrackMetrics(track.left, track.right, it.first, it.last)
         } ?: track
         val ms = currentTrack.xToMs(rawX)
+        val next = clampHandleMs(handleKind, ms, latestStart.value, latestEnd.value, latestDuration.value)
         when (handleKind) {
-            TrimHandle.Start -> {
-                val next = ms.coerceIn(0L, (latestEnd.value - MIN_TRIM_MS).coerceAtLeast(0L))
-                onTrimChange(next, latestEnd.value, next)
-            }
-            TrimHandle.End -> {
-                val next = ms.coerceIn(
-                    (latestStart.value + MIN_TRIM_MS).coerceAtMost(latestDuration.value),
-                    latestDuration.value
-                )
-                onTrimChange(latestStart.value, next, next)
-            }
+            TrimHandle.Start -> onTrimChange(next, latestEnd.value, next)
+            TrimHandle.End -> onTrimChange(latestStart.value, next, next)
         }
         // 指を動かさなくても、つまみがビューポート端に張り付いている間は波形が
         // 連続でパンし続ける（実際に毎フレーム進める処理はComposable側の
@@ -785,8 +809,6 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
             } else {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onMovingTrimChange(true)
-                val span = (latestEnd.value - latestStart.value).coerceAtLeast(0L)
-                val maxStart = (latestDuration.value - span).coerceAtLeast(0L)
                 // 区間開始位置の今の画面上のxと、実際に指を置いた位置との差をgrabOffsetとして
                 // 固定する（つまみのgrabOffsetと同じ考え方）。以後はこのオフセットと現在の
                 // 指の位置・現在のビューポートだけから区間位置を求める。
@@ -807,8 +829,9 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
                     val currentTrack = lockedViewportState.value?.let {
                         TrackMetrics(track.left, track.right, it.first, it.last)
                     } ?: track
-                    val newStart = currentTrack.extrapolatedMs(rawX).coerceIn(0L, maxStart)
-                    val newEnd = newStart + span
+                    val (newStart, newEnd) = computeMoveSpan(
+                        currentTrack.extrapolatedMs(rawX), latestStart.value, latestEnd.value, latestDuration.value
+                    )
                     panViewportIfNeeded(newStart, latestDuration.value, lockedViewportState)
                     panViewportIfNeeded(newEnd, latestDuration.value, lockedViewportState)
                     callbacks.onTrimMove(newStart, newStart)
