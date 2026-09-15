@@ -11,7 +11,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -169,14 +172,23 @@ private fun PreviewPane(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
+            // iOS版に合わせ、シークバーなどの操作UIは出さずタップで再生/一時停止だけ切り替える。
+            // ripple(波紋)も消す。動画の上に光る輪が出ると書き出し結果と見た目が食い違って見えるため。
             AndroidView(
                 factory = {
                     PlayerView(it).apply {
                         this.player = player
-                        useController = true
+                        useController = false
                     }
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (player.isPlaying) player.pause() else player.play()
+                    }
             )
             // ここから下は書き出しに焼き込まれる文字。配色はテーマに追従させず、
             // 出力と同じ白のままにしておく。
