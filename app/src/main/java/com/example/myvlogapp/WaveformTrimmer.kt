@@ -785,23 +785,29 @@ private suspend fun AwaitPointerEventScope.dragBodyOrMove(
             } else {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onMovingTrimChange(true)
-                val originalStart = latestStart.value
-                // ビューポートをパンしても区間の幅（span）自体は変わらないので、
-                // ジェスチャー開始時点のpxPerMsをそのまま使い続けて問題ない
-                // （パンはstart/endを同じ量だけずらすだけで、表示幅は変えないため）
-                val pxPerMs = track.pxPerMs
-                val anchorX = down.position.x
                 val span = (latestEnd.value - latestStart.value).coerceAtLeast(0L)
-
-                // VlogViewModel.moveTrimと同じ式でクランプ後の位置を出し、
-                // その位置が今のビューポート外に出る分だけパンする
-                // （実際のクランプ・反映はmoveTrim側でも行われる。ここでは
-                // パン判定のためだけに同じ式を使っている）
                 val maxStart = (latestDuration.value - span).coerceAtLeast(0L)
+                // 区間開始位置の今の画面上のxと、実際に指を置いた位置との差をgrabOffsetとして
+                // 固定する（つまみのgrabOffsetと同じ考え方）。以後はこのオフセットと現在の
+                // 指の位置・現在のビューポートだけから区間位置を求める。
+                //
+                // 以前は「掴んだ瞬間のstart位置＋指の移動量(px→ms換算)」という、タッチダウン
+                // 時点を基準にした差分方式だったが、これは今のビューポート（オートスクロール
+                // でパンされ続ける）を一切見ないため、オートスクロールが指の位置と無関係に
+                // 区間を進め続けている間に指がわずかでも動く（実機のタッチ座標は完全静止して
+                // いても微小に揺れる）と、タッチダウン基準の差分が「ほぼ元の位置」を指して
+                // しまい、オートスクロールの進みを毎フレーム引き戻す→ガタつく、という
+                // 不具合を起こしていた。dragTrimHandleと同じ方式に変えることで、
+                // オートスクロールでビューポートが動くのと歩調を合わせて指が動かなくても
+                // 一貫した位置が出るようにする。
+                val grabOffset = down.position.x - track.msToX(latestStart.value)
 
                 dragUntilRelease(down.id) { change ->
-                    val deltaMs = ((change.position.x - anchorX) / pxPerMs).toLong()
-                    val newStart = (originalStart + deltaMs).coerceIn(0L, maxStart)
+                    val rawX = change.position.x - grabOffset
+                    val currentTrack = lockedViewportState.value?.let {
+                        TrackMetrics(track.left, track.right, it.first, it.last)
+                    } ?: track
+                    val newStart = currentTrack.extrapolatedMs(rawX).coerceIn(0L, maxStart)
                     val newEnd = newStart + span
                     panViewportIfNeeded(newStart, latestDuration.value, lockedViewportState)
                     panViewportIfNeeded(newEnd, latestDuration.value, lockedViewportState)
