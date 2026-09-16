@@ -46,6 +46,7 @@ const val HITOKOTO_LINE_SPACING_PT = 10f  // ひとことの行間
 const val TIME_FONT_PT = 60f          // 撮影時刻
 const val TITLE_FONT_PT = 150f        // タイトルカードの「Vlog.」
 const val TITLE_DATE_FONT_PT = 50f    // タイトルカードの日付
+const val TITLE_DATE_LINE_SPACING_PT = 10f // タイトルカードの文言が複数行になったときの行間
 
 // タイトルカードの縦位置。画面中央からのずれ（マイナスが上、プラスが下）
 const val TITLE_Y_OFFSET_PT = -70f

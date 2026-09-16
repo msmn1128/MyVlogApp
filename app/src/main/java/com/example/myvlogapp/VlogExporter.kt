@@ -93,6 +93,9 @@ object VlogExporter {
      *   falseのときは全クリップを結合するだけで、タイトルカードもその効果音も含めない。
      * @param muted タイムライン全体のミュート。trueのときは各クリップの音声
      *   （[VlogClip.isMuted] の状態に関わらず全て）とタイトルカードの効果音を無音にする。
+     * @param customTitleText タイトルカードに焼き込む文言。null/空文字なら先頭クリップの
+     *   撮影日（[VlogClip.dateText]）を使う。改行を含む場合は複数行として焼き込み、
+     *   1行目の位置は変えずに下へ積む（[buildTitleFilter]参照）。
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
      */
@@ -101,6 +104,7 @@ object VlogExporter {
         clips: List<VlogClip>,
         includeTitle: Boolean = true,
         muted: Boolean = false,
+        customTitleText: String? = null,
         onProgress: suspend (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         require(clips.isNotEmpty()) { "クリップがありません" }
@@ -135,6 +139,10 @@ object VlogExporter {
             coroutineContext.ensureActive()
 
             val firstDate = clips.first().dateText
+            // タイトルカードの文言は自由入力があればそちらを優先（空/未入力ならの
+            // フォールバックはTitleCreationDialog側で解決済み）。ファイル名（ギャラリー表示名）は
+            // 常に撮影日ベースのfirstDateを使うので、ここでは分けて持つ。
+            val titleText = customTitleText ?: firstDate
             val sfxDelayMs = titleSfxDelayMs()
 
             // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
@@ -159,7 +167,7 @@ object VlogExporter {
             }
 
             val filterGraph = buildFilterGraph(
-                clips, fonts, firstDate, sfxDelayMs, workDir, id, textFiles,
+                clips, fonts, titleText, sfxDelayMs, workDir, id, textFiles,
                 includeTitle, audioPlan
             )
             val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
@@ -179,7 +187,7 @@ object VlogExporter {
             )
 
             onProgress("保存中...")
-            saveToGallery(context, mergedFile, buildDisplayName(context, firstDate))
+            saveToGallery(context, mergedFile, buildDisplayName(context, titleText))
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
@@ -363,7 +371,7 @@ object VlogExporter {
     private suspend fun buildFilterGraph(
         clips: List<VlogClip>,
         fonts: ExportFonts,
-        firstDate: String,
+        titleText: String,
         sfxDelayMs: Long,
         workDir: File,
         id: Long,
@@ -379,7 +387,8 @@ object VlogExporter {
             //     TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
             graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
                     ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[vtitlesrc]"
-            graph += "[vtitlesrc]${buildTitleFilter(firstDate, fonts)}[vtitle]"
+            val titleLines = writeTitleTextFiles(workDir, id, titleText, textFiles)
+            graph += "[vtitlesrc]${buildTitleFilter(titleLines, fonts)}[vtitle]"
             graph += if (audioPlan.needsTitleSfxInput) {
                 // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
                 // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と
@@ -479,38 +488,83 @@ object VlogExporter {
     }
 
     /**
+     * タイトルカードの文言（既定は撮影日、自由入力ならその文言）を改行ごとに
+     * 行単位のテキストファイルへ書き出す。空行は詰めて無視する
+     * （タイトルはSpanLinesと違って行位置をenableで出し分ける必要が無く、
+     * 空行のぶんだけ間隔を空けておく理由が無いため）。
+     */
+    private fun writeTitleTextFiles(
+        workDir: File,
+        id: Long,
+        titleText: String,
+        textFiles: MutableList<File>
+    ): List<File> {
+        val lines = titleText.split("\n")
+            .filter { it.isNotBlank() }
+            .mapIndexed { lineIndex, line ->
+                File(workDir, "title_${id}_$lineIndex.txt")
+                    .apply { writeText(line.escapePercentExpansion(), Charsets.UTF_8) }
+            }
+        textFiles += lines
+        return lines
+    }
+
+    /**
      * タイトルカードのフィルタ。
      * - 「Vlog.」 [fonts].logoType、[TITLE_FONT_PT]、中央やや上
-     * - 日付 "yyyy/MM/dd" [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下
+     * - タイトル文言（既定は撮影日 "yyyy/MM/dd"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
+     *   2行目以降になっても1行目のy座標（[TITLE_DATE_Y_OFFSET_PT]）は動かさず、
+     *   下へ[TITLE_DATE_FONT_PT]+[TITLE_DATE_LINE_SPACING_PT]ずつ積む
+     *   （中央揃えでブロックごと動かすと自由入力の行数次第で1行目の位置がずれてしまうため）。
      * - [FADE_START_FRAME]フレーム目からフェードアウト開始（nは0始まり）
      *
      * alpha式はシングルクォートで囲まれているため、内部のカンマを
      * バックスラッシュでエスケープしてはいけない（数式が壊れる）。
      */
-    private fun buildTitleFilter(dateText: String, fonts: ExportFonts): String {
+    private fun buildTitleFilter(titleLines: List<File>, fonts: ExportFonts): String {
         val fadeEndFrame = FADE_START_FRAME + FADE_FRAME_COUNT - 1
         val alpha = "if(lt(n,$FADE_START_FRAME),1," +
                 "if(between(n,$FADE_START_FRAME,$fadeEndFrame)," +
                 "1-(n-${FADE_START_FRAME - 1})/$FADE_FRAME_COUNT,0))"
-        return listOf(
-            drawText(
-                fontfile = fonts.logoType,
-                fontsizePt = TITLE_FONT_PT,
-                x = centeredX(),
-                y = centeredY(TITLE_Y_OFFSET_PT),
-                text = "Vlog.",
-                alpha = alpha
-            ),
+        val lineHeight = TITLE_DATE_FONT_PT + TITLE_DATE_LINE_SPACING_PT
+        val offsets = lineOffsets(titleLines.size, lineHeight, LineAnchor.TOP)
+        val logoLayer = drawText(
+            fontfile = fonts.logoType,
+            fontsizePt = TITLE_FONT_PT,
+            x = centeredX(),
+            y = centeredY(TITLE_Y_OFFSET_PT),
+            text = "Vlog.",
+            alpha = alpha
+        )
+        val titleLayers = titleLines.mapIndexed { lineIndex, file ->
             drawText(
                 fontfile = fonts.time,
                 fontsizePt = TITLE_DATE_FONT_PT,
                 x = centeredX(),
-                y = centeredY(TITLE_DATE_Y_OFFSET_PT),
-                text = escapeForDrawtext(dateText),
+                y = centeredY(TITLE_DATE_Y_OFFSET_PT + offsets[lineIndex]),
+                textFile = file,
                 alpha = alpha
             )
-        ).joinToString(",")
+        }
+        return (listOf(logoLayer) + titleLayers).joinToString(",")
     }
+
+    /** 複数行のdrawtextを縦に積むときのy方向オフセット（pt）の求め方 */
+    private enum class LineAnchor {
+        /** 行の集まり全体を中央に置く（ひとこと用） */
+        CENTERED,
+
+        /** 1行目の位置を固定し、以降を下に積む（タイトルカード用） */
+        TOP
+    }
+
+    /** [count]行ぶんの縦オフセット（pt）を、行送り[lineHeight]・[anchor]に従って計算する */
+    private fun lineOffsets(count: Int, lineHeight: Float, anchor: LineAnchor): List<Float> =
+        when (anchor) {
+            LineAnchor.CENTERED ->
+                (0 until count).map { ((it - (count - 1) / 2.0) * lineHeight).toFloat() }
+            LineAnchor.TOP -> (0 until count).map { it * lineHeight }
+        }
 
     /**
      * 1クリップのフィルタ。
@@ -547,14 +601,14 @@ object VlogExporter {
                 val to = (span.endMs - if (isLast) 0L else 1L).coerceAtLeast(from)
                 ":enable='between(t,${ffmpegSeconds(from)},${ffmpegSeconds(to)})'"
             }
+            val offsets = lineOffsets(lineFiles.size, lineHeight, LineAnchor.CENTERED)
             lineFiles.mapIndexedNotNull { lineIndex, file ->
                 if (file == null) return@mapIndexedNotNull null
-                val offset = (lineIndex - (lineFiles.size - 1) / 2.0) * lineHeight
                 drawText(
                     fontfile = fonts.logoType,
                     fontsizePt = HITOKOTO_FONT_PT,
                     x = centeredX(),
-                    y = centeredY(offset.toFloat()),
+                    y = centeredY(offsets[lineIndex]),
                     textFile = file,
                     enable = enable
                 )
@@ -788,16 +842,21 @@ object VlogExporter {
         return (n * 1000.0 / CANVAS_FPS).roundToLong()
     }
 
+    /** ファイル名に使う文言の長さ上限。自由入力タイトルが長文でもファイル名として扱える長さに切る */
+    private const val TITLE_FILENAME_MAX_CHARS = 60
+
     /**
-     * 保存するファイル名を決める。「Vlog_2026-08-24.mp4」の形。
+     * 保存するファイル名を決める。タイトルカードの文言（既定は撮影日）をそのまま使い、
+     * 「Vlog_2026-08-24.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
      *
      * 日付の区切りにハイフンを使うのは、ファイル名にスラッシュを含められないため
-     * （パス区切りと解釈されて保存に失敗する）。
+     * （パス区切りと解釈されて保存に失敗する）。自由入力タイトルも改行やパス区切り文字を
+     * 含みうるので、同じ理屈でまとめて1行のファイル名向け文字列にサニタイズする。
      *
-     * 同じ日に複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
+     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
      */
-    private fun buildDisplayName(context: Context, dateText: String): String {
-        val base = "Vlog_${dateText.replace("/", "-")}"
+    private fun buildDisplayName(context: Context, titleText: String): String {
+        val base = "Vlog_${sanitizeForFileName(titleText)}"
         val taken = existingDisplayNames(context, base)
 
         var candidate = "$base.mp4"
@@ -807,6 +866,13 @@ object VlogExporter {
             index++
         }
         return candidate
+    }
+
+    /** タイトル文言をファイル名の一部として使える形にする（改行・パス区切りの除去、長さの切り詰め） */
+    private fun sanitizeForFileName(titleText: String): String {
+        val singleLine = titleText.replace("\n", " ").trim()
+        val withoutPathChars = singleLine.replace(Regex("[\\\\/:*?\"<>|]"), "-")
+        return withoutPathChars.take(TITLE_FILENAME_MAX_CHARS).ifBlank { "Untitled" }
     }
 
     /**

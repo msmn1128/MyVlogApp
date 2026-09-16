@@ -147,6 +147,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     var showGallery by remember { mutableStateOf(false) }
     // 一時保存の一覧（保存と読み出しを1枚のダイアログでまかなう）
     var showSaves by remember { mutableStateOf(false) }
+    // 書き出し（タイトルあり）を押した直後に出す、タイトル文言選択ダイアログ
+    var showTitleDialog by remember { mutableStateOf(false) }
     // 許可する動画を選び直したときに一覧を取り直すための合図
     var galleryReloadToken by remember { mutableIntStateOf(0) }
 
@@ -186,11 +188,30 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
-    val onExport = { includeTitle: Boolean ->
+    // titleTextはincludeTitle=trueのとき（タイトル作成ダイアログで確定済み）だけ意味を持つ。
+    // falseのときはタイトルカード自体を焼かないので渡さない。
+    val startExport = { includeTitle: Boolean, titleText: String? ->
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
-        viewModel.export(includeTitle)
+        viewModel.export(includeTitle, titleText)
+    }
+    // タイトルあり（タップ）のときだけ、文言選択ダイアログを挟む。
+    // タイトルなし（長押し）はタイトルカード自体を焼かないので、そのまま書き出す。
+    val onExport = { includeTitle: Boolean ->
+        if (includeTitle) showTitleDialog = true else startExport(false, null)
+    }
+
+    if (showTitleDialog) {
+        TitleCreationDialog(
+            defaultDateText = clips.firstOrNull()?.dateText.orEmpty(),
+            timeFontFamily = timeFontFamily,
+            onDismiss = { showTitleDialog = false },
+            onConfirm = { titleText ->
+                showTitleDialog = false
+                startExport(true, titleText)
+            }
+        )
     }
 
     val filePicker = rememberLauncherForActivityResult(

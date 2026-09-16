@@ -967,8 +967,10 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *
      * @param includeTitle 先頭のタイトルカード（黒背景＋日付＋効果音）を付けるかどうか。
      *   書き出しボタンのタップ（true）／長押し（false）で呼び分ける。
+     * @param customTitleText タイトルカードに焼き込む文言。null/空文字なら先頭クリップの
+     *   撮影日（[VlogClip.dateText]）を使う。タイトル作成ダイアログで自由入力を選んだときのみ渡る。
      */
-    fun export(includeTitle: Boolean = true) {
+    fun export(includeTitle: Boolean = true, customTitleText: String? = null) {
         if (ExportStatus.isRunning) return
 
         val target = _clips.value
@@ -984,7 +986,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         player.playWhenReady = false
-        VlogExportService.start(getApplication(), target, includeTitle, _timelineMuted.value)
+        VlogExportService.start(
+            getApplication(), target, includeTitle, _timelineMuted.value, customTitleText
+        )
     }
 
     fun cancelExport() {
