@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.waveform
 
 import android.graphics.Rect as AndroidRect
 import android.os.Build
@@ -26,6 +26,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import com.example.myvlogapp.TextSegment
+import com.example.myvlogapp.ui.components.onSplitMarkerColor
+import com.example.myvlogapp.ui.components.splitMarkerColor
 
 // =====================================================================================
 // 波形トリマー（[WaveformTrimmer]）とその周辺一式。

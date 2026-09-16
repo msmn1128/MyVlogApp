@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.waveform
 
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -11,6 +11,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myvlogapp.TextSegment
 
 // =====================================================================================
 // WaveformTrimmer.kt からの切り出し。[WaveformTrimmer] のCanvas描画部分（DrawScope拡張

@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.components
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor

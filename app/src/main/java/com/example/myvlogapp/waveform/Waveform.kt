@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.waveform
 
 import android.content.Context
 import android.media.AudioFormat
@@ -14,6 +14,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.pow
 import kotlin.math.sqrt
+import com.example.myvlogapp.LOG_TAG
 
 /** 波形の解像度（横方向の本数）。タイムライン幅に対してこれくらいあれば粗く見えない */
 const val WAVEFORM_BUCKETS = 240

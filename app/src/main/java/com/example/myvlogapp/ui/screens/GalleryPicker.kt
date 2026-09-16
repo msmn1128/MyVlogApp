@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.screens
 
 import android.graphics.Bitmap
 import android.net.Uri
@@ -32,6 +32,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.myvlogapp.formatSeconds
+import com.example.myvlogapp.data.GalleryVideo
+import com.example.myvlogapp.data.hasPartialMediaAccess
+import com.example.myvlogapp.data.queryGalleryVideos
 
 /**
  * アプリ内のギャラリー選択画面。

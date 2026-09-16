@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row

@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.screens
 
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -35,6 +35,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myvlogapp.data.SavedProject
+import com.example.myvlogapp.defaultSaveName
+import com.example.myvlogapp.formatSavedAt
+import com.example.myvlogapp.formatSeconds
+import com.example.myvlogapp.ui.components.CompactIconButton
+import com.example.myvlogapp.ui.components.VlogIcons
 
 // =====================================================================================
 // MainActivity.kt から切り出した、一時保存の保存・読み出しダイアログ一式。

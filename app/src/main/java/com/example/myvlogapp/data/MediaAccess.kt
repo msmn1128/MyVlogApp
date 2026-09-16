@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.data
 
 import android.Manifest
 import android.content.Context

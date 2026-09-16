@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.export
 
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -28,6 +28,28 @@ import java.io.OutputStream
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToLong
+import com.example.myvlogapp.CANVAS_FPS
+import com.example.myvlogapp.CANVAS_HEIGHT
+import com.example.myvlogapp.CANVAS_WIDTH
+import com.example.myvlogapp.FONT_ASSET_DIR
+import com.example.myvlogapp.HITOKOTO_FONT_PT
+import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
+import com.example.myvlogapp.LOG_TAG
+import com.example.myvlogapp.TIME_FONT_ASSET
+import com.example.myvlogapp.TIME_FONT_PT
+import com.example.myvlogapp.TIME_MARGIN_PT
+import com.example.myvlogapp.TITLE_DATE_FONT_PT
+import com.example.myvlogapp.TITLE_DATE_LINE_SPACING_PT
+import com.example.myvlogapp.TITLE_DATE_Y_OFFSET_PT
+import com.example.myvlogapp.TITLE_DURATION_MS
+import com.example.myvlogapp.TITLE_FONT_ASSET
+import com.example.myvlogapp.TITLE_FONT_PT
+import com.example.myvlogapp.TITLE_SFX_ASSET
+import com.example.myvlogapp.TITLE_SFX_FRAME_NUMBER
+import com.example.myvlogapp.TITLE_Y_OFFSET_PT
+import com.example.myvlogapp.TextSpan
+import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
 

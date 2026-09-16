@@ -28,6 +28,16 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import com.example.myvlogapp.data.ClipStore
+import com.example.myvlogapp.data.SavedProject
+import com.example.myvlogapp.data.getVideoMetadata
+import com.example.myvlogapp.export.ExportState
+import com.example.myvlogapp.export.ExportStatus
+import com.example.myvlogapp.export.VlogEvent
+import com.example.myvlogapp.export.VlogExportService
+import com.example.myvlogapp.export.VlogExporter
+import com.example.myvlogapp.waveform.Waveform
+import com.example.myvlogapp.waveform.extractWaveform
 
 /** 履歴に積む上限。1件あたりクリップ一覧の参照コピーなので軽い */
 private const val HISTORY_LIMIT = 50

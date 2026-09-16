@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import com.example.myvlogapp.TOOLBAR_BUTTON_SIZE
+import com.example.myvlogapp.TOOLBAR_ICON_SIZE
 import com.example.myvlogapp.ui.theme.DarkOnSplitMarker
 import com.example.myvlogapp.ui.theme.DarkSplitMarker
 import com.example.myvlogapp.ui.theme.LightOnSplitMarker

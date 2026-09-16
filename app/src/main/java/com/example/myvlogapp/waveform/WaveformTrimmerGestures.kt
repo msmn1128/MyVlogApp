@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.waveform
 
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
@@ -12,6 +12,7 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.platform.ViewConfiguration
 import kotlin.math.abs
 import kotlinx.coroutines.withTimeoutOrNull
+import com.example.myvlogapp.TextSegment
 
 // =====================================================================================
 // WaveformTrimmer.ktのジェスチャー判定・ドラッグ処理（状態を持たない純粋関数群と、

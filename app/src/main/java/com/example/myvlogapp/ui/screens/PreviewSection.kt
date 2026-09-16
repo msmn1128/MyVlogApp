@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.screens
 
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedContent
@@ -57,6 +57,19 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.example.myvlogapp.CANVAS_HEIGHT
+import com.example.myvlogapp.CANVAS_WIDTH
+import com.example.myvlogapp.HITOKOTO_FONT_PT
+import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
+import com.example.myvlogapp.PREVIEW_FONT_SCALE
+import com.example.myvlogapp.SECTION_GAP
+import com.example.myvlogapp.TIME_FONT_PT
+import com.example.myvlogapp.TIME_MARGIN_PT
+import com.example.myvlogapp.TOOLBAR_ICON_SIZE
+import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.VlogViewModel
+import com.example.myvlogapp.export.ExportState
+import com.example.myvlogapp.ui.components.VlogIcons
 
 // =====================================================================================
 // MainActivity.kt から切り出した、プレビュー・操作ボタン・書き出し進捗のまとまり。

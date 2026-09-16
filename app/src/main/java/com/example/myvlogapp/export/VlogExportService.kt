@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.export
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -18,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.example.myvlogapp.VlogClip
 
 /**
  * VLOG書き出しをフォアグラウンドサービスとして実行する。

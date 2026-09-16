@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.data
 
 import android.content.ContentUris
 import android.content.Context
@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.myvlogapp.LOG_TAG
 
 // =====================================================================================
 // ギャラリー取得

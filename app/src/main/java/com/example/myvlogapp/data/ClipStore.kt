@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.data
 
 import android.content.Context
 import android.net.Uri
@@ -10,6 +10,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.example.myvlogapp.LOG_TAG
+import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.VlogClipKeys
+import com.example.myvlogapp.toJson
+import com.example.myvlogapp.trimmedDurationMs
 
 /** 復元結果。dropped は権限が無くて復元できなかった件数 */
 data class RestoredClips(val clips: List<VlogClip>, val dropped: Int)

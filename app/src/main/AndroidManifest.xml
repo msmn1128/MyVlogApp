@@ -64,7 +64,7 @@
         </activity>
 
         <service
-            android:name=".VlogExportService"
+            android:name=".export.VlogExportService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 

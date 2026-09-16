@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -45,6 +45,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.myvlogapp.DEFAULT_HITOKOTO
+import com.example.myvlogapp.SECTION_GAP
+import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.VlogViewModel
+import com.example.myvlogapp.WAVEFORM_HEIGHT
+import com.example.myvlogapp.formatSeconds
+import com.example.myvlogapp.ui.components.CompactIconButton
+import com.example.myvlogapp.ui.components.SegmentBadge
+import com.example.myvlogapp.ui.components.TimelineDivider
+import com.example.myvlogapp.ui.components.TimelineToggleButton
+import com.example.myvlogapp.ui.components.TrimPresetButton
+import com.example.myvlogapp.ui.components.VlogIcons
+import com.example.myvlogapp.ui.components.splitMarkerColor
+import com.example.myvlogapp.waveform.MIN_TRIM_MS
+import com.example.myvlogapp.waveform.Waveform
+import com.example.myvlogapp.waveform.WaveformTrimmer
+import com.example.myvlogapp.waveform.WaveformTrimmerCallbacks
 
 // =====================================================================================
 // MainActivity.kt から切り出した、タイムライン（クリップ一覧・波形トリマー・操作バー）と

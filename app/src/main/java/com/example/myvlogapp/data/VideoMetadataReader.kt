@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.data
 
 import android.content.Context
 import android.media.MediaMetadataRetriever
@@ -8,6 +8,10 @@ import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import com.example.myvlogapp.CANVAS_HEIGHT
+import com.example.myvlogapp.CANVAS_WIDTH
+import com.example.myvlogapp.LOG_TAG
+import com.example.myvlogapp.VideoMeta
 
 // =====================================================================================
 // メタデータ取得
