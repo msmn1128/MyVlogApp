@@ -1,4 +1,4 @@
-package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+package com.example.myvlogapp
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -103,6 +103,13 @@ internal fun TimelineDivider() {
     )
 }
 
+/** 有効/無効の切り替わりを色の濃淡で補間するための透明度。CompactIconButton/TrimPresetButtonで共用 */
+@Composable
+private fun disabledAlpha(enabled: Boolean, label: String): Float {
+    val alpha by animateFloatAsState(targetValue = if (enabled) 1f else 0.38f, label = label)
+    return alpha
+}
+
 /**
  * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
  * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
@@ -155,10 +162,7 @@ internal fun CompactIconButton(
     onLongClickLabel: String? = null
 ) {
     // 有効/無効はundo/redoなど編集のたびに切り替わるため、色の濃淡を補間する
-    val contentAlpha by animateFloatAsState(
-        targetValue = if (enabled) 1f else 0.38f,
-        label = "compactIconButtonAlpha"
-    )
+    val contentAlpha = disabledAlpha(enabled, label = "compactIconButtonAlpha")
     // 長押しの操作（すべて削除など）は確認ダイアログを出さない代わりに、
     // 効いた瞬間が分かるようアイコンを一瞬だけ弾ませる。1件ずつの削除で
     // タイルがふわっと消えるのと動きの質を揃えて、操作の一体感を出すため
@@ -208,10 +212,7 @@ internal fun TrimPresetButton(
 ) {
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
     // CompactIconButtonと同じく、有効/無効の切り替わりを色の濃淡で補間する
-    val contentAlpha by animateFloatAsState(
-        targetValue = if (enabled) 1f else 0.38f,
-        label = "trimPresetButtonAlpha"
-    )
+    val contentAlpha = disabledAlpha(enabled, label = "trimPresetButtonAlpha")
     Box(
         modifier = Modifier
             .height(TOOLBAR_BUTTON_SIZE)

@@ -21,6 +21,12 @@ const val WAVEFORM_BUCKETS = 240
 /** 出力バッファを待つ時間。空振りしたときだけこのぶん眠るので、CPUを回し続けずに済む */
 private const val DECODE_TIMEOUT_US = 10_000L
 
+/** 音声トラックのインデックスを探す。見つからなければ null（[VlogExporter]の音声有無判定とも共用） */
+internal fun MediaExtractor.findAudioTrackIndex(): Int? =
+    (0 until trackCount).firstOrNull { index ->
+        getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+    }
+
 /**
  * 何サンプルに1つ拾うか。
  * 全サンプルを二乗和に入れても見た目は変わらないので、間引いて処理時間を削る。
@@ -75,11 +81,7 @@ suspend fun extractWaveform(
     try {
         extractor.setDataSource(context, uri, null)
 
-        val trackIndex = (0 until extractor.trackCount).firstOrNull { index ->
-            extractor.getTrackFormat(index)
-                .getString(MediaFormat.KEY_MIME)
-                ?.startsWith("audio/") == true
-        } ?: return@withContext Waveform.Silent
+        val trackIndex = extractor.findAudioTrackIndex() ?: return@withContext Waveform.Silent
 
         val inputFormat = extractor.getTrackFormat(trackIndex)
         val mime = inputFormat.getString(MediaFormat.KEY_MIME)

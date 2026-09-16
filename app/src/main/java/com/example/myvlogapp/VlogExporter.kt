@@ -1,11 +1,10 @@
-package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+package com.example.myvlogapp
 
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -697,11 +696,7 @@ object VlogExporter {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(context, uri, null)
-            (0 until extractor.trackCount).any { index ->
-                extractor.getTrackFormat(index)
-                    .getString(MediaFormat.KEY_MIME)
-                    ?.startsWith("audio/") == true
-            }
+            extractor.findAudioTrackIndex() != null
         } catch (e: Exception) {
             Log.w(LOG_TAG, "音声トラックの有無を判定できませんでした（無音として扱います）: $uri", e)
             false

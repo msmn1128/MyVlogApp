@@ -1,4 +1,4 @@
-package com.example.myvlogapp // ← ご自身のパッケージ名に合わせて変更してください
+package com.example.myvlogapp
 
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
