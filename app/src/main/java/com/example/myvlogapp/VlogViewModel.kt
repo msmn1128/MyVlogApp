@@ -13,7 +13,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -302,21 +305,28 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             val context = getApplication<Application>()
+            // 1件ずつ順番にsetDataSourceすると、4Kなど高ビットレートの動画を
+            // 複数選んだ場合に待ち時間が本数ぶん積み上がる。IOディスパッチャの
+            // スレッドプール内で並列に取得し、合計時間を最も遅い1本ぶんに縮める。
             val added = withContext(Dispatchers.IO) {
-                uris.mapIndexed { offset, uri ->
-                    val meta = getVideoMetadata(context, uri)
-                    VlogClip(
-                        id = System.nanoTime() + offset,
-                        uri = uri,
-                        timeText = meta.timeText,
-                        dateText = meta.dateText,
-                        durationMs = meta.durationMs,
-                        width = meta.width,
-                        height = meta.height,
-                        startMs = 0L,
-                        endMs = meta.durationMs,
-                        shotAtMillis = meta.shotAtMillis
-                    )
+                coroutineScope {
+                    uris.mapIndexed { offset, uri ->
+                        async {
+                            val meta = getVideoMetadata(context, uri)
+                            VlogClip(
+                                id = System.nanoTime() + offset,
+                                uri = uri,
+                                timeText = meta.timeText,
+                                dateText = meta.dateText,
+                                durationMs = meta.durationMs,
+                                width = meta.width,
+                                height = meta.height,
+                                startMs = 0L,
+                                endMs = meta.durationMs,
+                                shotAtMillis = meta.shotAtMillis
+                            )
+                        }
+                    }.awaitAll()
                 }
             }
 
