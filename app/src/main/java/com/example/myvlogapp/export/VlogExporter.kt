@@ -95,7 +95,7 @@ object VlogExporter {
     private const val AUDIO_BITRATE = "128k"
 
     /** h264_mediacodec（ハードウェアエンコーダ）使用時のビットレート */
-    private const val MEDIACODEC_BITRATE = "5M"
+    private const val MEDIACODEC_BITRATE = "12M"
 
     /** ギャラリー保存先のサブフォルダ名(Movies/以下)。孤児ファイル掃除の検索条件とも一致させる */
     private const val OUTPUT_SUBDIRECTORY = "MyVlogApp"
