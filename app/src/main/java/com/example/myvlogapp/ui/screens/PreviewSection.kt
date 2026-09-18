@@ -194,6 +194,9 @@ private fun PreviewPane(
                         useController = false
                     }
                 },
+                // ExoPlayerはViewModelが持ち続けるので、外れたPlayerViewが
+                // playerとサーフェスを握ったままにならないよう切り離す
+                onRelease = { it.player = null },
                 modifier = Modifier
                     .fillMaxSize()
                     .clickable(

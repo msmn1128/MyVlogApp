@@ -16,8 +16,22 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 import com.example.myvlogapp.LOG_TAG
 
-/** 波形の解像度（横方向の本数）。タイムライン幅に対してこれくらいあれば粗く見えない */
+/** 波形の解像度（横方向の本数）の下限。タイムライン幅に対してこれくらいあれば粗く見えない */
 const val WAVEFORM_BUCKETS = 240
+
+/**
+ * 長い動画で波形の1本が受け持つ時間の目安。
+ * 本数を尺に関係なく固定すると、10分の動画を数秒までズームしても表示範囲に
+ * 1本しか入らず、ズームしても情報が増えない。
+ */
+private const val WAVEFORM_TARGET_BUCKET_MS = 100L
+
+/** 波形の本数の上限。集計用の配列とキャッシュを際限なく太らせないため */
+private const val WAVEFORM_MAX_BUCKETS = 6000
+
+/** 尺に応じた波形の本数。短い動画は従来どおり [WAVEFORM_BUCKETS] のまま */
+internal fun waveformBucketsFor(durationMs: Long): Int =
+    (durationMs / WAVEFORM_TARGET_BUCKET_MS).toInt().coerceIn(WAVEFORM_BUCKETS, WAVEFORM_MAX_BUCKETS)
 
 /** 出力バッファを待つ時間。空振りしたときだけこのぶん眠るので、CPUを回し続けずに済む */
 private const val DECODE_TIMEOUT_US = 10_000L
@@ -36,7 +50,7 @@ internal fun MediaExtractor.findAudioTrackIndex(): Int? =
 private const val SAMPLE_STRIDE = 7
 
 /**
- * 音の波形。値は 0f〜1f に正規化済みで、要素数は [WAVEFORM_BUCKETS]。
+ * 音の波形。値は 0f〜1f に正規化済みで、要素数は [waveformBucketsFor]（尺に応じて増える）。
  * [hasAudio] が false のときは無音（音声トラックが無い）を表す。
  */
 data class Waveform(
@@ -73,7 +87,7 @@ suspend fun extractWaveform(
     context: Context,
     uri: Uri,
     durationMs: Long,
-    buckets: Int = WAVEFORM_BUCKETS
+    buckets: Int = waveformBucketsFor(durationMs)
 ): Waveform? = withContext(Dispatchers.IO) {
     if (durationMs <= 0L) return@withContext null
 

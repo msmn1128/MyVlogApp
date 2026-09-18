@@ -26,6 +26,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import com.example.myvlogapp.TextSegment
 import com.example.myvlogapp.ui.components.onSplitMarkerColor
 import com.example.myvlogapp.ui.components.splitMarkerColor
@@ -184,6 +185,11 @@ fun WaveformTrimmer(
     val isPinnedAtRightEdgeState = remember(clipId) { mutableStateOf(false) }
     LaunchedEffect(clipId) {
         while (true) {
+            // 張り付くまではここで待つ。待たずにdelayだけで回すと、つまみを掴んで
+            // いなくても常時60Hzで空回りし、背面に回した後も止まらない。
+            // 張り付いている間は即座に返るので、従来どおり約16ms間隔で進む。
+            snapshotFlow { isPinnedAtLeftEdgeState.value || isPinnedAtRightEdgeState.value }
+                .first { it }
             delay(16L)
             val pinnedLeft = isPinnedAtLeftEdgeState.value
             val pinnedRight = isPinnedAtRightEdgeState.value

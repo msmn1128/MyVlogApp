@@ -65,10 +65,11 @@ internal fun SaveLoadDialog(
     onDelete: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // 既定の保存名は今日の日付。同じ日に複数回保存したときは "(1)" のように連番を付ける
-    var name by remember {
-        mutableStateOf(defaultSaveName(System.currentTimeMillis(), projects.map { it.name }))
-    }
+    // 既定の保存名は今日の日付。同じ日に複数回保存したときは "(1)" のように連番を付ける。
+    // 一覧は開いた直後に非同期で読み込まれるため、既定名は一覧の最新状態から都度求め、
+    // ユーザーが打ち替えた場合だけその文字列を優先する（初回表示で一覧が空でも連番が付く）。
+    var editedName by remember { mutableStateOf<String?>(null) }
+    val name = editedName ?: defaultSaveName(System.currentTimeMillis(), projects.map { it.name })
     var pendingDelete by remember { mutableStateOf<SavedProject?>(null) }
 
     // 削除だけは「もとに戻す」で戻せないので確認を挟む
@@ -94,7 +95,7 @@ internal fun SaveLoadDialog(
             Column(modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = { editedName = it },
                     label = { Text("保存名") },
                     singleLine = true,
                     enabled = canSave,

@@ -229,6 +229,29 @@ data class TextSpan(
 )
 
 /**
+ * 既存の並び（[current]）はそのままに、新規クリップ（[added]）だけを
+ * 撮影/作成日時（[VlogClip.sortKeyMs]）の位置へ差し込む。
+ * VlogViewModel から切り出したもの（ViewModel抜きで単体テストできるようにするため）。
+ *
+ * @return 差し込み後の全件リストと、ExoPlayerのプレイリストへ同じ操作を
+ *   再現するための (挿入先index, クリップ) のペア（indexが小さい順）
+ */
+internal fun mergeByShotAt(
+    current: List<VlogClip>,
+    added: List<VlogClip>
+): Pair<List<VlogClip>, List<Pair<Int, VlogClip>>> {
+    val result = current.toMutableList()
+    val insertions = mutableListOf<Pair<Int, VlogClip>>()
+    added.sortedBy { it.sortKeyMs }.forEach { clip ->
+        val index = result.indexOfFirst { it.sortKeyMs > clip.sortKeyMs }
+            .let { if (it < 0) result.size else it }
+        result.add(index, clip)
+        insertions += index to clip
+    }
+    return result to insertions
+}
+
+/**
  * [VlogClip.sortKeyMs] 用。[VideoMetadataReader.formatDate]/[formatTime] と同じ書式
  * （"yyyy/MM/dd" + "HH:mm"、Locale.US、端末ローカルタイムゾーン）の逆変換。
  * 壊れていれば最後尾へ送るため [Long.MAX_VALUE] を返す。

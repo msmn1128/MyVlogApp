@@ -99,7 +99,15 @@ fun GalleryPickerDialog(
 
     LaunchedEffect(reloadToken) {
         videos = null
-        videos = queryGalleryVideos(context)
+        val loaded = queryGalleryVideos(context)
+        videos = loaded
+
+        // 許可する動画を選び直すと一覧が入れ替わる。一覧から消えた動画の選択が
+        // 残ったままだと、見えないのに追加されてしまう。残るものだけ選んだ順を保って詰め直す。
+        val available = loaded.mapTo(HashSet()) { it.uri }
+        val kept = selected.entries.filter { it.key in available }.sortedBy { it.value }
+        selected.clear()
+        kept.forEachIndexed { index, entry -> selected[entry.key] = index + 1 }
     }
 
     Dialog(

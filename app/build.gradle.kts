@@ -25,7 +25,12 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.myvlogapp"
+        // Google Playは com.example.* を拒否するため、配布用の識別子にしてある。
+        // 公開後は変更できない。namespace（Kotlinのパッケージ）とは別物なので、
+        // ソースのpackage宣言は com.example.myvlogapp のまま据え置いている。
+        // 変更前(com.example.myvlogapp)で入れたアプリとは別アプリ扱いになり、
+        // 端末内の自動保存・一時保存は引き継がれない。
+        applicationId = "com.masamune.myvlogapp"
         minSdk = 24
         targetSdk = 37
         versionCode = 2
@@ -72,17 +77,8 @@ android {
         compose = true
     }
 
-    // App Bundle (AAB) を作成する場合、ABI分割（splits）は不要です。
-    // AAB自体がABIごとの最適化を内包しており、splitsが有効だと
-    // リソース圧縮（shrinkResources）と競合してエラーになるため、無効化します。
-    splits {
-        abi {
-            isEnable = false
-            reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
-            isUniversalApk = false
-        }
-    }
+    // ABI分割（splits）は設定しない。AAB自体がABIごとの最適化を内包しており、
+    // splitsを有効にするとリソース圧縮（shrinkResources）と競合してエラーになるため。
 
     packaging {
         jniLibs {
@@ -123,7 +119,7 @@ dependencies {
     // --- 開発用（デバッグビルドのみ。Layout Inspectorやプレビューで使う） ---
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // テスト用の依存は外してある。src/test と src/androidTest が空だったため。
-    // 書くときは libs.versions.toml に定義が残っているので、
-    // testImplementation(libs.junit) などを足し直せばよい。
+    // --- JVM単体テスト（src/test）。座標・区間まわりの純粋関数が対象 ---
+    testImplementation(libs.junit)
+    testImplementation(libs.mockk)
 }

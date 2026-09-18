@@ -12,6 +12,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myvlogapp.TextSegment
+import kotlin.math.ceil
+
+/** 波形の棒の間隔の下限。これより密になるときは数本をまとめて描く */
+private val MIN_BAR_SPACING = 1.3.dp
 
 // =====================================================================================
 // WaveformTrimmer.kt からの切り出し。[WaveformTrimmer] のCanvas描画部分（DrawScope拡張
@@ -102,14 +106,28 @@ private fun DrawScope.drawWaveformBars(
         // クリップ全体より狭くなるので、バケットごとの中心時刻をmsToXで変換して
         // 実際の位置に描き直す（ズームしていないときは以前の等間隔配置と一致する）。
         val bucketMs = durationMs.toFloat() / amplitudes.size
-        val barWidth = (bucketMs * track.pxPerMs * 0.68f).coerceAtLeast(1f)
+
+        // 長い動画は本数が多く（[waveformBucketsFor]）、全体表示だと1本が1px未満になる。
+        // 棒同士の間隔が一定以上になるよう、密なときだけ隣り合う数本をまとめて
+        // 最大値の1本として描く。ズームして間隔が空けば step=1 に戻り、1本ずつ描く。
+        val bucketSpacingPx = bucketMs * track.pxPerMs
+        val step = ceil(MIN_BAR_SPACING.toPx() / bucketSpacingPx).toInt().coerceIn(1, amplitudes.size)
+        val barWidth = (bucketSpacingPx * step * 0.68f).coerceAtLeast(1f)
         val minHalf = 0.75.dp.toPx()
         val maxHalf = (size.height / 2f - 10.dp.toPx()).coerceAtLeast(minHalf)
 
-        amplitudes.forEachIndexed { index, amplitude ->
-            val bucketCenterMs = ((index + 0.5f) * bucketMs).toLong()
-            val center = track.msToX(bucketCenterMs)
-            if (center < track.left - barWidth || center > track.right + barWidth) return@forEachIndexed
+        var index = 0
+        while (index < amplitudes.size) {
+            val groupEnd = minOf(index + step, amplitudes.size)
+            val groupCenterMs = ((index + groupEnd) / 2f * bucketMs).toLong()
+            val center = track.msToX(groupCenterMs)
+            if (center < track.left - barWidth || center > track.right + barWidth) {
+                index = groupEnd
+                continue
+            }
+            var amplitude = 0f
+            for (i in index until groupEnd) amplitude = maxOf(amplitude, amplitudes[i])
+            index = groupEnd
             val half = (amplitude * maxHalf).coerceAtLeast(minHalf)
             drawRoundRect(
                 color = if (center in startX..endX) colors.active else colors.inactive,

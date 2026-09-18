@@ -316,11 +316,20 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val context = getApplication<Application>()
 
-            // タイムラインに既にある動画は追加せずスキップする
+            // タイムラインに既にある動画は追加せずスキップする。
+            // distinct() は uris 自体に同じURIが重複して含まれるケース
+            // （呼び出し元が誤って同じ動画を2回渡した場合など）に対応するため。
+            //
+            // ファイル名+サイズなどの内容ベースでの同一性判定も検討したが、
+            // 偶然ファイル名とサイズが一致する別動画を誤って同一と判定して
+            // 無言でスキップしてしまうリスク（データ消失）があり、URI一致の
+            // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
+            // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
+            // ケースは既知の制約として残す。
             val existingUris = _clips.value.map { it.uri }.toSet()
-            val newUris = uris.filter { it !in existingUris }
+            val newUris = uris.distinct().filter { it !in existingUris }
             if (newUris.isEmpty()) {
-                _events.send(VlogEvent.Message("すでに追加済みの動画のためスキップしました"))
+                sendMessage("すでに追加済みの動画のためスキップしました")
                 return@launch
             }
 
@@ -353,14 +362,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            var raceSkipped = 0
-            clipsMutationMutex.withLock {
-                // ロック取得前の existingUris チェックは、メタデータ取得中に別の
+            val toMerge = clipsMutationMutex.withLock {
+                // ロック取得前のチェックは、メタデータ取得中に別の
                 // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
                 // マージ直前にロック内でもう一度チェックし、その分を除外する。
                 val currentUris = _clips.value.map { it.uri }.toSet()
                 val toMerge = added.filter { it.uri !in currentUris }
-                raceSkipped = added.size - toMerge.size
+                if (toMerge.isEmpty()) return@withLock toMerge
 
                 val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
 
@@ -373,40 +381,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                     val index = merged.indexOfFirst { it.id == id }
                     if (index >= 0) select(index)
                 }
+                toMerge
             }
 
-            val skippedDuplicates = uris.size - newUris.size + raceSkipped
+            val skippedDuplicates = uris.size - toMerge.size
             if (skippedDuplicates > 0) {
-                _events.send(VlogEvent.Message("$skippedDuplicates 件は追加済みのためスキップしました"))
+                sendMessage("$skippedDuplicates 件は追加済みのためスキップしました")
             }
 
-            val skipped = added.count { !it.isValid }
+            val skipped = toMerge.count { !it.isValid }
             if (skipped > 0) {
-                _events.send(VlogEvent.Message("$skipped 件の動画は長さを取得できませんでした"))
+                sendMessage("$skipped 件の動画は長さを取得できませんでした")
             }
         }
-    }
-
-    /**
-     * 既存の並び（[current]）はそのままに、新規クリップ（[added]）だけを
-     * 撮影/作成日時（[VlogClip.sortKeyMs]）の位置へ差し込む。
-     *
-     * @return 差し込み後の全件リストと、ExoPlayerのプレイリストへ同じ操作を
-     *   再現するための (挿入先index, クリップ) のペア（indexが小さい順）
-     */
-    private fun mergeByShotAt(
-        current: List<VlogClip>,
-        added: List<VlogClip>
-    ): Pair<List<VlogClip>, List<Pair<Int, VlogClip>>> {
-        val result = current.toMutableList()
-        val insertions = mutableListOf<Pair<Int, VlogClip>>()
-        added.sortedBy { it.sortKeyMs }.forEach { clip ->
-            val index = result.indexOfFirst { it.sortKeyMs > clip.sortKeyMs }
-                .let { if (it < 0) result.size else it }
-            result.add(index, clip)
-            insertions += index to clip
-        }
-        return result to insertions
     }
 
     fun select(index: Int) {

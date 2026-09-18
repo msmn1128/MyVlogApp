@@ -81,17 +81,21 @@ private fun parseCreationTime(raw: String): Long? = runCatching {
         .parse(raw)?.time
 }.getOrNull()
 
-private fun queryMediaStoreDateMillis(context: Context, uri: Uri): Long? = runCatching {
-    context.contentResolver.query(
-        uri,
-        arrayOf(MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED),
-        null, null, null
-    )?.use { cursor ->
-        if (!cursor.moveToFirst()) return@use null
-        // DATE_TAKEN はms精度の実撮影時刻。DATE_ADDED は端末への追加日時（秒精度）で、
-        // 一括インポートした動画は同じ値になりやすいため、あくまで最後の手段とする。
-        val dateTaken = if (cursor.isNull(0)) null else cursor.getLong(0)
-        if (dateTaken != null && dateTaken > 0L) dateTaken else cursor.getLong(1) * 1000L
+/**
+ * DATE_TAKEN はms精度の実撮影時刻。DATE_ADDED は端末への追加日時（秒精度）で、
+ * 一括インポートした動画は同じ値になりやすいため、あくまで最後の手段とする。
+ *
+ * 2列を1回のクエリでまとめて取ると、プロバイダによっては片方の列名を
+ * 認識できずクエリ自体が例外になり、本来取れるはずのもう片方まで
+ * 失ってしまうため、列ごとに別クエリ・別runCatchingにしている。
+ */
+private fun queryMediaStoreDateMillis(context: Context, uri: Uri): Long? =
+    queryLongColumn(context, uri, MediaStore.MediaColumns.DATE_TAKEN)?.takeIf { it > 0L }
+        ?: queryLongColumn(context, uri, MediaStore.MediaColumns.DATE_ADDED)?.let { it * 1000L }
+
+private fun queryLongColumn(context: Context, uri: Uri, column: String): Long? = runCatching {
+    context.contentResolver.query(uri, arrayOf(column), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
     }
 }.getOrNull()
 

@@ -18,6 +18,9 @@ import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
@@ -369,15 +372,22 @@ object VlogExporter {
         fun hasRealAudio(clipIndex: Int): Boolean = clipHasRealAudio[clipIndex]
 
         companion object {
-            fun build(
+            /**
+             * 音声トラックの有無はクリップごとに MediaExtractor で開いて調べるため、
+             * 最大50本を直列に回すと「準備中...」が本数ぶん伸びる。動画追加時のメタデータ
+             * 取得（VlogViewModel.addClips）と同じく、呼び出し元のIOスレッドで並列に調べる。
+             */
+            suspend fun build(
                 context: Context,
                 clips: List<VlogClip>,
                 includeTitle: Boolean,
                 muted: Boolean
             ): AudioPlan = AudioPlan(
                 needsTitleSfxInput = includeTitle && !muted,
-                clipHasRealAudio = clips.map { clip ->
-                    !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri)
+                clipHasRealAudio = coroutineScope {
+                    clips.map { clip ->
+                        async { !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri) }
+                    }.awaitAll()
                 }
             )
         }
@@ -433,13 +443,14 @@ object VlogExporter {
             val startSec = ffmpegSeconds(clip.startMs)
             val endSec = ffmpegSeconds(clip.startMs + clip.trimmedDurationMs)
             val spans = writeSpanTextFiles(workDir, id, index, clip, textFiles)
+            val timeFile = writeTimeTextFile(workDir, id, index, clip, textFiles)
 
             // trimのみ（setpts無し）だと、切り出し後もtが素材の絶対時刻のまま
             // drawtextに渡る。区間出し分けのenable式(buildClipFilter内)がこの
             // 絶対時刻を前提にしているため、setpts=PTS-STARTPTSは全フィルタの
             // 最後（concatへ渡す直前）で1回だけ行う。
             graph += "[$inputIndex:v]${trimFilter(startSec, endSec, audio = false)}," +
-                    "${buildClipFilter(spans, clip, fonts)}," +
+                    "${buildClipFilter(spans, timeFile, fonts)}," +
                     "setpts=PTS-STARTPTS[${vTag(index)}]"
 
             // concatは各セグメントの音声ストリームを明示参照するため、
@@ -588,6 +599,25 @@ object VlogExporter {
         }
 
     /**
+     * 撮影時刻（[VlogClip.timeText]）を1行のテキストファイルへ書き出す。
+     *
+     * ひとことやタイトルと同じtextfile経由にしているのは、text=に直接埋め込むと
+     * フィルタグラフとdrawtextの二段階で引用符・コロン・バックスラッシュが解釈され、
+     * エスケープの正しさが文字列の中身に左右されるため（ファイルなら中身は解釈されない）。
+     *
+     * @param textFiles 生成したファイルをここへ積む（呼び出し元が掃除するため）
+     */
+    private fun writeTimeTextFile(
+        workDir: File,
+        id: Long,
+        clipIndex: Int,
+        clip: VlogClip,
+        textFiles: MutableList<File>
+    ): File = File(workDir, "time_${id}_$clipIndex.txt")
+        .apply { writeText(clip.timeText.escapePercentExpansion(), Charsets.UTF_8) }
+        .also { textFiles += it }
+
+    /**
      * 1クリップのフィルタ。
      * - 1920x1080キャンバスに歪みなしで配置（余白は黒帯）、30fps
      * - ひとこと：[fonts].logoType、[HITOKOTO_FONT_PT]、上下左右中央
@@ -597,10 +627,11 @@ object VlogExporter {
      *
      * @param spans ひとことの区間と、その各行のテキストファイル。
      *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
+     * @param timeFile 撮影時刻を書き出したテキストファイル（[writeTimeTextFile]）
      */
     private fun buildClipFilter(
         spans: List<SpanLines>,
-        clip: VlogClip,
+        timeFile: File,
         fonts: ExportFonts
     ): String {
         // 行の高さぶんだけ上下にずらして、行の集まり全体が画面中央に来るようにする
@@ -646,9 +677,14 @@ object VlogExporter {
                     fontsizePt = TIME_FONT_PT,
                     x = "$CANVAS_WIDTH-text_w-${TIME_MARGIN_PT.toInt()}",
                     y = centeredY(0f),
-                    text = escapeForDrawtext(clip.timeText)
+                    textFile = timeFile
                 )
             )
+            // scaleは入力のSAR（画素の縦横比）を引き継ぐため、非正方画素の素材が混ざると
+            // タイトルカード（SAR 1:1）や他クリップとSARが食い違い、concatが
+            // 「Input link parameters do not match」で書き出しごと失敗する。
+            // 1:1の素材には何も起きないので、全クリップで無条件に揃えておく。
+            add("setsar=1")
         }.joinToString(",")
     }
 
@@ -657,7 +693,8 @@ object VlogExporter {
      * fontfile/fontsize/fontcolor/x/yの並びと書式を1箇所に集約し、
      * タイトル・ひとこと・時刻の見た目が食い違わないようにする。
      *
-     * @param text テキストを直接埋め込む場合（あらかじめ[escapeForDrawtext]でエスケープ済みのこと）。
+     * @param text テキストを直接埋め込む場合。引用符・コロン・バックスラッシュ等のエスケープは
+     *   行わないので、固定の英数字リテラル（"Vlog."）専用。任意の文字列は[textFile]を使うこと。
      *   [textFile]と排他。
      * @param textFile 別ファイルの内容を読ませる場合（改行や引用符を含むテキスト用）。[text]と排他。
      * @param enable 出し分け条件。付けない場合は空文字列のまま。
@@ -697,12 +734,6 @@ object VlogExporter {
             else -> "(h-text_h)/2-${-offset}"
         }
     }
-
-    private fun escapeForDrawtext(text: String) = text
-        .replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "\\'")
-        .escapePercentExpansion()
 
     /**
      * drawtextの %{...} 展開（strftimeやメタデータなど）を無効化する。
@@ -886,7 +917,7 @@ object VlogExporter {
     }
 
     /** タイトル文言をファイル名の一部として使える形にする（改行・パス区切りの除去、長さの切り詰め） */
-    private fun sanitizeForFileName(titleText: String): String {
+    internal fun sanitizeForFileName(titleText: String): String {
         val singleLine = titleText.replace("\n", " ").trim()
         val withoutPathChars = singleLine.replace(Regex("[\\\\/:*?\"<>|]"), "-")
         return withoutPathChars.take(TITLE_FILENAME_MAX_CHARS).ifBlank { "Untitled" }
@@ -942,11 +973,13 @@ object VlogExporter {
         // コピー自体は中断ポイントを持たない同期I/Oなので、途中でキャンセルされても
         // 素通りしてコピーが完了してしまう（「中止した」のに保存済みになる不整合）。
         // バッファ単位でensureActive()を挟み、キャンセル時は挿入済みのMediaStore行を消す。
+        // キャンセル以外の失敗（空き容量不足のIOExceptionなど）でも同様に消す。
+        // 消さないとIS_PENDINGのまま残り、次回起動時の掃除まで壊れた項目が居座る。
         try {
             resolver.openOutputStream(uri)?.use { output ->
                 source.inputStream().use { input -> copyCancellably(input, output) }
             } ?: throw VlogExportException("ギャラリーへの書き込みに失敗しました")
-        } catch (e: CancellationException) {
+        } catch (e: Throwable) {
             runCatching { resolver.delete(uri, null, null) }
             throw e
         }
