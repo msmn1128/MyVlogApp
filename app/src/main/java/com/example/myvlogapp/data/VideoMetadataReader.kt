@@ -25,9 +25,15 @@ import com.example.myvlogapp.VideoMeta
  *
  * 撮影日時メタデータ（creation_time）は、SNS経由で共有された動画や
  * PCで変換した動画では失われていることが多いため、
- * 取得できない場合は MediaStore の追加日時にフォールバックする。
+ * 取得できない場合は MediaStore の撮影日時／追加日時にフォールバックする。
+ *
+ * それも取れない場合は[fallbackMillis]を使う。複数動画を並列取得する際に
+ * ここで System.currentTimeMillis() を都度呼ぶと、並列処理の完了タイミング
+ * （実行順とは無関係）で撮影時刻が決まってしまい、同時刻になったり
+ * 選択順と違う並びになったりするため、呼び出し側で選択順に基づいて
+ * 一意に決めた値を渡してもらう。
  */
-fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
+fun getVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long): VideoMeta {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, uri)
@@ -38,7 +44,7 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
         val shotAtMillis = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
             ?.let { parseCreationTime(it) }
             ?: queryMediaStoreDateMillis(context, uri))
-            ?: System.currentTimeMillis()
+            ?: fallbackMillis
 
         // 生の幅・高さは回転情報(90/270度)を反映していないため補正する。
         // 縦持ち撮影の動画は内部的に横長のままrotation=90が入っていることが多い。
@@ -63,7 +69,6 @@ fun getVideoMetadata(context: Context, uri: Uri): VideoMeta {
         // メタデータが1件も取れない動画（壊れたファイル、非対応コーデックなど）。
         // 「取得できなかった」こと自体は空リストと違って原因を追いたいことが多いのでログに残す。
         Log.w(LOG_TAG, "動画のメタデータを取得できませんでした: $uri", e)
-        val fallbackMillis = System.currentTimeMillis()
         VideoMeta(formatTime(fallbackMillis), formatDate(fallbackMillis), fallbackMillis, 0L, CANVAS_WIDTH, CANVAS_HEIGHT)
     } finally {
         runCatching { retriever.release() }
@@ -78,9 +83,15 @@ private fun parseCreationTime(raw: String): Long? = runCatching {
 
 private fun queryMediaStoreDateMillis(context: Context, uri: Uri): Long? = runCatching {
     context.contentResolver.query(
-        uri, arrayOf(MediaStore.MediaColumns.DATE_ADDED), null, null, null
+        uri,
+        arrayOf(MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED),
+        null, null, null
     )?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getLong(0) * 1000L else null
+        if (!cursor.moveToFirst()) return@use null
+        // DATE_TAKEN はms精度の実撮影時刻。DATE_ADDED は端末への追加日時（秒精度）で、
+        // 一括インポートした動画は同じ値になりやすいため、あくまで最後の手段とする。
+        val dateTaken = if (cursor.isNull(0)) null else cursor.getLong(0)
+        if (dateTaken != null && dateTaken > 0L) dateTaken else cursor.getLong(1) * 1000L
     }
 }.getOrNull()
 

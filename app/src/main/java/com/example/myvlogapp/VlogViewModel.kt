@@ -315,14 +315,27 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             val context = getApplication<Application>()
+
+            // タイムラインに既にある動画は追加せずスキップする
+            val existingUris = _clips.value.map { it.uri }.toSet()
+            val newUris = uris.filter { it !in existingUris }
+            if (newUris.isEmpty()) {
+                _events.send(VlogEvent.Message("すでに追加済みの動画のためスキップしました"))
+                return@launch
+            }
+
             // 1件ずつ順番にsetDataSourceすると、4Kなど高ビットレートの動画を
             // 複数選んだ場合に待ち時間が本数ぶん積み上がる。IOディスパッチャの
             // スレッドプール内で並列に取得し、合計時間を最も遅い1本ぶんに縮める。
+            // メタデータが一切取れない動画のための最終フォールバック時刻。
+            // 並列取得の完了タイミング（実行順とは無関係）に左右されないよう、
+            // ここで選択順に沿って1件ずつ確実にずらした時刻を用意しておく。
+            val fallbackBaseMillis = System.currentTimeMillis()
             val added = withContext(Dispatchers.IO) {
                 coroutineScope {
-                    uris.mapIndexed { offset, uri ->
+                    newUris.mapIndexed { offset, uri ->
                         async {
-                            val meta = getVideoMetadata(context, uri)
+                            val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                             VlogClip(
                                 id = System.nanoTime() + offset,
                                 uri = uri,
@@ -340,11 +353,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            var raceSkipped = 0
             clipsMutationMutex.withLock {
-                val oldestAddedId = added.minByOrNull { it.sortKeyMs }?.id
+                // ロック取得前の existingUris チェックは、メタデータ取得中に別の
+                // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
+                // マージ直前にロック内でもう一度チェックし、その分を除外する。
+                val currentUris = _clips.value.map { it.uri }.toSet()
+                val toMerge = added.filter { it.uri !in currentUris }
+                raceSkipped = added.size - toMerge.size
+
+                val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
 
                 recordHistory()
-                val (merged, insertions) = mergeByShotAt(_clips.value, added)
+                val (merged, insertions) = mergeByShotAt(_clips.value, toMerge)
                 _clips.value = merged
                 insertIntoPlaylist(insertions)
 
@@ -352,6 +373,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                     val index = merged.indexOfFirst { it.id == id }
                     if (index >= 0) select(index)
                 }
+            }
+
+            val skippedDuplicates = uris.size - newUris.size + raceSkipped
+            if (skippedDuplicates > 0) {
+                _events.send(VlogEvent.Message("$skippedDuplicates 件は追加済みのためスキップしました"))
             }
 
             val skipped = added.count { !it.isValid }
