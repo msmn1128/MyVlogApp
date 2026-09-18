@@ -30,9 +30,7 @@ import androidx.compose.ui.unit.dp
  * 書き出しボタン（タップ＝タイトルあり）を押した直後に出す、タイトルカード文言の選択ダイアログ。
  *
  * 上の選択肢は先頭クリップの撮影日（既定で選択済み）、下は自由入力。
- * 自由入力欄は書き出し結果に焼き込む日付と同じフォント（[timeFontFamily]）で表示し、
- * 2行目以降になっても1行目の位置は動かず下に伸びる（[OutlinedTextField]は上辺基準で
- * 高さが伸びる既定動作のため、ここでは行の上端をRowの先頭に揃えるだけでよい）。
+ * 自由入力欄は書き出し結果に焼き込む日付と同じフォント（[timeFontFamily]）で表示する。
  *
  * 選択状態は`customText`1つだけで表す（null＝日付を選択中、非null＝自由入力を選択中）。
  * 自由入力欄への入力自体が選択を兼ねるので、別建てのラジオ選択肢の状態は持たない。
@@ -63,8 +61,7 @@ internal fun TitleCreationDialog(
                 }
                 RadioOptionRow(
                     selected = isCustomSelected,
-                    onClick = { if (!isCustomSelected) customText = "" },
-                    verticalAlignment = Alignment.Top
+                    onClick = { if (!isCustomSelected) customText = "" }
                 ) {
                     OutlinedTextField(
                         value = customText.orEmpty(),
@@ -87,12 +84,11 @@ internal fun TitleCreationDialog(
     )
 }
 
-/** ラジオボタン1個＋その選択肢の中身、という行の共通レイアウト。 */
+/** ラジオボタン1個＋その選択肢の中身、という行の共通レイアウト。行全体の高さの中央に円を揃える。 */
 @Composable
 private fun RadioOptionRow(
     selected: Boolean,
     onClick: () -> Unit,
-    verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
     content: @Composable RowScope.() -> Unit
 ) {
     Row(
@@ -100,7 +96,7 @@ private fun RadioOptionRow(
             .fillMaxWidth()
             .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
             .padding(vertical = 8.dp),
-        verticalAlignment = verticalAlignment
+        verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(8.dp))
