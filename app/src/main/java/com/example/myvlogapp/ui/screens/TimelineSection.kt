@@ -34,8 +34,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -75,7 +78,7 @@ internal fun ColumnScope.EditSection(
     clips: List<VlogClip>,
     selectedIndex: Int,
     selectedClip: VlogClip?,
-    positionMs: Long,
+    positionMs: State<Long>,
     isExporting: Boolean,
     timelineWeight: Float,
     editorWeight: Float
@@ -109,7 +112,7 @@ private fun TimelinePane(
     viewModel: VlogViewModel,
     clips: List<VlogClip>,
     selectedIndex: Int,
-    positionMs: Long,
+    positionMs: State<Long>,
     isExporting: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -203,7 +206,7 @@ private fun TrimSection(
     clip: VlogClip,
     waveform: Waveform?,
     isWaveformLoading: Boolean,
-    positionMs: Long,
+    positionMs: State<Long>,
     isExporting: Boolean,
     viewModel: VlogViewModel
 ) {
@@ -273,7 +276,7 @@ private fun TimelineToolbar(
     clips: List<VlogClip>,
     selectedIndex: Int,
     selectedClip: VlogClip?,
-    positionMs: Long,
+    positionMs: State<Long>,
     autoAdvance: Boolean,
     timelineMuted: Boolean,
     canUndo: Boolean,
@@ -383,7 +386,10 @@ private fun TimelineToolbar(
 
         // 再生ヘッドが区切りの上にあるときは、同じボタンが解除に変わる。
         // 区切りを消す手段が「もとに戻す」しか無いと、あとから直せなくなるため。
-        val splitOnPlayhead = selectedClip?.splitPointNear(positionMs)
+        // 再生位置そのものではなく「区切りの上にいるか」だけを読む（約80msごとの再コンポーズを避ける）
+        val splitOnPlayhead by remember(selectedClip) {
+            derivedStateOf { selectedClip?.splitPointNear(positionMs.value) }
+        }
         CompactIconButton(
             icon = if (splitOnPlayhead == null) VlogIcons.SplitText
             else VlogIcons.SplitTextOff,
@@ -394,8 +400,9 @@ private fun TimelineToolbar(
             },
             enabled = enabled,
             onClick = {
-                if (splitOnPlayhead == null) viewModel.splitTextAtPlayhead()
-                else viewModel.removeSplit(splitOnPlayhead)
+                val split = splitOnPlayhead
+                if (split == null) viewModel.splitTextAtPlayhead()
+                else viewModel.removeSplit(split)
             },
             tint = splitMarkerColor()
         )
@@ -520,13 +527,20 @@ private fun ClipTile(
 @Composable
 private fun EditorPane(
     selectedClip: VlogClip?,
-    positionMs: Long,
+    positionMs: State<Long>,
     isExporting: Boolean,
     onTextChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val segmentCount = selectedClip?.texts?.size ?: 1
-    val segmentNumber = (selectedClip?.textIndexAt(positionMs) ?: 0) + 1
+    // 再生位置そのものは読まず、区間番号とその区間の文字だけを派生させる。
+    // 約80msごとにこの入力欄ごと再コンポーズされるのを避けるため。
+    val segmentNumber by remember(selectedClip) {
+        derivedStateOf { (selectedClip?.textIndexAt(positionMs.value) ?: 0) + 1 }
+    }
+    val hitokoto by remember(selectedClip) {
+        derivedStateOf { selectedClip?.textAt(positionMs.value) ?: "" }
+    }
 
     Card(modifier = modifier) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -560,7 +574,7 @@ private fun EditorPane(
             }
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(
-                value = selectedClip?.textAt(positionMs) ?: "",
+                value = hitokoto,
                 onValueChange = onTextChange,
                 enabled = selectedClip != null && !isExporting,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(

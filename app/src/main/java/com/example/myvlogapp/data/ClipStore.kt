@@ -161,10 +161,11 @@ object ClipStore {
             val projects = readProjects(context)
             if (projects.size >= MAX_PROJECTS) return@withLock false
 
+            val now = System.currentTimeMillis()
             val entry = JSONObject()
-                .put(ProjectKeys.ID, System.currentTimeMillis())
+                .put(ProjectKeys.ID, now)
                 .put(ProjectKeys.NAME, name)
-                .put(ProjectKeys.SAVED_AT, System.currentTimeMillis())
+                .put(ProjectKeys.SAVED_AT, now)
                 .put(ProjectKeys.CLIPS, clipsToJson(clips))
 
             writeProjects(context, projects + entry)
@@ -186,7 +187,8 @@ object ClipStore {
             val index = projects.indexOfFirst { it.optLong(ProjectKeys.ID) == id }
             if (index < 0) return@withLock false
 
-            val updated = JSONObject(projects[index].toString())
+            // readProjectsは毎回パースし直した新しいオブジェクトを返すので、コピーせず直接書き換えてよい
+            val updated = projects[index]
                 .put(ProjectKeys.SAVED_AT, System.currentTimeMillis())
                 .put(ProjectKeys.CLIPS, clipsToJson(clips))
 

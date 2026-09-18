@@ -186,13 +186,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // Android 13以降は表示に実行時許可が要るため、書き出し開始前にリクエストする。
     // 拒否されても書き出し自体は行われる（通知が出ないだけ）。
     //
-    // ここ（VlogAppScreen）で1つだけ持つ理由：以前はPreviewSection内で
-    // rememberLauncherForActivityResultしていたが、PreviewSectionは縦画面では
-    // Column直下、横画面ではRow>Column>PreviewSectionと呼び出し位置(親構造)が
-    // isWideの切り替えで変わる。Composeはこれを別インスタンスとして扱うため、
-    // Foldデバイスの開閉などでisWideが反転すると、表示中の権限ダイアログの
-    // 結果コールバックがActivityResultRegistryごと失われてしまっていた。
-    // VlogAppScreenはisWideの分岐より外側で1度しか呼ばれないため、ここに置けば消えない。
+    // ここ（VlogAppScreen）で1つだけ持つ。PreviewSection内に置くと、縦画面（Column直下）と
+    // 横画面（Row>Column>PreviewSection）で呼び出し位置が変わり、Composeが別インスタンスとして
+    // 扱うため、Foldの開閉などでisWideが反転した瞬間に、表示中の権限ダイアログの
+    // 結果コールバックがActivityResultRegistryごと失われる。
+    // VlogAppScreenはisWideの分岐より外側で1度しか呼ばれないので、ここに置けば消えない。
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
@@ -271,14 +269,15 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val isWide = configuration.screenWidthDp > configuration.screenHeightDp
 
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。
-    // 以前はPreviewSection/EditSection/TimelinePaneがそれぞれ自分でcollectしていたが、
-    // 同じ値を3箇所で購読しているだけなのでここ1箇所にまとめて引数で渡す。
-    val positionMs by viewModel.playbackPositionMs.collectAsStateWithLifecycle()
+    // collectは1箇所にまとめて引数で渡す。値を読まずStateのまま渡しているのは、
+    // ここで読むと再生位置が変わる（約80ms）たびにこの画面全体が再コンポーズされるため。
+    // 各所で「表示する文字列」「区切りの上か」などに派生させてから読む。
+    val positionMs = viewModel.playbackPositionMs.collectAsStateWithLifecycle()
 
     // isWide(縦画面はColumn直下、横画面はRow>Columnの中)で親構造が変わっても
     // 中身（PreviewSection/EditSection）は完全に同じなので、呼び出し部分を
-    // ローカルラムダに一本化する。以前は縦横それぞれに引数リストを丸ごと
-    // 書き写しており、片方だけ引数を足し忘れる事故の元だった。
+    // ローカルラムダに一本化する（縦横で引数リストを別々に持つと、片方だけ
+    // 引数を足し忘れる事故の元になる）。
     val preview: @Composable ColumnScope.(previewWeight: Float) -> Unit = { weight ->
         PreviewSection(
             selectedClip = selectedClip,

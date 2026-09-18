@@ -23,17 +23,17 @@ import com.example.myvlogapp.VlogClip
 /**
  * VLOG書き出しをフォアグラウンドサービスとして実行する。
  *
- * 経緯：以前はViewModelのviewModelScopeで直接実行していたが、
- * フォアグラウンドサービスでもWorkManagerでもなかったため、
- * アプリをバックグラウンドに回すとOSがプロセスごと回収することがあった。
- * その場合try-finallyが実行されないまま打ち切られ、MediaStoreに
- * IS_PENDINGの壊れた動画が残ってしまう（[VlogExporter.cleanupOrphanedPendingFiles]
- * で次回起動時に掃除はするが、そもそも回収されにくくする方が先）。
- * フォアグラウンドサービス化してOSに「ユーザーが注視している処理」だと
+ * ViewModelのviewModelScopeで直接実行すると、フォアグラウンドサービスでも
+ * WorkManagerでもないため、アプリをバックグラウンドに回したときにOSが
+ * プロセスごと回収することがある。その場合try-finallyが実行されないまま
+ * 打ち切られ、MediaStoreにIS_PENDINGの壊れた動画が残ってしまう
+ * （[VlogExporter.cleanupOrphanedPendingFiles]で次回起動時に掃除はするが、
+ * そもそも回収されにくくする方が先）。
+ * フォアグラウンドサービスにしてOSに「ユーザーが注視している処理」だと
  * 伝えることで、Activity/ViewModelが破棄されても処理を続けられるようにする。
  *
  * VlogClipはUriを含みプロセス内でしか意味を持たないため、Intentへ
- * シリアライズせず [pendingClips] へ直接渡してから起動する（この設計は
+ * シリアライズせず [pendingExport] へ直接渡してから起動する（この設計は
  * サービスと呼び出し元が常に同一プロセスであることが前提）。
  */
 class VlogExportService : Service() {

@@ -101,7 +101,10 @@ fun WaveformTrimmer(
     durationMs: Long,
     startMs: Long,
     endMs: Long,
-    positionMs: Long,
+    // 値ではなくStateで受け取り、描画ラムダの中でだけ読む。再生ヘッドの位置は約80msごとに
+    // 変わるため、コンポジション中に読むとその都度この関数ごと再コンポーズされてしまう
+    // （描画フェーズで読めば、再描画だけで済む）。
+    positionMs: State<Long>,
     enabled: Boolean,
     callbacks: WaveformTrimmerCallbacks,
     modifier: Modifier = Modifier
@@ -131,19 +134,16 @@ fun WaveformTrimmer(
     // 操作の区切り（プリセット適用・つまみを離した瞬間など）でだけ選択範囲に
     // フィットさせる。操作中にも追従させると、表示が動いて指の下から的がずれてしまう。
     //
-    // 以前はLaunchedEffect(clipId, startMs, endMs, durationMs, isInteracting)で
-    // 「操作中でなければ計算し直す」形にしていたが、これはコルーチンの起動・
-    // キャンセルを経由するため、キー変化のタイミング次第で更新が1フレーム遅れたり
-    // 取りこぼされたりする余地があった（iOS版で同種の設計が実際に「自動ズームが
-    // 発動しないことがある」不具合を起こし、「操作中でなければ毎回計算し直す」
-    // 方式へ作り直した実績がある）。ここでも同じ考え方で、操作中でなければ
-    // 毎回のコンポジションでcomputedし直し、操作中だけSideEffectで値を据え置く
-    // （SideEffectは非同期のLaunchedEffectと違い、コンポジションのたびに同期的に
-    // 実行されるため、キー変化を取りこぼす余地がない）。
-    // lockedViewportStateは生のMutableStateとして持っておき、dragTrimHandle/
+    // 操作中でなければ毎回のコンポジションでcomputedし直し、操作中だけSideEffectで
+    // 値を据え置く。LaunchedEffectで「キーが変わったら計算し直す」形にしないのは、
+    // コルーチンの起動・キャンセルを経由するとキー変化のタイミング次第で更新が
+    // 遅れたり取りこぼされたりするため（iOS版で同種の設計が「自動ズームが発動しない
+    // ことがある」不具合を起こした）。SideEffectはコンポジションのたびに同期的に
+    // 実行されるので、取りこぼす余地がない。
+    // lockedViewportStateは生のMutableStateとして持ち、dragTrimHandle/
     // dragBodyOrMoveなどトップレベルのジェスチャー関数からも直接読み書きできるようにする
     // （トリムつまみ・区間ごと移動が今のビューポート端に達したときにパンさせるため）。
-    // Composable本体では従来通りlockedViewportとしてby委譲で扱う。
+    // Composable本体ではby委譲のlockedViewportとして扱う。
     val lockedViewportState = remember(clipId) { mutableStateOf<LongRange?>(null) }
     var lockedViewport by lockedViewportState
     val computedViewport = fitWaveformViewport(startMs, endMs, durationMs)
@@ -358,7 +358,7 @@ fun WaveformTrimmer(
                 viewport = waveformViewport,
                 startMs = startMs,
                 endMs = endMs,
-                positionMs = positionMs,
+                positionMs = positionMs.value,
                 handleHalfPx = handleHalfPx,
                 startHandleScale = startHandleScale,
                 endHandleScale = endHandleScale,

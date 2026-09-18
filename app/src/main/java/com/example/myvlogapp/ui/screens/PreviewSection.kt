@@ -41,6 +41,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -88,7 +90,7 @@ internal fun ColumnScope.PreviewSection(
     viewModel: VlogViewModel,
     hitokotoFontFamily: FontFamily,
     timeFontFamily: FontFamily,
-    positionMs: Long,
+    positionMs: State<Long>,
     exportState: ExportState,
     isExporting: Boolean,
     canExport: Boolean,
@@ -131,7 +133,7 @@ internal fun ColumnScope.PreviewSection(
 @Composable
 private fun PreviewPane(
     selectedClip: VlogClip?,
-    positionMs: Long,
+    positionMs: State<Long>,
     player: ExoPlayer,
     hitokotoFontFamily: FontFamily,
     timeFontFamily: FontFamily,
@@ -153,6 +155,13 @@ private fun PreviewPane(
             )
         }
         return
+    }
+
+    // 再生位置は約80msごとに更新される。ここで値そのものを読むとプレビュー全体が
+    // 毎回再コンポーズされてしまうため、表示する文字列だけを派生させておき、
+    // ひとことが切り替わったときにだけ更新されるようにする。
+    val hitokoto by remember(selectedClip) {
+        derivedStateOf { selectedClip.textAt(positionMs.value) }
     }
 
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -209,7 +218,7 @@ private fun PreviewPane(
             // ここから下は書き出しに焼き込まれる文字。配色はテーマに追従させず、
             // 出力と同じ白のままにしておく。
             Text(
-                text = selectedClip.textAt(positionMs),
+                text = hitokoto,
                 color = Color.White,
                 fontSize = hitokotoSize,
                 lineHeight = hitokotoLineHeight,

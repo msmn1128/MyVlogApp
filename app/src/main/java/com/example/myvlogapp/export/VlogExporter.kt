@@ -172,23 +172,20 @@ object VlogExporter {
             // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
             // 1回のFFmpeg呼び出しで結合・エンコードする。
             //
-            // 以前はクリップごとに個別エンコードしたファイルを作り、それを
-            // 再度concatで結合し直す2段構成だった。同じ映像を2回圧縮することになり
-            // 画質のロスが重なるうえ、フレームレート変換の帳尻合わせが複雑になっていた。
-            // 生の素材から直接1回だけエンコードすることで、圧縮は1回で済み、
-            // 30fps変換も結合後の連続した1本の映像に対して1回で完結する。
+            // クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため、
+            // 生の素材から直接1回だけエンコードする。30fps変換も結合後の連続した1本の
+            // 映像に対して1回で完結する。
             //
             // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
             // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
             // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
             // 要求しない生成フィルタなので、追加の-iは不要。
-            val safInputs = clips.map { FFmpegKitConfig.getSafParameterForRead(context, it.uri) }
-            val inputs = if (audioPlan.needsTitleSfxInput) {
-                arrayOf("-i", titleSfx!!.absolutePath) +
-                        safInputs.flatMap { listOf("-i", it) }.toTypedArray()
-            } else {
-                safInputs.flatMap { listOf("-i", it) }.toTypedArray()
-            }
+            val inputs = buildList {
+                titleSfx?.let { addAll(listOf("-i", it.absolutePath)) }
+                clips.forEach { clip ->
+                    addAll(clipInputArgs(clip, FFmpegKitConfig.getSafParameterForRead(context, clip.uri)))
+                }
+            }.toTypedArray()
 
             val filterGraph = buildFilterGraph(
                 clips, fonts, titleText, sfxDelayMs, workDir, id, textFiles,
@@ -296,21 +293,18 @@ object VlogExporter {
             FFmpegKit.execute("-hide_banner -filters").allLogsAsString.orEmpty()
         }.getOrDefault("")
 
+        val hasDrawtext = filters.contains("drawtext")
         val caps = when {
             // GPL版に含まれるソフトウェアH.264エンコーダ。品質・互換性ともに最良。
-            encoders.contains("libx264") ->
-                Capabilities("libx264", emptyList(), filters.contains("drawtext"))
+            encoders.contains("libx264") -> Capabilities("libx264", emptyList(), hasDrawtext)
 
             // 端末のハードウェアエンコーダ。libx264が無いビルドでの代替。
             // ビットレート指定が無いと極端に低品質になるため明示する。
             encoders.contains("h264_mediacodec") ->
-                Capabilities(
-                    "h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), filters.contains("drawtext")
-                )
+                Capabilities("h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), hasDrawtext)
 
             // 最後の手段。mp4に入るが圧縮効率は落ちる。
-            else ->
-                Capabilities("mpeg4", listOf("-q:v", "3"), filters.contains("drawtext"))
+            else -> Capabilities("mpeg4", listOf("-q:v", "3"), hasDrawtext)
         }
 
         Log.i(
@@ -349,7 +343,7 @@ object VlogExporter {
     // ---------------------------------------------------------------------------------
 
     /** タイトルカード・各クリップ両方で使うフォント一式 */
-    private data class ExportFonts(val logoType: File, val time: File)
+    internal data class ExportFonts(val logoType: File, val time: File)
 
     /** [VlogClip.visibleTextSpans] 1件と、その各行のテキストファイルの組 */
     private data class SpanLines(val span: TextSpan, val lineFiles: List<File?>)
@@ -362,7 +356,7 @@ object VlogExporter {
      * 「各クリップを実音声にするか無音にするか」の3つの分岐がbuildFilterGraph内に
      * ばらばらに散り、書き出しオプションが増えるたびに複数箇所を同時に直す必要が出る。
      */
-    private class AudioPlan(
+    internal class AudioPlan(
         val needsTitleSfxInput: Boolean,
         private val clipHasRealAudio: List<Boolean>
     ) {
@@ -399,7 +393,7 @@ object VlogExporter {
      * @param textFiles 生成した行ごとのテキストファイルをここへ積む（呼び出し元がexport()の
      *   finallyでまとめて掃除するため）
      */
-    private suspend fun buildFilterGraph(
+    internal suspend fun buildFilterGraph(
         clips: List<VlogClip>,
         fonts: ExportFonts,
         titleText: String,
@@ -440,24 +434,22 @@ object VlogExporter {
         clips.forEachIndexed { index, clip ->
             coroutineContext.ensureActive()
             val inputIndex = index + audioPlan.clipInputOffset
-            val startSec = ffmpegSeconds(clip.startMs)
-            val endSec = ffmpegSeconds(clip.startMs + clip.trimmedDurationMs)
+            val durationSec = ffmpegSeconds(clip.trimmedDurationMs)
             val spans = writeSpanTextFiles(workDir, id, index, clip, textFiles)
             val timeFile = writeTimeTextFile(workDir, id, index, clip, textFiles)
 
-            // trimのみ（setpts無し）だと、切り出し後もtが素材の絶対時刻のまま
-            // drawtextに渡る。区間出し分けのenable式(buildClipFilter内)がこの
-            // 絶対時刻を前提にしているため、setpts=PTS-STARTPTSは全フィルタの
-            // 最後（concatへ渡す直前）で1回だけ行う。
-            graph += "[$inputIndex:v]${trimFilter(startSec, endSec, audio = false)}," +
-                    "${buildClipFilter(spans, timeFile, fonts)}," +
-                    "setpts=PTS-STARTPTS[${vTag(index)}]"
+            // 入力側（[clipInputArgs]）で既に開始位置へシークして長さも絞ってあるので、
+            // ここでは時刻を0始まりに直し、trim=endで長さを保証するだけにする。
+            // setpts=PTS-STARTPTSを最初に行うため、以降のdrawtextのtは
+            // 「クリップ先頭からの経過時間」になる（enable式はそれを前提にしている）。
+            graph += "[$inputIndex:v]setpts=PTS-STARTPTS,${trimFilter(durationSec, audio = false)}," +
+                    "${buildClipFilter(spans, clip.startMs, timeFile, fonts)}[${vTag(index)}]"
 
             // concatは各セグメントの音声ストリームを明示参照するため、
             // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
             graph += if (audioPlan.hasRealAudio(index)) {
-                "[$inputIndex:a]${trimFilter(startSec, endSec, audio = true)}," +
-                        "asetpts=PTS-STARTPTS[${aTag(index)}]"
+                "[$inputIndex:a]asetpts=PTS-STARTPTS,${trimFilter(durationSec, audio = true)}" +
+                        "[${aTag(index)}]"
             } else {
                 "anullsrc=r=$AUDIO_SAMPLE_RATE:cl=$AUDIO_CHANNEL_LAYOUT" +
                         ":d=${ffmpegSeconds(clip.trimmedDurationMs)}[${aTag(index)}]"
@@ -483,10 +475,27 @@ object VlogExporter {
     private fun vTag(index: Int) = "v$index"
     private fun aTag(index: Int) = "a$index"
 
-    /** trim/atrimフィルタの文字列。映像と音声で名前が違うだけで形は同じ */
-    private fun trimFilter(startSec: String, endSec: String, audio: Boolean): String {
+    /**
+     * 素材から必要な区間だけを読む入力引数（1クリップぶん）。
+     *
+     * トリミングをフィルタの`trim`だけで行うと、FFmpegは素材の先頭から開始位置までを
+     * 全部デコードしてから捨てるため、素材の後ろの方を切り出すほど遅くなる。
+     * `-i`の前に`-ss`/`-t`を置く入力側のシークなら、開始位置の手前まで読み飛ばせる
+     * （トランスコード時は-ssもフレーム単位で正確）。
+     */
+    internal fun clipInputArgs(clip: VlogClip, source: String): List<String> = listOf(
+        "-ss", ffmpegSeconds(clip.startMs),
+        "-t", ffmpegSeconds(clip.trimmedDurationMs),
+        "-i", source
+    )
+
+    /**
+     * 先頭からの長さで切るtrim/atrimフィルタ。映像と音声で名前が違うだけで形は同じ。
+     * 開始位置は入力側のシーク（[clipInputArgs]）で済んでいるので、ここでは終端だけ。
+     */
+    private fun trimFilter(durationSec: String, audio: Boolean): String {
         val name = if (audio) "atrim" else "trim"
-        return "$name=start=$startSec:end=$endSec"
+        return "$name=end=$durationSec"
     }
 
     /**
@@ -512,12 +521,25 @@ object VlogExporter {
         val lineFiles = span.text.split("\n").mapIndexed { lineIndex, line ->
             // 空行にdrawtextを掛けるとエラーになるので、位置だけ確保して描かない
             if (line.isBlank()) null
-            else File(workDir, "text_${id}_${clipIndex}_${spanIndex}_$lineIndex.txt")
-                .apply { writeText(line.escapePercentExpansion(), Charsets.UTF_8) }
+            else writeTextFile(
+                workDir, "text_${id}_${clipIndex}_${spanIndex}_$lineIndex.txt", line, textFiles
+            )
         }
-        textFiles += lineFiles.filterNotNull()
         SpanLines(span, lineFiles)
     }
+
+    /**
+     * drawtextのtextfile=に読ませる1行ぶんのファイルを書く。
+     * 書いたファイルは[textFiles]へ積む（呼び出し元がexport()のfinallyで掃除するため）。
+     */
+    private fun writeTextFile(
+        workDir: File,
+        name: String,
+        text: String,
+        textFiles: MutableList<File>
+    ): File = File(workDir, name)
+        .apply { writeText(text.escapePercentExpansion(), Charsets.UTF_8) }
+        .also { textFiles += it }
 
     /**
      * タイトルカードの文言（既定は撮影日、自由入力ならその文言）を改行ごとに
@@ -530,16 +552,11 @@ object VlogExporter {
         id: Long,
         titleText: String,
         textFiles: MutableList<File>
-    ): List<File> {
-        val lines = titleText.split("\n")
-            .filter { it.isNotBlank() }
-            .mapIndexed { lineIndex, line ->
-                File(workDir, "title_${id}_$lineIndex.txt")
-                    .apply { writeText(line.escapePercentExpansion(), Charsets.UTF_8) }
-            }
-        textFiles += lines
-        return lines
-    }
+    ): List<File> = titleText.split("\n")
+        .filter { it.isNotBlank() }
+        .mapIndexed { lineIndex, line ->
+            writeTextFile(workDir, "title_${id}_$lineIndex.txt", line, textFiles)
+        }
 
     /**
      * タイトルカードのフィルタ。
@@ -613,9 +630,7 @@ object VlogExporter {
         clipIndex: Int,
         clip: VlogClip,
         textFiles: MutableList<File>
-    ): File = File(workDir, "time_${id}_$clipIndex.txt")
-        .apply { writeText(clip.timeText.escapePercentExpansion(), Charsets.UTF_8) }
-        .also { textFiles += it }
+    ): File = writeTextFile(workDir, "time_${id}_$clipIndex.txt", clip.timeText, textFiles)
 
     /**
      * 1クリップのフィルタ。
@@ -627,10 +642,13 @@ object VlogExporter {
      *
      * @param spans ひとことの区間と、その各行のテキストファイル。
      *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
+     * @param clipStartMs トリミングの開始位置（素材上の絶対位置）。区間の位置はこの絶対位置で
+     *   持っているので、enable式で「クリップ先頭からの経過時間」へ直すのに使う
      * @param timeFile 撮影時刻を書き出したテキストファイル（[writeTimeTextFile]）
      */
     private fun buildClipFilter(
         spans: List<SpanLines>,
+        clipStartMs: Long,
         timeFile: File,
         fonts: ExportFonts
     ): String {
@@ -639,18 +657,15 @@ object VlogExporter {
         val hitokotoLayers = spans.flatMapIndexed { spanIndex, (span, lineFiles) ->
             // 区間が1つだけなら enable は付けない（式の評価ぶんだけ無駄になる）
             val enable = if (spans.size <= 1) "" else {
-                // enable式のtはクリップ先頭からの経過時間ではなく、素材動画の絶対時刻のまま
-                // フィルタに渡ってくる（trimフィルタが単体ではPTSをリセットしないため。
-                // setpts=PTS-STARTPTSは全フィルタの最後、concatへ渡す直前で1回だけ行っており、
-                // それより前のこのdrawtext enable判定の時点ではtは絶対時刻のまま）。
-                // そのためspan.startMs/endMsをそのまま使う。ここでclip.startMsを
-                // 引いてしまうと、前トリムした分だけenableの判定窓がずれて
-                // どのフレームとも一致しなくなり、ひとことが丸ごと出なくなる。
-                val from = span.startMs
+                // enable式のtは、入力側のシークとsetpts=PTS-STARTPTSで0始まりになった
+                // 「クリップ先頭からの経過時間」。区間のstartMs/endMsは素材上の絶対位置なので、
+                // トリミング開始位置を引いて合わせる（引き忘れると判定窓がずれて、
+                // ひとことが出なくなる）。
+                val from = span.startMs - clipStartMs
                 // between は両端を含むので、隣の区間と1ms重ならないよう手前で切る。
                 // 重なるとその1フレームだけ前後の文字が二重に焼き付いてしまう。
                 val isLast = spanIndex == spans.lastIndex
-                val to = (span.endMs - if (isLast) 0L else 1L).coerceAtLeast(from)
+                val to = (span.endMs - clipStartMs - if (isLast) 0L else 1L).coerceAtLeast(from)
                 ":enable='between(t,${ffmpegSeconds(from)},${ffmpegSeconds(to)})'"
             }
             val offsets = lineOffsets(lineFiles.size, lineHeight, LineAnchor.CENTERED)

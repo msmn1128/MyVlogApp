@@ -107,9 +107,9 @@ private fun queryLongColumn(context: Context, uri: Uri, column: String): Long? =
  * 書き出しに使うフォントに字形が無いと文字化けする（表示だけの[formatSeconds]と同じ方針）。
  * タイムゾーンは既定のまま＝端末のローカル時刻で表示する。
  */
-private fun formatTime(millis: Long?): String =
-    millis?.let { SimpleDateFormat("HH:mm", Locale.US).format(it) } ?: "00:00"
+private fun formatTime(millis: Long): String =
+    SimpleDateFormat("HH:mm", Locale.US).format(millis)
 
 /** 撮影日 "yyyy/MM/dd"。書き出しファイル名にも使うためロケール固定（理由は[formatTime]と同じ） */
-private fun formatDate(millis: Long?): String =
-    SimpleDateFormat("yyyy/MM/dd", Locale.US).format(millis ?: System.currentTimeMillis())
+private fun formatDate(millis: Long): String =
+    SimpleDateFormat("yyyy/MM/dd", Locale.US).format(millis)

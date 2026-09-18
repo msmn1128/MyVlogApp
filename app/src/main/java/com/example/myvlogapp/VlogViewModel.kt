@@ -58,8 +58,8 @@ private const val AUTOSAVE_DEBOUNCE_MS = 500L
 /**
  * 履歴コピーの粒度を決めるタグ。
  * 同じタグの編集が[HISTORY_COALESCE_MS]以内に連続した場合はひとつの履歴にまとめる。
- * 以前は"trim:0"のような文字列連結だったが、タイプミスが「まとまるはずが別々に積まれる」
- * 「別操作なのにまとまってしまう」という気付きにくいバグに直結するため、型で表す。
+ * "trim:0"のような文字列連結にしないのは、タイプミスが「まとまるはずが別々に積まれる」
+ * 「別操作なのにまとまってしまう」という気付きにくいバグに直結するため。型で表す。
  */
 private sealed interface EditTag {
     data class Trim(val clipIndex: Int) : EditTag
@@ -237,7 +237,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // ひとことを1文字打つたびに書き込むのを避けている。
             _clips.collectLatest { clips ->
                 delay(AUTOSAVE_DEBOUNCE_MS)
-                ClipStore.save(getApplication(), clips)
+                // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない
+                withContext(Dispatchers.Default) { ClipStore.save(getApplication(), clips) }
             }
         }
 
@@ -599,9 +600,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (index < 0) return
 
         recordHistory()
-        _clips.value = _clips.value.toMutableList().apply {
-            this[index] = this[index].copy(isMuted = !this[index].isMuted)
-        }
+        updateClips { this[index] = this[index].copy(isMuted = !this[index].isMuted) }
         applyVolume()
     }
 
@@ -615,7 +614,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (from !in _clips.value.indices || to !in _clips.value.indices) return
 
         recordHistory()
-        _clips.value = _clips.value.toMutableList().apply { add(to, removeAt(from)) }
+        updateClips { add(to, removeAt(from)) }
         player.moveMediaItem(from, to)
         _selectedIndex.value = to
     }
@@ -626,7 +625,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val removedUri = _clips.value[index].uri
 
         recordHistory()
-        _clips.value = _clips.value.toMutableList().apply { removeAt(index) }
+        updateClips { removeAt(index) }
         player.removeMediaItem(index)
         cancelWaveformJobIfUnused(removedUri)
 
@@ -1021,7 +1020,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private fun updateSelected(transform: (VlogClip) -> VlogClip) {
         val index = _selectedIndex.value
         if (index !in _clips.value.indices) return
-        _clips.value = _clips.value.toMutableList().also { it[index] = transform(it[index]) }
+        updateClips { this[index] = transform(this[index]) }
+    }
+
+    /** 一覧を書き換える。可変リストのコピーに対して変更し、新しいリストとして反映する */
+    private inline fun updateClips(edit: MutableList<VlogClip>.() -> Unit) {
+        _clips.value = _clips.value.toMutableList().apply(edit)
     }
 
     private fun sendMessage(text: String) {
