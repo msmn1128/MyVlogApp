@@ -248,6 +248,13 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
      * 呼ばれうる（同じ「最後まで再生し終えた」を別経路で検知しているため）。
      * 既にそこで止まっていれば何もしないことで、二重の呼び出しがあっても
      * 無駄なシークを起こさないようにする。
+     *
+     * 「そこで止まっている」の判定に[PLAY_AT_END_TOLERANCE_MS]の幅を持たせているのは、
+     * 止めた位置が必ずしも[VlogClip.endMs]ちょうどにならないため。endMsは
+     * メタデータから取った尺、実際に止まれる位置はExoPlayerが持つ尺で決まり、
+     * 両者は数ミリ秒ずれることがある（[PLAY_AT_END_TOLERANCE_MS]のKDoc参照）。
+     * ちょうど一致で見ていると、その場合だけこの早期returnが永久に効かず、
+     * 呼ばれるたびに同じ場所へシークし直していた。
      */
     private fun stopAtTimelineEnd() {
         val current = clips()
@@ -255,7 +262,7 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
         val last = current.lastOrNull() ?: return
         if (_selectedIndex.value == lastIndex &&
             !player.playWhenReady &&
-            player.currentPosition == last.endMs
+            player.currentPosition >= last.endMs - PLAY_AT_END_TOLERANCE_MS
         ) {
             return
         }
