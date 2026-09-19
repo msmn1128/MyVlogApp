@@ -85,6 +85,33 @@ class FormattersTest {
     }
 
     @Test
+    fun uniqueSaveName_putsTheNumberBeforeTheSuffixNotAfterIt() {
+        // 書き出しファイル名はこちらを使う。拡張子は連番の外側に来ること
+        assertEquals("Vlog_2026-09-20.mp4", uniqueSaveName("Vlog_2026-09-20", emptyList(), ".mp4"))
+        assertEquals(
+            "Vlog_2026-09-20 (1).mp4",
+            uniqueSaveName("Vlog_2026-09-20", listOf("Vlog_2026-09-20.mp4"), ".mp4")
+        )
+        assertEquals(
+            "Vlog_2026-09-20 (2).mp4",
+            uniqueSaveName(
+                "Vlog_2026-09-20",
+                listOf("Vlog_2026-09-20.mp4", "Vlog_2026-09-20 (1).mp4"),
+                ".mp4"
+            )
+        )
+    }
+
+    @Test
+    fun uniqueSaveName_ignoresNamesThatOnlyMatchWithoutTheSuffix() {
+        // 拡張子まで含めた完全一致だけが重複。連番なしの名前と衝突させない
+        assertEquals(
+            "Vlog_2026-09-20.mp4",
+            uniqueSaveName("Vlog_2026-09-20", listOf("Vlog_2026-09-20"), ".mp4")
+        )
+    }
+
+    @Test
     fun defaultSaveName_appendsFirstUnusedNumber() {
         val now = 1_800_000_000_000L
         val base = defaultSaveName(now, emptyList())

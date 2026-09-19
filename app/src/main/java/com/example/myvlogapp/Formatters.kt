@@ -68,16 +68,25 @@ fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
  * [base]と同じ名前が[existingNames]にすでにあれば、「base (1)」「base (2)」のように
  * 空いている最初の連番を付けて返す。無ければ[base]のまま。
  *
- * 一時保存の名前（既定値・自分で打った名前のどちらも）に使う。
- * 動画の書き出しファイル名（VlogExporter.buildDisplayName）と同じ考え方。
+ * 一時保存の名前（既定値・自分で打った名前のどちらも）と、動画の書き出しファイル名
+ * （[com.example.myvlogapp.export.VlogExporter]）の両方で使う。以前はそれぞれが
+ * 同じwhileループを別々に持っていた。
+ *
+ * @param suffix 連番より後ろに付ける固定文字列。拡張子のように「連番の外側」に
+ *   置きたいものを渡す（"Vlog_9-20 (1).mp4" であって "Vlog_9-20.mp4 (1)" ではない）。
+ *   既定は空で、一時保存の名前はこちらを使う。
  */
-fun uniqueSaveName(base: String, existingNames: Collection<String>): String {
+fun uniqueSaveName(
+    base: String,
+    existingNames: Collection<String>,
+    suffix: String = ""
+): String {
     val taken = existingNames.toSet()
 
-    var candidate = base
+    var candidate = base + suffix
     var index = 1
     while (candidate in taken) {
-        candidate = "$base ($index)"
+        candidate = "$base ($index)$suffix"
         index++
     }
     return candidate

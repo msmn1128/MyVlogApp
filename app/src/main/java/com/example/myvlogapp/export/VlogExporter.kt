@@ -55,6 +55,7 @@ import com.example.myvlogapp.TITLE_SFX_FRAME_NUMBER
 import com.example.myvlogapp.TITLE_Y_OFFSET_PT
 import com.example.myvlogapp.TextSpan
 import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.uniqueSaveName
 import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
@@ -968,15 +969,7 @@ object VlogExporter {
      */
     private fun buildDisplayName(context: Context, createdAtMillis: Long): String {
         val base = "Vlog_${fileNameDate(createdAtMillis)}"
-        val taken = existingDisplayNames(context, base)
-
-        var candidate = "$base.mp4"
-        var index = 1
-        while (candidate in taken) {
-            candidate = "$base ($index).mp4"
-            index++
-        }
-        return candidate
+        return uniqueSaveName(base, existingDisplayNames(context, base), suffix = ".mp4")
     }
 
     /** ファイル名用の日付 "yyyy-MM-dd"（端末のローカル日付。Locale.USで数字の字形を固定） */
