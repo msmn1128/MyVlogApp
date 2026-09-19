@@ -6,11 +6,8 @@ import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.SeekParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -40,6 +37,7 @@ import com.example.myvlogapp.export.ExportStatus
 import com.example.myvlogapp.export.VlogEvent
 import com.example.myvlogapp.export.VlogExportService
 import com.example.myvlogapp.export.VlogExporter
+import com.example.myvlogapp.playback.PlaybackController
 import com.example.myvlogapp.waveform.Waveform
 import com.example.myvlogapp.waveform.extractWaveform
 
@@ -58,45 +56,6 @@ private const val AUTOSAVE_DEBOUNCE_MS = 500L
  */
 private const val METADATA_PARALLELISM = 4
 
-/** 再生を押したとき、どこから再生するか */
-internal enum class PlayFrom {
-    /** いまの位置から（途中で止めていた、または次のクリップへ進める） */
-    CURRENT_POSITION,
-
-    /** タイムラインの先頭のクリップから（連続再生で最後のクリップの終わりで止まっていた） */
-    TIMELINE_START,
-
-    /** 選択中のクリップの頭から（連続再生オフで、クリップの終わりで止まっていた） */
-    SELECTED_CLIP_START
-}
-
-/**
- * クリップの終わりで止まっているときに再生を押すと、そのまま再生してもトリミング終端の監視が
- * 直ちにまた止めてしまい、「再生できない」ように見える。終わりで止まっているときだけ、頭出しする。
- *
- * - 終わりで止まっていない → いまの位置から
- * - 連続再生オンで、最後のクリップではない → いまの位置から（次のクリップへ進む）
- * - 連続再生オンで、最後のクリップ → タイムラインの先頭から（最後で止めたあとの、再生のやり直し）
- * - 連続再生オフ → 選択中のクリップの頭から（1本ずつ見直す使い方）
- *
- * @param playerEnded プレイヤーが最後まで進んで STATE_ENDED になっている（最後のクリップのみ）
- */
-internal fun playFromWhere(
-    isLastClip: Boolean,
-    autoAdvance: Boolean,
-    positionMs: Long,
-    clipEndMs: Long,
-    playerEnded: Boolean
-): PlayFrom {
-    val atEnd = positionMs >= clipEndMs - PLAY_AT_END_TOLERANCE_MS || (isLastClip && playerEnded)
-    return when {
-        !atEnd -> PlayFrom.CURRENT_POSITION
-        autoAdvance && !isLastClip -> PlayFrom.CURRENT_POSITION
-        autoAdvance -> PlayFrom.TIMELINE_START
-        else -> PlayFrom.SELECTED_CLIP_START
-    }
-}
-
 /**
  * 画面状態と書き出し処理の保持先。
  *
@@ -110,8 +69,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private val _clips = MutableStateFlow<List<VlogClip>>(emptyList())
     val clips: StateFlow<List<VlogClip>> = _clips.asStateFlow()
 
-    private val _selectedIndex = MutableStateFlow(0)
-    val selectedIndex: StateFlow<Int> = _selectedIndex.asStateFlow()
+    val selectedIndex: StateFlow<Int> get() = playback.selectedIndex
 
     // 書き出しの実体は VlogExportService（Activity/ViewModelより長生きする）が持つ。
     // ここは ExportStatus を覗くだけ。
@@ -133,22 +91,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * クリップの終わりまで来たら次へ進むか、そこで止まるか。
-     * オフだと1本ずつ見直しながら編集できる。設定は次回起動時にも引き継ぐ。
+     * オフだと1本ずつ見直しながら編集できる。設定は次回起動時にも引き継ぐ（[setAutoAdvance]）。
      */
-    private val _autoAdvance = MutableStateFlow(true)
-    val autoAdvance: StateFlow<Boolean> = _autoAdvance.asStateFlow()
+    val autoAdvance: StateFlow<Boolean> get() = playback.autoAdvance
 
     /**
-     * タイムライン全体のミュート。プレビュー（ExoPlayerの音量）と書き出しの両方に効く。
+     * タイムライン全体のミュート。プレビューの音量と書き出しの両方に効く。
      * クリップ個別のミュート（[VlogClip.isMuted]）とは独立していて、こちらがonの間は
      * 個別の設定に関わらず全クリップとタイトル効果音が無音になる。
      */
-    private val _timelineMuted = MutableStateFlow(false)
-    val timelineMuted: StateFlow<Boolean> = _timelineMuted.asStateFlow()
+    val timelineMuted: StateFlow<Boolean> get() = playback.timelineMuted
 
     /** 選択中クリップの再生位置。波形の再生ヘッド表示に使う */
-    private val _playbackPositionMs = MutableStateFlow(0L)
-    val playbackPositionMs: StateFlow<Long> = _playbackPositionMs.asStateFlow()
+    val playbackPositionMs: StateFlow<Long> get() = playback.playbackPositionMs
 
     /**
      * 波形のキャッシュ。キーはURI文字列。
@@ -172,85 +127,17 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     // まとめ判定が意図せず効いたり効かなかったりするため。
     private val history = EditHistory<Snapshot>(elapsedMs = SystemClock::elapsedRealtime)
 
-    /** タイムラインの動画は自動再生しない */
-    val player: ExoPlayer = ExoPlayer.Builder(application).build().apply {
-        playWhenReady = false
-        repeatMode = Player.REPEAT_MODE_OFF
-    }
-
-    val selectedClip: VlogClip? get() = _clips.value.getOrNull(_selectedIndex.value)
-
-    // --- ExoPlayer操作の共通化 ------------------------------------------------------------
-    //
-    // 「シークして表示上の再生位置も合わせる」処理が各操作に散らばっていたのをまとめたもの。
-    // 一時停止を伴うか（ユーザー操作で位置を動かすとき）伴わないか（自動再生を続けたまま
-    // 頭出しするとき）で2種類に分けてある。
-    //
-    // どちらも呼び出し側は直前に必ず_selectedIndex.valueを目的のインデックスへ
-    // 合わせてから呼んでいるため、引数でインデックスを受け取らず内部で読む形にして
-    // 呼び出し側の重複（`seekAndSync(_selectedIndex.value, x)`のようなくり返し）を無くしている。
-
-    /** シークして表示位置も合わせる。再生中でも止めない（自動遷移など再生を継続したい場面用） */
-    private fun seekWithoutPause(positionMs: Long) {
-        player.seekTo(_selectedIndex.value, positionMs)
-        _playbackPositionMs.value = positionMs
-    }
-
-    /** 再生を止めてからシークする。ユーザーがトリミング等で位置を直接動かす操作用 */
-    private fun seekAndPause(positionMs: Long) {
-        player.playWhenReady = false
-        seekWithoutPause(positionMs)
-    }
-
     /**
-     * ExoPlayerのプレイリストを準備する共通の後始末。
-     * setMediaItems/addMediaItems はどちらもバッファを含め状態を作り直すため、
-     * 続けてprepareし、意図せず再生が始まらないようplayWhenReadyも明示的に止めておく。
+     * プレビュー再生の受け持ち。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
+     * トリミング終端での停止はすべてこちら（playback/PlaybackController.kt）にあり、
+     * ViewModelはクリップ一覧を渡して操作を頼むだけにしてある。
      */
-    private fun preparePaused() {
-        player.prepare()
-        player.playWhenReady = false
-    }
+    private val playback = PlaybackController(application) { _clips.value }
 
-    /** プレイリストを丸ごと差し替える（一時保存の読み込み・復元・undo/redoでの入れ替え用） */
-    private fun rebuildPlaylist(clips: List<VlogClip>) {
-        player.setMediaItems(clips.map { MediaItem.fromUri(it.uri) })
-        preparePaused()
-    }
+    /** プレビュー(PlayerView)へ渡すためだけに公開している */
+    val player: ExoPlayer get() = playback.player
 
-    /**
-     * 既存の再生位置を保ったまま、撮影日時順で決まった位置へ挿入する（動画追加用）。
-     * [insertions] は (挿入先のindex, クリップ) のペアを昇順（indexが小さい順）で渡す。
-     * 昇順に1件ずつ入れていけば後続の挿入先indexは崩れない。
-     */
-    private fun insertIntoPlaylist(insertions: List<Pair<Int, VlogClip>>) {
-        insertions.forEach { (index, clip) ->
-            player.addMediaItems(index, listOf(MediaItem.fromUri(clip.uri)))
-        }
-        preparePaused()
-    }
-
-    /**
-     * 最後のクリップの再生が終わったところで止める（先頭のクリップへは戻らない）。
-     * 最後のコマを出したままにする。最後まで再生し終えたときの共通処理。
-     *
-     * `enforceTrimBounds`の監視とExoPlayerのSTATE_ENDEDリスナーの両方から
-     * 呼ばれうる（同じ「最後まで再生し終えた」を別経路で検知しているため）。
-     * 既にそこで止まっていれば何もしないことで、二重の呼び出しがあっても
-     * 無駄なシークを起こさないようにする。
-     */
-    private fun stopAtTimelineEnd() {
-        val lastIndex = _clips.value.lastIndex
-        val last = _clips.value.lastOrNull() ?: return
-        if (_selectedIndex.value == lastIndex &&
-            !player.playWhenReady &&
-            player.currentPosition == last.endMs
-        ) {
-            return
-        }
-        _selectedIndex.value = lastIndex
-        seekAndPause(last.endMs)
-    }
+    val selectedClip: VlogClip? get() = _clips.value.getOrNull(playback.selectedIndexValue)
 
     /**
      * `_clips`を非同期の後始末を伴って書き換える操作（クリップ追加・一時保存の読み込みなど）を
@@ -293,47 +180,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 VlogExporter.cleanupOrphanedPendingFiles(getApplication())
             }
         }
-
-        player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val index = player.currentMediaItemIndex
-                val clip = _clips.value.getOrNull(index) ?: return
-                _selectedIndex.value = index
-                applyVolume()
-                // 自動遷移すると次のクリップは0秒から始まってしまうため、
-                // トリミング開始位置へ合わせ直す
-                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && clip.startMs > 0) {
-                    player.seekTo(index, clip.startMs)
-                }
-            }
-
-            /**
-             * 最後まで再生し終えたら、最後のクリップの終わりで止める（先頭へは戻らない）。
-             *
-             * enforceTrimBounds では拾えないケースがある。トリミング終端が動画の
-             * 実際の末尾と一致していると、[PLAYBACK_POLL_INTERVAL_MS]間隔の監視が
-             * 終端に気付くより先にExoPlayer側が STATE_ENDED まで進み、isPlaying が
-             * false になって監視が素通りしてしまうため。
-             */
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState != Player.STATE_ENDED) return
-                player.playWhenReady = false
-                stopAtTimelineEnd()
-            }
-        })
     }
 
     /** 前回の続きを読み込む。いま実際に読めるものだけが対象 */
     private suspend fun restoreClips() {
-        applyAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
+        playback.setAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
 
         val restored = ClipStore.restore(getApplication())
 
         clipsMutationMutex.withLock {
             if (restored.clips.isNotEmpty()) {
                 _clips.value = restored.clips
-                rebuildPlaylist(restored.clips)
-                select(0)
+                playback.rebuildPlaylist(restored.clips)
+                playback.select(0)
             }
         }
 
@@ -514,11 +373,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             recordHistory()
             val (merged, insertions) = mergeByShotAt(_clips.value, toMerge)
             _clips.value = merged
-            insertIntoPlaylist(insertions)
+            playback.insertIntoPlaylist(insertions)
 
             oldestAddedId?.let { id ->
                 val index = merged.indexOfFirst { it.id == id }
-                if (index >= 0) select(index)
+                if (index >= 0) playback.select(index)
             }
             toMerge to overLimit
         }
@@ -530,18 +389,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         )?.let(::sendMessage)
     }
 
-    fun select(index: Int) {
-        if (index !in _clips.value.indices) return
-        _selectedIndex.value = index
-        applyVolume()
-        seekAndPause(_clips.value[index].startMs)
-    }
-
-    /** 再生中の音量を、タイムライン全体のミュートと選択中クリップ個別のミュートから合わせ直す */
-    private fun applyVolume() {
-        val clipMuted = _clips.value.getOrNull(_selectedIndex.value)?.isMuted ?: false
-        player.volume = if (_timelineMuted.value || clipMuted) 0f else 1f
-    }
+    fun select(index: Int) = playback.select(index)
 
     /**
      * トリミング範囲の変更。
@@ -550,13 +398,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *   出ると「どこで切れるのか」が確認できないため、掴んでいる側を渡してもらう。
      */
     fun updateTrim(startMs: Long, endMs: Long, previewAtMs: Long = startMs) {
-        recordHistory(EditTag.Trim(_selectedIndex.value))
+        recordHistory(EditTag.Trim(playback.selectedIndexValue))
         updateSelected { it.copy(startMs = startMs, endMs = endMs) }
 
         // 再生したまま端を動かすと、映像が流れていって切れ目を確認できない。
         // 触った時点で止めて、指の位置のコマを出す。
         val previewMs = previewAtMs.coerceIn(startMs, endMs)
-        seekAndPause(previewMs)
+        playback.seekAndPause(previewMs)
     }
 
     /**
@@ -591,7 +439,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val delta = newStart - clip.startMs
         val newEnd = newStart + span
 
-        recordHistory(EditTag.TrimMove(_selectedIndex.value))
+        recordHistory(EditTag.TrimMove(playback.selectedIndexValue))
         updateSelected { current ->
             current.copy(
                 startMs = newStart,
@@ -612,7 +460,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val previewMs = previewAtMs.coerceIn(newStart, newEnd)
-        seekAndPause(previewMs)
+        playback.seekAndPause(previewMs)
     }
 
     /**
@@ -636,7 +484,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val clamped = newAtMs.coerceIn(lowerBound, upperBound)
         if (clamped == clip.texts[index].startMs) return
 
-        recordHistory(EditTag.SplitMove(_selectedIndex.value, index))
+        recordHistory(EditTag.SplitMove(playback.selectedIndexValue, index))
         updateSelected { current ->
             current.copy(
                 texts = current.texts.mapIndexed { i, segment ->
@@ -645,15 +493,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        seekAndPause(clamped)
+        playback.seekAndPause(clamped)
     }
 
     /** 波形をタップしたときの頭出し。トリミング範囲の外へは飛ばさない */
-    fun seekWithinTrim(positionMs: Long) {
-        val clip = selectedClip ?: return
-        val clampedMs = positionMs.coerceIn(clip.startMs, clip.endMs)
-        seekWithoutPause(clampedMs)
-    }
+    fun seekWithinTrim(positionMs: Long) = playback.seekWithinTrim(positionMs)
 
     /**
      * ひとことの書き換え。書き換わるのは再生ヘッドが指している区間だけ。
@@ -663,8 +507,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun updateText(text: String) {
         val clip = selectedClip ?: return
-        val target = clip.textIndexAt(_playbackPositionMs.value)
-        recordHistory(EditTag.Text(_selectedIndex.value, target))
+        val target = clip.textIndexAt(playback.positionMsValue)
+        recordHistory(EditTag.Text(playback.selectedIndexValue, target))
         updateSelected { current ->
             current.copy(
                 texts = current.texts.mapIndexed { index, segment ->
@@ -682,7 +526,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun splitTextAtPlayhead() {
         val clip = selectedClip ?: return
-        val at = _playbackPositionMs.value
+        val at = playback.positionMsValue
 
         val tooCloseToEdge =
             at - clip.startMs < MIN_TEXT_SEGMENT_MS || clip.endMs - at < MIN_TEXT_SEGMENT_MS
@@ -701,7 +545,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         // 分割した後半の頭を出しておく。編集対象がそのまま新しい区間になるので、
         // 続けて入力欄へ打ち込める。
-        seekAndPause(at)
+        playback.seekAndPause(at)
     }
 
     /**
@@ -734,7 +578,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         recordHistory()
         updateClips { this[index] = this[index].copy(isMuted = !this[index].isMuted) }
-        applyVolume()
+        playback.applyVolume()
     }
 
     /**
@@ -742,37 +586,36 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * ExoPlayerのプレイリストも同時に動かして、プレビューと順番をずらさない。
      */
     fun moveSelected(offset: Int) {
-        val from = _selectedIndex.value
+        val from = playback.selectedIndexValue
         val to = from + offset
         if (from !in _clips.value.indices || to !in _clips.value.indices) return
 
         recordHistory()
         updateClips { add(to, removeAt(from)) }
-        player.moveMediaItem(from, to)
-        _selectedIndex.value = to
+        playback.moveItem(from, to)
     }
 
     fun removeSelected() {
-        val index = _selectedIndex.value
+        val index = playback.selectedIndexValue
         if (index !in _clips.value.indices) return
         val removedUri = _clips.value[index].uri
 
         recordHistory()
         updateClips { removeAt(index) }
-        player.removeMediaItem(index)
+        playback.removeItem(index)
         cancelWaveformJobIfUnused(removedUri)
 
         val newIndex = index.coerceAtMost(_clips.value.lastIndex.coerceAtLeast(0))
-        _selectedIndex.value = newIndex
+        playback.setSelectedIndex(newIndex)
         val nextPositionMs = selectedClip?.startMs ?: 0L
 
         // removeMediaItemによる自動遷移はreason=REMOVEで、AUTO専用の頭出し
         // （onMediaItemTransition内）が効かない。ここで明示的に合わせないと、
         // 表示中のひとこと・時刻は新しいクリップのものなのに、映像だけ0秒目のままずれる。
         if (_clips.value.isNotEmpty()) {
-            seekAndPause(nextPositionMs)
+            playback.seekAndPause(nextPositionMs)
         } else {
-            _playbackPositionMs.value = nextPositionMs
+            playback.setPositionMs(nextPositionMs)
         }
     }
 
@@ -783,9 +626,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         recordHistory()
         _clips.value = emptyList()
-        player.clearMediaItems()
-        _selectedIndex.value = 0
-        _playbackPositionMs.value = 0L
+        playback.clearItems()
         removedUris.forEach { cancelWaveformJobIfUnused(it) }
     }
 
@@ -880,13 +721,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             clipsMutationMutex.withLock {
                 recordHistory()
                 _clips.value = restored.clips
-                rebuildPlaylist(restored.clips)
+                playback.rebuildPlaylist(restored.clips)
                 // 空の保存を読み出したときだけここで0に戻す。中身があるときは
                 // select(0) が同じ代入をやり直すことになるので、そちらだけに任せる。
-                if (restored.clips.isNotEmpty()) select(0)
+                if (restored.clips.isNotEmpty()) playback.select(0)
                 else {
-                    _selectedIndex.value = 0
-                    _playbackPositionMs.value = 0L
+                    playback.setSelectedIndex(0)
+                    playback.setPositionMs(0L)
                 }
             }
             refreshUnreliableShotTimes()
@@ -917,7 +758,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun recordHistory(tag: EditTag? = null) = history.record(currentSnapshot(), tag)
 
-    private fun currentSnapshot() = Snapshot(_clips.value, _selectedIndex.value)
+    private fun currentSnapshot() = Snapshot(_clips.value, playback.selectedIndexValue)
 
     /**
      * 履歴の状態を画面へ戻す。
@@ -932,12 +773,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         _clips.value = snapshot.clips
 
-        if (playlistChanged) rebuildPlaylist(snapshot.clips) else player.playWhenReady = false
+        if (playlistChanged) playback.rebuildPlaylist(snapshot.clips) else playback.pause()
 
         val index = snapshot.selectedIndex
             .coerceIn(0, snapshot.clips.lastIndex.coerceAtLeast(0))
-        _selectedIndex.value = index
-        snapshot.clips.getOrNull(index)?.let { seekWithoutPause(it.startMs) }
+        playback.setSelectedIndex(index)
+        snapshot.clips.getOrNull(index)?.let { playback.seekWithoutPause(it.startMs) }
     }
 
     // --- 波形 ---------------------------------------------------------------------------
@@ -976,158 +817,40 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- 再生 ---------------------------------------------------------------------------
+    // --- 再生（実処理は PlaybackController） ----------------------------------------------
+    //
+    // 画面からはViewModelだけを見ていればよいよう、再生まわりも窓口はここに残す。
+    // 中身は playback/PlaybackController.kt にあり、ここは受け渡しだけを行う。
 
     /**
      * 画面から[PLAYBACK_POLL_INTERVAL_MS]間隔で呼ばれる。
      * 再生位置の更新とトリミング終端の監視をまとめて行う。
      */
-    fun refreshPlaybackProgress() {
-        if (!isInteractiveSeeking && player.currentMediaItemIndex == _selectedIndex.value) {
-            _playbackPositionMs.value = player.currentPosition
-        }
-        enforceTrimBounds()
-    }
+    fun refreshPlaybackProgress() = playback.refreshProgress()
 
-    /**
-     * トリミング終端に達したら次のクリップの開始位置へ進める。
-     * 最後のクリップの終端に達したら、そこで停止する（先頭へは戻らない）。
-     *
-     * selectedIndexではなく再生中のインデックスを見るのは、
-     * ExoPlayerが自動遷移した直後の一瞬だけ両者がずれるため。
-     */
-    private fun enforceTrimBounds() {
-        if (!player.isPlaying) return
-        val index = player.currentMediaItemIndex
-        val clip = _clips.value.getOrNull(index) ?: return
-        if (player.currentPosition < clip.endMs) return
-
-        val next = index + 1
-        when {
-            // 連続再生オフ：いまのクリップの終わりで止め、最後のコマを出したままにする
-            !_autoAdvance.value -> {
-                _selectedIndex.value = index
-                seekAndPause(clip.endMs)
-            }
-
-            next in _clips.value.indices -> {
-                _selectedIndex.value = next
-                seekWithoutPause(_clips.value[next].startMs)
-            }
-
-            // 連続再生で最後のクリップまで再生し終えたら、そこで止める（先頭へは戻らない）
-            else -> stopAtTimelineEnd()
-        }
-    }
-
+    /** 連続再生のオン/オフ。次回起動時にも引き継ぐので、切り替えと同時に保存する */
     fun setAutoAdvance(enabled: Boolean) {
-        applyAutoAdvance(enabled)
+        playback.setAutoAdvance(enabled)
         ClipStore.saveAutoAdvance(getApplication(), enabled)
     }
 
     /**
-     * タイムライン全体のミュートを切り替える。プレビュー中の音量を直接動かすのに加え、
+     * タイムライン全体のミュートを切り替える。プレビュー中の音量に加え、
      * 現在の状態は[export]が読んで書き出し音声にも反映する（起動時の引き継ぎはしない）。
      */
-    fun setTimelineMuted(muted: Boolean) {
-        _timelineMuted.value = muted
-        applyVolume()
-    }
+    fun setTimelineMuted(muted: Boolean) = playback.setTimelineMuted(muted)
 
-    /**
-     * pauseAtEndOfMediaItems も合わせて切り替える。
-     * [PLAYBACK_POLL_INTERVAL_MS]間隔の監視だけだと、トリミング終端が動画の
-     * 実際の末尾と一致している場合にExoPlayerの自動遷移が先に走ってしまい、
-     * オフにしても次が流れることがある。
-     */
-    private fun applyAutoAdvance(enabled: Boolean) {
-        _autoAdvance.value = enabled
-        player.pauseAtEndOfMediaItems = !enabled
-    }
+    fun beginScrub() = playback.beginScrub()
 
-    // --- シーク（波形をなぞって再生位置を動かす） -----------------------------------------
+    fun endScrub() = playback.endScrub()
 
-    /** なぞる前の再生状態。離したときに再生中だったら続きから流し直す */
-    private var resumeAfterScrub = false
+    fun beginInteractiveSeek() = playback.beginInteractiveSeek()
 
-    fun beginScrub() {
-        resumeAfterScrub = player.isPlaying
-        // なぞっている間に映像が進むと指の位置とコマがずれるので、いったん止める
-        player.playWhenReady = false
-    }
+    fun endInteractiveSeek() = playback.endInteractiveSeek()
 
-    fun endScrub() {
-        if (resumeAfterScrub) player.playWhenReady = true
-        resumeAfterScrub = false
-    }
+    fun pause() = playback.pause()
 
-    /**
-     * 波形をドラッグしている間（トリム端／分割線／本体のどれでも）だけ
-     * シークを近似（キーフレーム近傍）にして、毎フレームのseekToによる
-     * カクつきを減らす。既定のEXACTだと1回ごとに正確な位置までデコードし直すため重い。
-     */
-    fun beginInteractiveSeek() {
-        isInteractiveSeeking = true
-        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
-    }
-
-    /** 指を離したらEXACTへ戻し、最後に一度だけ正確な位置へ合わせ直す */
-    fun endInteractiveSeek() {
-        isInteractiveSeeking = false
-        player.setSeekParameters(SeekParameters.EXACT)
-        seekWithoutPause(_playbackPositionMs.value)
-    }
-
-    /**
-     * ドラッグ中は[refreshPlaybackProgress]による上書きを止めるためのフラグ。
-     *
-     * seekTo()は非同期で、呼んだ直後のplayer.currentPositionはまだ古い値を
-     * 返すことがある。80ms間隔のポーリングがちょうどその隙間に当たると、
-     * なぞっている指に追従して置いたはずの再生位置がプレイヤー側の古い値で
-     * 上書きされ、シークのピンが指の動きと無関係に後ろへ戻って見える
-     * （＝「ぴょんぴょん跳ねる」）。ドラッグ中はポーリングでの上書きだけを止め、
-     * 位置そのものは指の動きに合わせてseekWithinTrim等が直接更新し続ける。
-     */
-    private var isInteractiveSeeking = false
-
-    fun pause() {
-        player.playWhenReady = false
-    }
-
-    /**
-     * 再生／一時停止の切り替え（プレビューのタップ）。
-     *
-     * クリップの終わりで止まっているときは、そのまま再生しても直ちにまた止まって
-     * 「動かない」ように見えてしまうので、[playFromWhere]に従って頭出ししてから再生する。
-     */
-    fun togglePlayback() {
-        if (player.isPlaying) {
-            player.pause()
-            return
-        }
-        val clips = _clips.value
-        val index = _selectedIndex.value
-        val clip = clips.getOrNull(index) ?: return
-
-        when (
-            playFromWhere(
-                isLastClip = index == clips.lastIndex,
-                autoAdvance = _autoAdvance.value,
-                positionMs = _playbackPositionMs.value,
-                clipEndMs = clip.endMs,
-                playerEnded = player.playbackState == Player.STATE_ENDED
-            )
-        ) {
-            PlayFrom.CURRENT_POSITION -> Unit
-            PlayFrom.TIMELINE_START -> {
-                _selectedIndex.value = 0
-                applyVolume()
-                seekWithoutPause(clips.first().startMs)
-            }
-            PlayFrom.SELECTED_CLIP_START -> seekWithoutPause(clip.startMs)
-        }
-        player.play()
-    }
+    fun togglePlayback() = playback.togglePlayback()
 
     /**
      * 書き出しは VlogExportService（フォアグラウンドサービス）に委ねる。
@@ -1160,9 +883,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        player.playWhenReady = false
+        playback.pause()
         VlogExportService.start(
-            getApplication(), target, includeTitle, _timelineMuted.value, customTitleText
+            getApplication(), target, includeTitle, playback.isTimelineMuted, customTitleText
         )
     }
 
@@ -1171,7 +894,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateSelected(transform: (VlogClip) -> VlogClip) {
-        val index = _selectedIndex.value
+        val index = playback.selectedIndexValue
         if (index !in _clips.value.indices) return
         updateClips { this[index] = transform(this[index]) }
     }
@@ -1188,6 +911,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         // 書き出し自体は VlogExportService で継続させる（ここではキャンセルしない）。
         // ユーザーが画面を閉じてもバックグラウンドで書き出しを終わらせるための挙動。
-        player.release()
+        playback.release()
     }
 }

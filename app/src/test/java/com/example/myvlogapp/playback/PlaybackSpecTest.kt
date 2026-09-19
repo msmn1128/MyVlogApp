@@ -1,4 +1,4 @@
-package com.example.myvlogapp
+package com.example.myvlogapp.playback
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

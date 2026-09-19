@@ -83,7 +83,7 @@ const val MIN_TEXT_SEGMENT_MS = 400L
 
 /**
  * 再生位置の監視間隔（ミリ秒）。MainActivity側のポーリングループと
- * VlogViewModel側のKDocコメントの両方から参照し、値がズレないようにする。
+ * PlaybackController側のKDocコメントの両方から参照し、値がズレないようにする。
  */
 const val PLAYBACK_POLL_INTERVAL_MS = 80L
 
