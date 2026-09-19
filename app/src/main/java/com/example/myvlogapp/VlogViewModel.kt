@@ -780,8 +780,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 動画を読み込み中は、一時保存の保存・上書き・読み出しをしない。
+     * 読み込み中のタイムラインは途中の状態で、保存すると一部だけが残り、読み出すと
+     * あとから読み込み終えた動画が読み出した内容に混ざってしまうため。
+     * @return 読み込み中で断った場合はtrue（通知済み）
+     */
+    private fun refuseWhileAdding(): Boolean {
+        if (!_isAdding.value) return false
+        sendMessage("動画を読み込み中です。終わってからもう一度お試しください")
+        return true
+    }
+
     /** いまの編集内容に名前を付けて残す。動画はコピーしないので一瞬で終わる */
     fun saveProject(name: String) {
+        if (refuseWhileAdding()) return
         val clipsToSave = _clips.value
         if (clipsToSave.isEmpty()) {
             sendMessage("保存できる編集内容がありません")
@@ -801,11 +814,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 既存の保存内容へ上書きする（一覧の日付を長押ししたときの動作）。
-     * 削除と違って取り消し操作が無いわけではない（保存前の中身は失われるが、
-     * タイムライン自体の履歴には影響しない）ため、確認ダイアログは出さない。
+     * 既存の保存内容へ上書きする（一覧の行を長押しして確認したときの動作）。
+     * 上書きされた保存の中身は戻せない（「もとに戻す」で戻るのはタイムラインの編集だけ）ため、
+     * 呼び出し側（SaveLoadDialog）で確認ダイアログを挟む。
      */
     fun overwriteProject(id: Long, name: String) {
+        if (refuseWhileAdding()) return
         val clipsToSave = _clips.value
         if (clipsToSave.isEmpty()) {
             sendMessage("保存できる編集内容がありません")
@@ -826,12 +840,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 保存した編集内容へ差し替える。
      *
      * 履歴に積んでから入れ替えるので、読み出す前の状態には「もとに戻す」で戻れる。
+     * ただし、保存内の動画が1本も読めないときは、作業中のタイムラインが空になってしまうので
+     * 差し替えずに断る（[canReplaceWithProject]）。
      */
     fun loadProject(id: Long) {
+        if (refuseWhileAdding()) return
         viewModelScope.launch {
             val restored = ClipStore.loadProject(getApplication(), id)
             if (restored == null) {
                 sendMessage("この保存は読み出せませんでした")
+                return@launch
+            }
+            if (!canReplaceWithProject(loaded = restored.clips.size, dropped = restored.dropped)) {
+                sendMessage(projectUnreadableMessage(restored.dropped))
                 return@launch
             }
 
@@ -849,13 +870,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             }
             refreshUnreliableShotTimes()
 
-            sendMessage(
-                if (restored.dropped > 0) {
-                    "読み出しました（${restored.dropped} 件の動画は見つかりませんでした）"
-                } else {
-                    "読み出しました（もとに戻すで読み出す前へ戻ります）"
-                }
-            )
+            sendMessage(projectLoadedMessage(restored.dropped))
         }
     }
 

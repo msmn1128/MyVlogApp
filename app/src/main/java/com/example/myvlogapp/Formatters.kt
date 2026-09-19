@@ -34,6 +34,31 @@ fun addSkipMessage(
 ).joinToString("\n").ifEmpty { null }
 
 /**
+ * 一時保存を読み出して、いまのタイムラインを置き換えてよいか。
+ *
+ * 保存内の動画が1本も読めないのに置き換えると、作業中のタイムラインが空になってしまう
+ * （動画が削除・移動された、アクセス権限が取り消された場合など）。その場合は置き換えない。
+ * 保存自体が空（読めなかった動画も無い）のときは、そのまま読み出せる。
+ *
+ * @param loaded 読み出せた動画の本数
+ * @param dropped 見つからなかった（読めなかった）動画の本数
+ */
+fun canReplaceWithProject(loaded: Int, dropped: Int): Boolean = loaded > 0 || dropped == 0
+
+/** 一時保存を読み出したあとの通知文。もとに戻せることも添える */
+fun projectLoadedMessage(dropped: Int): String =
+    if (dropped > 0) {
+        "読み出しました（$dropped 件の動画は見つかりませんでした）。もとに戻すで読み出す前へ戻ります"
+    } else {
+        "読み出しました（もとに戻すで読み出す前へ戻ります）"
+    }
+
+/** 読める動画が1本も無くて読み出さなかったときの通知文（[canReplaceWithProject]がfalseのとき） */
+fun projectUnreadableMessage(dropped: Int): String =
+    "この保存の動画は $dropped 件とも見つからないため、読み出しませんでした" +
+        "（移動・削除されたか、アクセス権限が取り消されています）"
+
+/**
  * 保存名の既定値 "M/d"。同名がすでにあれば「M/d (1)」のように連番を付ける（[uniqueSaveName]）。
  */
 fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =

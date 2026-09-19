@@ -71,8 +71,25 @@ internal fun SaveLoadDialog(
     var editedName by remember { mutableStateOf<String?>(null) }
     val name = editedName ?: defaultSaveName(System.currentTimeMillis(), projects.map { it.name })
     var pendingDelete by remember { mutableStateOf<SavedProject?>(null) }
+    var pendingOverwrite by remember { mutableStateOf<SavedProject?>(null) }
 
-    // 削除だけは「もとに戻す」で戻せないので確認を挟む
+    // 上書きも「もとに戻す」では戻せない（戻せるのはタイムラインの編集だけで、
+    // 上書きされた保存の中身は失われる）。長押しでの誤操作を防ぐため確認を挟む
+    pendingOverwrite?.let { target ->
+        DestructiveConfirmDialog(
+            icon = VlogIcons.File,
+            title = "上書きしますか",
+            message = "「${target.name}」を、いまの編集内容で上書きします。元の保存内容には戻せません。",
+            confirmLabel = "上書き",
+            onDismiss = { pendingOverwrite = null },
+            onConfirm = {
+                onOverwrite(target)
+                pendingOverwrite = null
+            }
+        )
+    }
+
+    // 削除も「もとに戻す」で戻せないので確認を挟む
     pendingDelete?.let { target ->
         DestructiveConfirmDialog(
             icon = VlogIcons.Delete,
@@ -133,7 +150,7 @@ internal fun SaveLoadDialog(
                             SavedProjectRow(
                                 project = project,
                                 onLoad = { onLoad(project.id) },
-                                onOverwrite = { onOverwrite(project) },
+                                onOverwrite = { pendingOverwrite = project },
                                 onDelete = { pendingDelete = project },
                                 modifier = Modifier.animateItem()
                             )
@@ -150,7 +167,7 @@ internal fun SaveLoadDialog(
 
 /**
  * 保存1件ぶんの行。タップで「読み出す」、長押しで「上書き保存」を兼ねる
- * （上書きは確認ダイアログを出さない）。
+ * （上書きは元に戻せないので、呼び出し側で確認ダイアログを挟む）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -203,7 +220,7 @@ private fun SavedProjectRow(
     }
 }
 
-/** 取り消せない操作（一時保存の削除）の確認ダイアログ。 */
+/** 取り消せない操作（一時保存の削除・上書き）の確認ダイアログ。 */
 @Composable
 private fun DestructiveConfirmDialog(
     icon: ImageVector,

@@ -1,5 +1,6 @@
 package com.example.myvlogapp.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -54,6 +55,16 @@ object ClipStore {
     private const val KEY_AUTO_ADVANCE = "auto_advance"
     private const val KEY_PROJECTS = "projects"
 
+    /**
+     * 一時保存だけを入れる保存領域。
+     *
+     * 以前は自動保存（KEY_CLIPS）と同じファイルにあった。SharedPreferencesは1つのファイルを
+     * まるごと書き直すため、一時保存が増える（100本の保存が20件で約1MB）と、ひとことを
+     * 1文字打つたびの自動保存が、無関係な一時保存ごと書き直してしまう。
+     * 別のファイルに分けて、自動保存の書き込みを軽くする。
+     */
+    private const val PROJECTS_PREFS_NAME = "vlog_projects"
+
     /** 一時保存1件ぶんのJSONオブジェクトで使うキー名 */
     private object ProjectKeys {
         const val ID = "id"
@@ -63,6 +74,42 @@ object ClipStore {
     }
 
     private fun Context.prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun Context.projectPrefs() = getSharedPreferences(PROJECTS_PREFS_NAME, Context.MODE_PRIVATE)
+
+    @Volatile
+    private var projectsMigrated = false
+
+    /**
+     * 一時保存を、以前の保存領域（自動保存と同じファイル）から新しい保存領域へ移す。1回だけ行う。
+     *
+     * データを失わないよう、新しい側へ確実に書けた（commit()が成功した）ことを確かめてから、
+     * 古い側を消す。途中で失敗しても古い側に残るので、次の起動でやり直せる。
+     * 呼び出しはすべてIOスレッド（commit()は書き込み完了を待つため）。
+     *
+     * apply()ではなくcommit()を使うのは、書けたかどうか（戻り値）を確かめてから古い側を消すため。
+     * KTXのedit(commit = true)は戻り値を返さないので使えない。
+     */
+    @SuppressLint("ApplySharedPref", "UseKtx")
+    private fun migrateProjectsIfNeeded(context: Context) {
+        if (projectsMigrated) return
+        synchronized(this) {
+            if (projectsMigrated) return
+            val legacy = context.prefs()
+            val current = context.projectPrefs()
+            when (projectsMigrationFor(legacy.contains(KEY_PROJECTS), current.contains(KEY_PROJECTS))) {
+                ProjectsMigration.NOTHING -> Unit
+                ProjectsMigration.COPY_AND_REMOVE -> {
+                    val raw = legacy.getString(KEY_PROJECTS, null)
+                    if (raw != null && current.edit().putString(KEY_PROJECTS, raw).commit()) {
+                        legacy.edit().remove(KEY_PROJECTS).commit()
+                    }
+                }
+                ProjectsMigration.REMOVE_LEGACY_ONLY -> legacy.edit().remove(KEY_PROJECTS).commit()
+            }
+            projectsMigrated = true
+        }
+    }
 
     /**
      * suspendにしていないのは、androidx.core.content.editの既定（apply()）が
@@ -278,16 +325,23 @@ object ClipStore {
         }
     }
 
-    /** 新しいものが上に来る並び。読み出したいのはたいてい直近のもの */
-    private fun readProjects(context: Context): List<JSONObject> =
-        parseJsonArray(
-            context.prefs().getString(KEY_PROJECTS, null),
+    /**
+     * 新しいものが上に来る並び。読み出したいのはたいてい直近のもの。
+     *
+     * 壊れた要素（オブジェクトでないもの）は飛ばして、読める分を返す。1つでも壊れていると
+     * 一覧全体が空になり、次の保存で全件が上書きされて消えてしまうため。
+     */
+    private fun readProjects(context: Context): List<JSONObject> {
+        migrateProjectsIfNeeded(context)
+        return parseJsonArray(
+            context.projectPrefs().getString(KEY_PROJECTS, null),
             default = emptyList(),
             errorMessage = "一時保存の一覧を読めませんでした"
         ) { array ->
-            (0 until array.length()).map { array.getJSONObject(it) }
+            (0 until array.length()).mapNotNull { array.optJSONObject(it) }
                 .sortedByDescending { it.optLong(ProjectKeys.SAVED_AT) }
         }
+    }
 
     /**
      * "rawがnullなら既定値、あればJSONArrayとしてparseしてactionに渡す。
@@ -302,9 +356,10 @@ object ClipStore {
     }
 
     private fun writeProjects(context: Context, projects: List<JSONObject>) {
+        migrateProjectsIfNeeded(context)
         val array = JSONArray()
         projects.forEach { array.put(it) }
-        context.prefs().edit { putString(KEY_PROJECTS, array.toString()) }
+        context.projectPrefs().edit { putString(KEY_PROJECTS, array.toString()) }
     }
 
     private fun JSONObject.toSummary(): SavedProject {
@@ -329,4 +384,22 @@ object ClipStore {
     private fun isReadable(context: Context, uri: Uri): Boolean = runCatching {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
     }.getOrDefault(false)
+}
+
+/** 一時保存を新しい保存領域へ移すときの処理（[ClipStore]の移行で使う） */
+internal enum class ProjectsMigration {
+    /** 移すものが無い（以前の保存領域に一時保存が無い） */
+    NOTHING,
+
+    /** 新しい側へコピーし、書けたことを確かめてから古い側を消す */
+    COPY_AND_REMOVE,
+
+    /** 新しい側にすでにある。新しい側を正として、古い側だけを消す */
+    REMOVE_LEGACY_ONLY
+}
+
+internal fun projectsMigrationFor(legacyExists: Boolean, currentExists: Boolean): ProjectsMigration = when {
+    !legacyExists -> ProjectsMigration.NOTHING
+    currentExists -> ProjectsMigration.REMOVE_LEGACY_ONLY
+    else -> ProjectsMigration.COPY_AND_REMOVE
 }

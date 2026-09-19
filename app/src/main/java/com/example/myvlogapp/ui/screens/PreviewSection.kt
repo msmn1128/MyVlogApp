@@ -282,7 +282,8 @@ private fun ActionButtons(
         // 形は他のアイコン専用ボタン（操作バー等）と揃えて正円にする。
         FilledTonalIconButton(
             onClick = onOpenSaves,
-            enabled = !isExporting,
+            // 読み込み中のタイムラインは途中の状態なので、保存も読み出しもさせない
+            enabled = !isExporting && !isAdding,
             shape = CircleShape
         ) {
             Icon(

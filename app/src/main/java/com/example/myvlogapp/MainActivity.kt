@@ -260,7 +260,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
         onChangeSelection = { permissionLauncher.launch(mediaPermissions) },
         showSaves = showSaves,
         onDismissSaves = { showSaves = false },
-        canSaveProject = clips.isNotEmpty() && !isExporting,
+        canSaveProject = clips.isNotEmpty() && !isExporting && !isAdding,
         onLoadProject = { id ->
             showSaves = false
             viewModel.loadProject(id)
