@@ -1194,7 +1194,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *   撮影日（[VlogClip.dateText]）を使う。タイトル作成ダイアログで自由入力を選んだときのみ渡る。
      */
     fun export(includeTitle: Boolean = true, customTitleText: String? = null) {
-        if (ExportStatus.isRunning) return
+        // 書き出し中に押し直したとき、何も起きないと「押せていない」のか
+        // 「始まっているのか」が画面から分からないので、理由を返す
+        if (ExportStatus.isRunning) {
+            sendMessage("すでに書き出し中です")
+            return
+        }
 
         val target = _clips.value
         when {
