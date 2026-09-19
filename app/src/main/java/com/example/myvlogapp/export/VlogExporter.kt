@@ -169,7 +169,7 @@ object VlogExporter {
 
             // タイトルカードの文言は自由入力があればそちらを優先する（空/未入力のときの
             // フォールバックはTitleCreationDialog側で解決済み）。ファイル名はこの文言とは無関係に、
-            // 書き出しを始めた現在の日付と時刻から作る。
+            // 書き出しを始めた現在の日付から作る。
             val titleText = customTitleText ?: clips.first().dateText
             val sfxDelayMs = titleSfxDelayMs()
 
@@ -911,18 +911,19 @@ object VlogExporter {
     }
 
     /**
-     * 保存するファイル名を決める。書き出しを始めた現在の日付と時刻から作り、
-     * 「Vlog_2026-08-24 09-20.mp4」のような形にする（動画自体の作成日時と揃えてある）。
+     * 保存するファイル名を決める。書き出しを始めた現在の日付から作り、
+     * 「Vlog_2026-08-24.mp4」のような形にする。時刻はファイル名に入れず、
+     * 動画自体の作成日時（メタデータ）だけが持つ。
      * タイトルカードの文言（撮影日や自由入力）は使わない。自由入力は改行やパス区切り文字などを
-     * 含みうるため、ファイル名にはしないほうが安全で、書き出しの時刻なら常に安全な文字だけで済む。
+     * 含みうるため、ファイル名にはしないほうが安全で、書き出しの日付なら常に安全な文字だけで済む。
      *
-     * 日付・時刻の区切りにハイフンを使うのは、ファイル名にスラッシュやコロンを含められないため
+     * 日付の区切りにハイフンを使うのは、ファイル名にスラッシュを含められないため
      * （パス区切りと解釈されて保存に失敗する）。
      *
-     * 同じ分のうちに複数回書き出したときは「Vlog_2026-08-24 09-20 (1).mp4」のように連番を付ける。
+     * 同じ日に複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
      */
     private fun buildDisplayName(context: Context, createdAtMillis: Long): String {
-        val base = "Vlog_${fileNameTimestamp(createdAtMillis)}"
+        val base = "Vlog_${fileNameDate(createdAtMillis)}"
         val taken = existingDisplayNames(context, base)
 
         var candidate = "$base.mp4"
@@ -934,9 +935,9 @@ object VlogExporter {
         return candidate
     }
 
-    /** ファイル名用の日付と時刻 "yyyy-MM-dd HH-mm"（端末のローカル時刻。Locale.USで数字の字形を固定） */
-    internal fun fileNameTimestamp(millis: Long): String =
-        SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.US).format(millis)
+    /** ファイル名用の日付 "yyyy-MM-dd"（端末のローカル日付。Locale.USで数字の字形を固定） */
+    internal fun fileNameDate(millis: Long): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(millis)
 
     /**
      * すでに保存済みの、同じ名前で始まる動画の一覧。
