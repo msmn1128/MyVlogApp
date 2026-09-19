@@ -176,11 +176,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             ExportStatus.events.collect { _events.send(it) }
         }
 
-        // 前回、書き出し中に強制終了していた場合の後始末。
-        // 今まさに書き出し中（サービスが同一プロセスで生存中）なら触らない。
+        // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
+        // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。
+        // 今まさに書き出し中（サービスが同一プロセスで生存中）なら、書き込み中のものを
+        // 消してしまうので触らない。
         if (!ExportStatus.isRunning) {
             viewModelScope.launch(Dispatchers.IO) {
                 VlogExporter.cleanupOrphanedPendingFiles(getApplication())
+                VlogExporter.cleanupOrphanedWorkFiles(getApplication())
             }
         }
     }

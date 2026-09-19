@@ -106,6 +106,9 @@ object VlogExporter {
     /** ギャラリー保存先のサブフォルダ名(Movies/以下)。孤児ファイル掃除の検索条件とも一致させる */
     private const val OUTPUT_SUBDIRECTORY = "MyVlogApp"
 
+    /** 書き出し中の中間ファイル置き場（cacheDir以下） */
+    private const val WORK_DIRECTORY = "vlog_work"
+
     // FONT_ASSET_DIRはVlogConstants.ktで定義（MainActivity側のプレビュー表示と共有するため）
     private const val SFX_ASSET_DIR = "sfx"
 
@@ -148,7 +151,7 @@ object VlogExporter {
         }
 
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
-        val workDir = File(context.cacheDir, "vlog_work").apply { mkdirs() }
+        val workDir = workDir(context).apply { mkdirs() }
         val id = System.currentTimeMillis()
         // 書き出した動画自体の作成日時。タイトルカードの日付（撮影日）とは別に、
         // 書き出しを始めた現在時刻を、MP4のメタデータとギャラリーの撮影日時の両方へ入れる。
@@ -234,6 +237,40 @@ object VlogExporter {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
             textFiles.forEach { it.delete() }
+        }
+    }
+
+    private fun workDir(context: Context) = File(context.cacheDir, WORK_DIRECTORY)
+
+    /**
+     * 前回の書き出しが強制終了（OSによるプロセス回収、強制停止、クラッシュ等）で
+     * 打ち切られた場合、cacheDirに結合途中の動画（merged_*.mp4）やフィルタグラフが残る。
+     * [export]のfinallyはその回に作ったファイルしか消さないため、打ち切られた回の分は
+     * 誰も片付けない。
+     *
+     * 中間ファイルは本数と尺に比例して大きく、100本の書き出しでは数GBになりうる。
+     * cacheDirなのでOSはいずれ回収するが、それまで端末の空き容量を占め続ける。
+     * [cleanupOrphanedPendingFiles]がMediaStore側で行っているのと同じ後始末を、
+     * こちらでも起動時に行う。
+     *
+     * 呼び出し側は、実行中の書き出しが無いこと（[ExportStatus.isRunning] が false）を
+     * 確認してから呼ぶこと。いま書き込み中のファイルを消してしまわないため。
+     */
+    fun cleanupOrphanedWorkFiles(context: Context) {
+        runCatching {
+            val files = workDir(context).listFiles() ?: return
+            var bytes = 0L
+            var deleted = 0
+            files.forEach { file ->
+                val size = file.length()
+                if (file.delete()) {
+                    bytes += size
+                    deleted++
+                }
+            }
+            if (deleted > 0) {
+                Log.i(LOG_TAG, "強制終了で残った作業ファイルを削除しました: ${deleted}件 / ${bytes}バイト")
+            }
         }
     }
 
