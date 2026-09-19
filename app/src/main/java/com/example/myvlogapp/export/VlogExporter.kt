@@ -24,6 +24,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
@@ -40,6 +42,7 @@ import com.example.myvlogapp.FONT_ASSET_DIR
 import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
 import com.example.myvlogapp.LOG_TAG
+import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.TIME_FONT_ASSET
 import com.example.myvlogapp.TIME_FONT_PT
 import com.example.myvlogapp.TIME_MARGIN_PT
@@ -71,15 +74,14 @@ class VlogExportException(message: String) : Exception(message)
  */
 object VlogExporter {
 
+    /** 書き出し前に、各クリップの音声トラックの有無を同時に調べる本数の上限（[AudioPlan.build]） */
+    private const val AUDIO_PROBE_PARALLELISM = 4
+
     /**
-     * 単一パスで書き出せるクリップ数の目安上限。
-     *
-     * 全クリップをFFmpegへ同時に`-i`入力するため、本数が増えるほど
-     * 開くファイルディスクリプタ数・filter_complexのコマンド長が増える。
-     * 際限なく許すと、上限超過時にFFmpeg側の分かりにくいエラーで
-     * 失敗するだけになるため、ここで先に分かりやすいメッセージを出す。
+     * ログに残すFFmpegのコマンド・フィルタグラフの最大文字数。
+     * 本数が多い（[MAX_CLIPS]本）と1行が数百KBになって、Logcatを埋めてしまう。
      */
-    private const val MAX_EXPORT_CLIPS = 50
+    private const val COMMAND_LOG_MAX_CHARS = 2000
 
     // --- タイトルカードのフェード -------------------------------------------------------
     // buildTitleFilterのalpha式で使う。nは0始まりのフレーム番号。
@@ -134,9 +136,10 @@ object VlogExporter {
         onProgress: suspend (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         require(clips.isNotEmpty()) { "クリップがありません" }
-        if (clips.size > MAX_EXPORT_CLIPS) {
+        // 追加時に上限を守っているが、上限を設ける前の保存データを復元した場合などに超えうる
+        if (clips.size > MAX_CLIPS) {
             throw VlogExportException(
-                "クリップが多すぎます（上限${MAX_EXPORT_CLIPS}本、現在${clips.size}本）。" +
+                "クリップが多すぎます（上限${MAX_CLIPS}本、現在${clips.size}本）。" +
                         "クリップを減らしてください"
             )
         }
@@ -195,13 +198,23 @@ object VlogExporter {
                 clips, fonts, titleText, sfxDelayMs, workDir, id, textFiles,
                 includeTitle, audioPlan
             )
+            // フィルタグラフは引数で渡さずファイルで渡す。本数が多いとグラフが数百KBに
+            // なりうる（1クリップ約0.7〜1.5KB。100本で約70KB）。ファイルなら
+            // 引数の長さに縛られず、コマンドのログも肥大しない。
+            val graphFile = File(workDir, "graph_$id.txt")
+                .apply { writeText(filterGraph, Charsets.UTF_8) }
+                .also { textFiles += it }
+            Log.d(
+                LOG_TAG,
+                "filter_complex (${filterGraph.length}文字): ${filterGraph.take(COMMAND_LOG_MAX_CHARS)}"
+            )
             val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
                     clips.sumOf { it.trimmedDurationMs }
 
             runFFmpegWithProgress(
                 arrayOf(
                     *inputs,
-                    "-filter_complex", filterGraph,
+                    "-filter_complex_script", graphFile.absolutePath,
                     "-map", "[vout]", "-map", "[aout]",
                     // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
                     *videoEncodeArgs(),
@@ -373,8 +386,9 @@ object VlogExporter {
         companion object {
             /**
              * 音声トラックの有無はクリップごとに MediaExtractor で開いて調べるため、
-             * 最大50本を直列に回すと「準備中...」が本数ぶん伸びる。動画追加時のメタデータ
+             * 直列に回すと「準備中...」が本数ぶん伸びる。動画追加時のメタデータ
              * 取得（VlogViewModel.addClips）と同じく、呼び出し元のIOスレッドで並列に調べる。
+             * 本数が多いときに一斉に開かないよう、同時に開く数は[AUDIO_PROBE_PARALLELISM]に絞る。
              */
             suspend fun build(
                 context: Context,
@@ -384,8 +398,12 @@ object VlogExporter {
             ): AudioPlan = AudioPlan(
                 needsTitleSfxInput = includeTitle && !muted,
                 clipHasRealAudio = coroutineScope {
+                    val gate = Semaphore(AUDIO_PROBE_PARALLELISM)
                     clips.map { clip ->
-                        async { !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri) }
+                        async {
+                            !clip.isSilentInExport(muted) &&
+                                    gate.withPermit { hasAudioTrack(context, clip.uri) }
+                        }
                     }.awaitAll()
                 }
             )
@@ -487,8 +505,13 @@ object VlogExporter {
      * 全部デコードしてから捨てるため、素材の後ろの方を切り出すほど遅くなる。
      * `-i`の前に`-ss`/`-t`を置く入力側のシークなら、開始位置の手前まで読み飛ばせる
      * （トランスコード時は-ssもフレーム単位で正確）。
+     *
+     * `-threads 1`（この入力のデコードを1スレッドにする）は、メモリを抑えるため。全クリップを
+     * 同時に入力するので、デコーダのスレッドごとのフレームバッファが本数ぶん積み上がる。
+     * 実測（4GBのエミュレータ、1080p・100本）で、既定だと約5.1GBで強制終了、1スレッドだと約2.3GBで完走した。
      */
     internal fun clipInputArgs(clip: VlogClip, source: String): List<String> = listOf(
+        "-threads", "1",
         "-ss", ffmpegSeconds(clip.startMs),
         "-t", ffmpegSeconds(clip.trimmedDurationMs),
         "-i", source
@@ -803,7 +826,7 @@ object VlogExporter {
         totalDurationMs: Long,
         onProgress: suspend (String) -> Unit
     ) {
-        Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ")}")
+        Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ").take(COMMAND_LOG_MAX_CHARS)}")
         val completion = CompletableDeferred<FFmpegSession>()
         val callerContext = coroutineContext
         var lastPercent = -1

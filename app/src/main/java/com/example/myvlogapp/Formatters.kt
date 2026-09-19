@@ -14,6 +14,26 @@ fun formatSavedAt(millis: Long): String =
     SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
 
 /**
+ * 動画を追加したあとに出す、スキップの通知文。どちらも0件ならnull（通知しない）。
+ *
+ * @param alreadyAdded すでにタイムラインにあったため追加しなかった件数
+ * @param unreadable 長さなどを読み取れなかったため追加しなかった件数（壊れたファイル、
+ *   コピー途中のファイルなど）
+ * @param overLimit クリップ数の上限（[limit]）を超えるため追加しなかった件数
+ */
+fun addSkipMessage(
+    alreadyAdded: Int,
+    unreadable: Int,
+    overLimit: Int = 0,
+    limit: Int = MAX_CLIPS
+): String? = listOfNotNull(
+    "$alreadyAdded 件は追加済みのためスキップしました".takeIf { alreadyAdded > 0 },
+    "$unreadable 件は読み込めなかったので追加しませんでした（もう一度選び直してください）"
+        .takeIf { unreadable > 0 },
+    "$overLimit 件は上限（${limit}本）を超えるため追加しませんでした".takeIf { overLimit > 0 }
+).joinToString("\n").ifEmpty { null }
+
+/**
  * 保存名の既定値 "M/d"。同名がすでにあれば「M/d (1)」のように連番を付ける（[uniqueSaveName]）。
  */
 fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =

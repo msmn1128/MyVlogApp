@@ -1,6 +1,7 @@
 package com.example.myvlogapp.data
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.edit
@@ -222,6 +223,58 @@ object ClipStore {
     suspend fun deleteProject(context: Context, id: Long) = withContext(Dispatchers.IO) {
         projectsMutex.withLock {
             writeProjects(context, readProjects(context).filterNot { it.optLong(ProjectKeys.ID) == id })
+        }
+    }
+
+    /**
+     * 一時保存の一覧が参照している動画のURI（文字列）。永続権限を解放してよいかの判断に使う。
+     * 壊れた1件があっても、読める分だけは集める。
+     */
+    internal fun uriStringsInProjects(projects: List<JSONObject>): Set<String> = buildSet {
+        projects.forEach { project ->
+            val clips = project.optJSONArray(ProjectKeys.CLIPS) ?: return@forEach
+            for (index in 0 until clips.length()) {
+                clips.optJSONObject(index)
+                    ?.optString(VlogClipKeys.URI)
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { add(it) }
+            }
+        }
+    }
+
+    /**
+     * ファイル選択（SAF）で取った永続権限のうち、タイムラインにも一時保存にも使われていないものを解放する。
+     * 保持数にはアプリごとの上限があり（Android 10以前は128、11以降は512）、解放しないと溜まる一方になる。
+     *
+     * 一時保存が参照している動画の権限は残す（読み出したときに動画を開けなくなるため）。
+     * 一時保存の書き込みと同じロックの中で判断するので、保存の途中を見誤らない。
+     *
+     * @param isBusy 動画の追加中など、いまの状態では判断できないときはtrue（何もせず戻る）。
+     *   追加中の動画はまだタイムラインに入っておらず、権限だけが先に取られているため
+     * @param timelineUris 判断の時点でタイムラインにある動画のURI（呼ぶたびに最新を返すこと）
+     */
+    suspend fun releaseUnreferencedPermissions(
+        context: Context,
+        isBusy: () -> Boolean,
+        timelineUris: () -> Collection<Uri>
+    ) = withContext(Dispatchers.IO) {
+        projectsMutex.withLock {
+            if (isBusy()) return@withLock
+
+            val referenced = HashSet<String>().apply {
+                timelineUris().forEach { add(it.toString()) }
+                addAll(uriStringsInProjects(readProjects(context)))
+            }
+            val resolver = context.contentResolver
+            resolver.persistedUriPermissions
+                .filter { it.isReadPermission && it.uri.toString() !in referenced }
+                .forEach { grant ->
+                    runCatching {
+                        resolver.releasePersistableUriPermission(
+                            grant.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    }
+                }
         }
     }
 

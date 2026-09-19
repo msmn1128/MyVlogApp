@@ -118,6 +118,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val clips by viewModel.clips.collectAsStateWithLifecycle()
     val selectedIndex by viewModel.selectedIndex.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val isAdding by viewModel.isAdding.collectAsStateWithLifecycle()
     val selectedClip = clips.getOrNull(selectedIndex)
     val isExporting = exportState is ExportState.Running
 
@@ -225,12 +226,20 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     ) { uris: List<Uri> ->
         // 次にアプリを開いたときも読めるよう、永続的な読み取り権限をもらっておく。
         // これが取れたURIだけが復元対象になる（動画自体はコピーしない）。
-        uris.forEach { uri ->
+        // 取れなかった動画は、アプリを開き直すと編集内容に残らないので、先に知らせておく。
+        val notPersisted = uris.count { uri ->
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
-            }
+            }.isFailure
+        }
+        if (notPersisted > 0) {
+            Toast.makeText(
+                context,
+                "$notPersisted 件は、アプリを開き直すと編集内容に残らない可能性があります",
+                Toast.LENGTH_LONG
+            ).show()
         }
         viewModel.addClips(uris)
     }
@@ -288,7 +297,9 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             positionMs = positionMs,
             exportState = exportState,
             isExporting = isExporting,
-            canExport = clips.isNotEmpty(),
+            isAdding = isAdding,
+            // 読み込み中の動画がまだタイムラインに入っていないので、その間は書き出しを始めさせない
+            canExport = clips.isNotEmpty() && !isAdding,
             previewWeight = weight,
             onAdd = openGallery,
             onOpenSaves = { showSaves = true },

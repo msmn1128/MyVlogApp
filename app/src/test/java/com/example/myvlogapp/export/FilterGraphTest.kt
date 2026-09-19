@@ -45,13 +45,15 @@ class FilterGraphTest {
     }
 
     @Test
-    fun clipInputArgs_seeksToStartAndLimitsDuration() {
+    fun clipInputArgs_seeksToStartLimitsDurationAndDecodesOnOneThread() {
+        // -threads 1 はメモリを抑えるため（全クリップを同時に入力するので、デコーダの
+        // スレッドごとのバッファが本数ぶん積み上がる）。-i の前に置いて、その入力のデコーダに効かせる
         assertEquals(
-            listOf("-ss", "4.000", "-t", "5.000", "-i", "saf:1"),
+            listOf("-threads", "1", "-ss", "4.000", "-t", "5.000", "-i", "saf:1"),
             VlogExporter.clipInputArgs(splitClip, "saf:1")
         )
         assertEquals(
-            listOf("-ss", "0.000", "-t", "3.000", "-i", "saf:2"),
+            listOf("-threads", "1", "-ss", "0.000", "-t", "3.000", "-i", "saf:2"),
             VlogExporter.clipInputArgs(silentClip, "saf:2")
         )
     }

@@ -12,10 +12,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.snapshots.SnapshotStateSet
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +37,7 @@ import com.example.myvlogapp.formatSeconds
 import com.example.myvlogapp.data.GalleryVideo
 import com.example.myvlogapp.data.hasPartialMediaAccess
 import com.example.myvlogapp.data.queryGalleryVideos
+import com.example.myvlogapp.ui.components.VlogIcons
 
 /**
  * アプリ内のギャラリー選択画面。
@@ -91,10 +93,8 @@ fun GalleryPickerDialog(
 ) {
     val context = LocalContext.current
     var videos by remember { mutableStateOf<List<GalleryVideo>?>(null) }
-    // URI -> 選んだ順番(1始まり)。Listだと1件選ぶだけで全タイルが
-    // selected.indexOf()の読み取りごと再コンポーズされてしまうため、
-    // タイルごとに自分のURIだけを読ませられるMapにしてある。
-    val selected = remember { mutableStateMapOf<Uri, Int>() }
+    // 選択中のURI。追加後の並びは撮影日時順で、選んだ順とは無関係なので、順番は持たない
+    val selected = remember { mutableStateSetOf<Uri>() }
     val isPartial = remember(reloadToken) { hasPartialMediaAccess(context) }
 
     LaunchedEffect(reloadToken) {
@@ -103,11 +103,8 @@ fun GalleryPickerDialog(
         videos = loaded
 
         // 許可する動画を選び直すと一覧が入れ替わる。一覧から消えた動画の選択が
-        // 残ったままだと、見えないのに追加されてしまう。残るものだけ選んだ順を保って詰め直す。
-        val available = loaded.mapTo(HashSet()) { it.uri }
-        val kept = selected.entries.filter { it.key in available }.sortedBy { it.value }
-        selected.clear()
-        kept.forEachIndexed { index, entry -> selected[entry.key] = index + 1 }
+        // 残ったままだと、見えないのに追加されてしまうので、残るものだけにする。
+        selected.retainAll(loaded.mapTo(HashSet()) { it.uri })
     }
 
     Dialog(
@@ -139,7 +136,7 @@ fun GalleryPickerDialog(
                 GalleryPickerFooter(
                     selectedCount = selected.size,
                     onDismiss = onDismiss,
-                    onPick = { onPick(selected.entries.sortedBy { it.value }.map { it.key }) }
+                    onPick = { onPick(oldestFirst(videos.orEmpty(), selected)) }
                 )
             }
         }
@@ -184,7 +181,7 @@ private fun PartialAccessBanner(onChangeSelection: () -> Unit) {
 @Composable
 private fun VideoGrid(
     videos: List<GalleryVideo>?,
-    selected: SnapshotStateMap<Uri, Int>,
+    selected: SnapshotStateSet<Uri>,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -202,13 +199,10 @@ private fun VideoGrid(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(videos, key = { it.uri.toString() }) { video ->
-                    // selected[video.uri]だけを読むことで、他のタイルの選択が
-                    // 変わってもこのタイルの値が変わらない限り再コンポーズされない
-                    val order = selected[video.uri]
                     VideoTile(
                         video = video,
-                        selectionOrder = order,
-                        onClick = { toggleSelection(selected, video.uri, order) }
+                        isSelected = video.uri in selected,
+                        onClick = { toggleSelection(selected, video.uri) }
                     )
                 }
             }
@@ -216,23 +210,19 @@ private fun VideoGrid(
     }
 }
 
-/**
- * 選択の追加・解除。
- *
- * 解除のときだけ、後ろの順番を1つずつ詰め直す（表示している「選んだ順」の
- * 番号を連番に保つため）。詰め直しで値が変わったタイルだけがselected[uri]の
- * 読み取り経由で再コンポーズされ、無関係なタイルは影響を受けない。
- */
-private fun toggleSelection(selected: SnapshotStateMap<Uri, Int>, uri: Uri, currentOrder: Int?) {
-    if (currentOrder != null) {
-        selected.remove(uri)
-        selected.entries.toList().forEach { (key, order) ->
-            if (order > currentOrder) selected[key] = order - 1
-        }
-    } else {
-        selected[uri] = selected.size + 1
-    }
+/** 選択の追加・解除 */
+private fun toggleSelection(selected: MutableSet<Uri>, uri: Uri) {
+    if (!selected.remove(uri)) selected.add(uri)
 }
+
+/**
+ * 選択中の動画を、追加処理へ渡す順に並べる。一覧は追加日時の新しい順なので、その逆（古い順）。
+ *
+ * 追加後の並びは撮影日時順で、この順は関係しない。撮影時刻がどこからも取れない動画だけが、
+ * この順に代用時刻を割り当てられる（[com.example.myvlogapp.VlogViewModel.addClips]）。
+ */
+internal fun oldestFirst(videos: List<GalleryVideo>, selected: Set<Uri>): List<Uri> =
+    videos.filter { it.uri in selected }.reversed().map { it.uri }
 
 @Composable
 private fun GalleryPickerFooter(
@@ -258,21 +248,17 @@ private fun GalleryPickerFooter(
     }
 }
 
-/** 選んだ順の番号を出すので、追加後の並び順が事前に分かる */
+/** 選択中はチェックマークと枠線で示す（追加後の並びは撮影日時順なので、番号は出さない） */
 @Composable
 private fun VideoTile(
     video: GalleryVideo,
-    selectionOrder: Int?,
+    isSelected: Boolean,
     onClick: () -> Unit
 ) {
     val thumbnail = rememberThumbnail(video.uri)
 
-    // 選択状態と順番を、枠線・バッジだけでなくスクリーンリーダーにも伝える
-    val stateDescription = if (selectionOrder != null) {
-        "選択中：$selectionOrder 番目"
-    } else {
-        "未選択"
-    }
+    // 選択状態を、枠線・チェックマークだけでなくスクリーンリーダーにも伝える
+    val stateDescription = if (isSelected) "選択中" else "未選択"
 
     Box(
         modifier = Modifier
@@ -280,13 +266,13 @@ private fun VideoTile(
             .clip(TILE_SHAPE)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .then(
-                if (selectionOrder != null) {
+                if (isSelected) {
                     Modifier.border(3.dp, MaterialTheme.colorScheme.primary, TILE_SHAPE)
                 } else {
                     Modifier
                 }
             )
-            .selectable(selected = selectionOrder != null, onClick = onClick)
+            .selectable(selected = isSelected, onClick = onClick)
             .semantics(mergeDescendants = true) {
                 contentDescription = "${video.name}（$stateDescription）"
             }
@@ -318,16 +304,17 @@ private fun VideoTile(
                 .padding(horizontal = 4.dp, vertical = 1.dp)
         )
 
-        if (selectionOrder != null) {
-            Text(
-                text = "$selectionOrder",
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontSize = 11.sp,
+        if (isSelected) {
+            Icon(
+                VlogIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(4.dp)
-                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .padding(3.dp)
+                    .size(14.dp)
             )
         }
     }

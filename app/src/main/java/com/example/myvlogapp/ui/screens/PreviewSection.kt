@@ -93,6 +93,7 @@ internal fun ColumnScope.PreviewSection(
     positionMs: State<Long>,
     exportState: ExportState,
     isExporting: Boolean,
+    isAdding: Boolean,
     canExport: Boolean,
     previewWeight: Float,
     onAdd: () -> Unit,
@@ -110,12 +111,14 @@ internal fun ColumnScope.PreviewSection(
     Spacer(Modifier.height(SECTION_GAP))
     ActionButtons(
         isExporting = isExporting,
+        isAdding = isAdding,
         canExport = canExport,
         onAdd = onAdd,
         onOpenSaves = onOpenSaves,
         onExport = onExport,
         onCancel = viewModel::cancelExport
     )
+    AddProgress(isAdding)
     ExportProgress(exportState)
 }
 
@@ -250,6 +253,7 @@ private fun PreviewPane(
 @Composable
 private fun ActionButtons(
     isExporting: Boolean,
+    isAdding: Boolean,
     canExport: Boolean,
     onAdd: () -> Unit,
     onOpenSaves: () -> Unit,
@@ -268,7 +272,8 @@ private fun ActionButtons(
         // 主役は「書き出し」なので、こちらは一段控えめなトーナルボタンにする
         FilledTonalButton(
             onClick = onAdd,
-            enabled = !isExporting,
+            // 読み込み中に押し直すと、同じ動画を並行して読むことになる
+            enabled = !isExporting && !isAdding,
             contentPadding = labelPadding,
             modifier = Modifier.weight(1f)
         ) { Text("動画を追加", maxLines = 1) }
@@ -352,6 +357,27 @@ private fun ExportButton(
     ) {
         Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
             Text("書き出し", maxLines = 1, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/** 動画を追加している間（メタデータを読んでいる間）の進捗。数秒かかることがあるため、何も出さないと固まって見える */
+@Composable
+private fun AddProgress(isAdding: Boolean) {
+    AnimatedVisibility(
+        visible = isAdding,
+        enter = fadeIn() + expandVertically(),
+        exit = fadeOut() + shrinkVertically()
+    ) {
+        Column {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "動画を読み込み中…",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

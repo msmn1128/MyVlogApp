@@ -93,6 +93,11 @@ object VlogIcons {
         )
     }
 
+    /** 選択中（チェックマーク） */
+    val Check: ImageVector by lazy {
+        materialIcon("Check", "M9 16.17L4.83 12l-1.41 1.42L9 19 21 7l-1.41-1.41z")
+    }
+
     /** 一時保存（ファイル） */
     val File: ImageVector by lazy {
         materialIcon(

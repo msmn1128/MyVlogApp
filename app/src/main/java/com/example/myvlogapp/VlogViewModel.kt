@@ -25,7 +25,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import com.example.myvlogapp.data.ClipStore
@@ -54,6 +56,14 @@ private const val HISTORY_COALESCE_MS = 900L
  * ひとことを1文字打つたびに書き込むと重いため、入力が止まってからこのぶん待つ。
  */
 private const val AUTOSAVE_DEBOUNCE_MS = 500L
+
+/**
+ * 動画を追加するとき、メタデータ（長さ・撮影時刻など）を同時に読む本数の上限。
+ *
+ * 選んだ本数ぶんを一斉に読むと、本数が多いときにネイティブのデコーダとファイルを
+ * 同時に大量に開いてしまう。数本ずつなら、合計時間は最も遅い数本ぶんに近いまま抑えられる。
+ */
+private const val METADATA_PARALLELISM = 4
 
 /**
  * 履歴コピーの粒度を決めるタグ。
@@ -96,6 +106,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _canRedo = MutableStateFlow(false)
     val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
+    /**
+     * 動画を追加中（メタデータを読んでいる間）か。画面に進捗を出し、追加ボタンの連打を止めるのに使う。
+     * 追加は並行して走りうるので、実行中の件数で数える（更新はメインスレッドだけ）。
+     */
+    private var addingCount = 0
+    private val _isAdding = MutableStateFlow(false)
+    val isAdding: StateFlow<Boolean> = _isAdding.asStateFlow()
 
     /**
      * クリップの終わりまで来たら次へ進むか、そこで止まるか。
@@ -304,11 +322,30 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         clearHistory()
 
         refreshUnreliableShotTimes()
+        releaseUnusedPermissions()
 
         if (restored.dropped > 0) {
             sendMessage(
                 "${restored.dropped} 件の動画は復元できませんでした" +
                         "（移動・削除されたか、アクセス権限が取り消されています）"
+            )
+        }
+    }
+
+    /**
+     * ファイル選択（SAF）で取った永続権限のうち、タイムラインにも一時保存にも使われていないものを解放する。
+     *
+     * 権限の保持数にはアプリごとの上限（Android 10以前は128、11以降は512）があり、
+     * 解放しないまま動画を追加し続けると、上限を超えて新しい動画の権限を取れなくなる
+     * （取れなかった動画は、次に開いたとき復元されない）。
+     */
+    private fun releaseUnusedPermissions() {
+        viewModelScope.launch {
+            // 判断の時点の状態を見る（読み込み中に呼ばれた場合や、追加中の動画がある場合は見送る）
+            ClipStore.releaseUnreferencedPermissions(
+                context = getApplication(),
+                isBusy = { _isAdding.value },
+                timelineUris = { _clips.value.map { it.uri } }
             )
         }
     }
@@ -356,40 +393,67 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 選択された動画を撮影/作成日時順になる位置へ追加し、追加した中で最も古いものを選択する */
+    /**
+     * 選択された動画を撮影/作成日時順になる位置へ追加し、追加した中で最も古いものを選択する。
+     *
+     * タイムラインへ入れないもの（通知する）:
+     *  - すでにタイムラインにある動画
+     *  - 長さなどを読み取れなかった動画（壊れたファイル、コピー途中のファイルなど）。
+     *    尺0のクリップは書き出しを止めてしまうので、追加せず、選び直してもらう
+     */
     fun addClips(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
-            val context = getApplication<Application>()
-
-            // タイムラインに既にある動画は追加せずスキップする。
-            // distinct() は uris 自体に同じURIが重複して含まれるケース
-            // （呼び出し元が誤って同じ動画を2回渡した場合など）に対応するため。
-            //
-            // ファイル名+サイズなどの内容ベースでの同一性判定も検討したが、
-            // 偶然ファイル名とサイズが一致する別動画を誤って同一と判定して
-            // 無言でスキップしてしまうリスク（データ消失）があり、URI一致の
-            // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
-            // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
-            // ケースは既知の制約として残す。
-            val existingUris = _clips.value.map { it.uri }.toSet()
-            val newUris = uris.distinct().filter { it !in existingUris }
-            if (newUris.isEmpty()) {
-                sendMessage("すでに追加済みの動画のためスキップしました")
-                return@launch
+            _isAdding.value = ++addingCount > 0
+            try {
+                addClipsNow(uris)
+            } finally {
+                _isAdding.value = --addingCount > 0
             }
+        }
+    }
 
-            // 1件ずつ順番にsetDataSourceすると、4Kなど高ビットレートの動画を
-            // 複数選んだ場合に待ち時間が本数ぶん積み上がる。IOディスパッチャの
-            // スレッドプール内で並列に取得し、合計時間を最も遅い1本ぶんに縮める。
-            // メタデータが一切取れない動画のための最終フォールバック時刻。
-            // 並列取得の完了タイミング（実行順とは無関係）に左右されないよう、
-            // ここで選択順に沿って1件ずつ確実にずらした時刻を用意しておく。
-            val fallbackBaseMillis = System.currentTimeMillis()
-            val added = withContext(Dispatchers.IO) {
-                coroutineScope {
-                    newUris.mapIndexed { offset, uri ->
-                        async {
+    private suspend fun addClipsNow(uris: List<Uri>) {
+        val context = getApplication<Application>()
+
+        // タイムラインに既にある動画は追加せずスキップする。
+        // distinct() は uris 自体に同じURIが重複して含まれるケース
+        // （呼び出し元が誤って同じ動画を2回渡した場合など）に対応するため。
+        //
+        // ファイル名+サイズなどの内容ベースでの同一性判定も検討したが、
+        // 偶然ファイル名とサイズが一致する別動画を誤って同一と判定して
+        // 無言でスキップしてしまうリスク（データ消失）があり、URI一致の
+        // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
+        // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
+        // ケースは既知の制約として残す。
+        val existingUris = _clips.value.map { it.uri }.toSet()
+        val newUris = uris.distinct().filter { it !in existingUris }
+        if (newUris.isEmpty()) {
+            addSkipMessage(alreadyAdded = uris.size, unreadable = 0)?.let(::sendMessage)
+            return
+        }
+        // すでに上限いっぱいなら、読み込むまでもなく断る
+        if (_clips.value.size >= MAX_CLIPS) {
+            addSkipMessage(
+                alreadyAdded = uris.size - newUris.size, unreadable = 0, overLimit = newUris.size
+            )?.let(::sendMessage)
+            return
+        }
+
+        // 並列で取得して待ち時間が本数ぶん積み上がるのを避けつつ、同時に読む本数は
+        // METADATA_PARALLELISM に絞る（一度に多くの本数を選んでも、
+        // ネイティブのデコーダを一斉に開かないようにする）。
+        //
+        // メタデータが一切取れない動画のための最終フォールバック時刻は、並列取得の完了
+        // タイミング（実行順とは無関係）に左右されないよう、ここで選択順に沿って1件ずつ
+        // 確実にずらした時刻を用意しておく。
+        val fallbackBaseMillis = System.currentTimeMillis()
+        val gate = Semaphore(METADATA_PARALLELISM)
+        val loaded = withContext(Dispatchers.IO) {
+            coroutineScope {
+                newUris.mapIndexed { offset, uri ->
+                    async {
+                        gate.withPermit {
                             val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                             VlogClip(
                                 id = System.nanoTime() + offset,
@@ -405,42 +469,44 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                                 shotAtReliable = meta.shotAtReliable
                             )
                         }
-                    }.awaitAll()
-                }
-            }
-
-            val toMerge = clipsMutationMutex.withLock {
-                // ロック取得前のチェックは、メタデータ取得中に別の
-                // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
-                // マージ直前にロック内でもう一度チェックし、その分を除外する。
-                val currentUris = _clips.value.map { it.uri }.toSet()
-                val toMerge = added.filter { it.uri !in currentUris }
-                if (toMerge.isEmpty()) return@withLock toMerge
-
-                val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
-
-                recordHistory()
-                val (merged, insertions) = mergeByShotAt(_clips.value, toMerge)
-                _clips.value = merged
-                insertIntoPlaylist(insertions)
-
-                oldestAddedId?.let { id ->
-                    val index = merged.indexOfFirst { it.id == id }
-                    if (index >= 0) select(index)
-                }
-                toMerge
-            }
-
-            val skippedDuplicates = uris.size - toMerge.size
-            if (skippedDuplicates > 0) {
-                sendMessage("$skippedDuplicates 件は追加済みのためスキップしました")
-            }
-
-            val skipped = toMerge.count { !it.isValid }
-            if (skipped > 0) {
-                sendMessage("$skipped 件の動画は長さを取得できませんでした")
+                    }
+                }.awaitAll()
             }
         }
+        // 長さを読めなかった動画は入れない（尺0のクリップは書き出しを止めてしまう）
+        val (readable, unreadable) = loaded.partition { it.isValid }
+
+        val (toMerge, overLimit) = clipsMutationMutex.withLock {
+            // ロック取得前のチェックは、メタデータ取得中に別の
+            // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
+            // マージ直前にロック内でもう一度チェックし、その分を除外する。
+            // 上限もここで、追加の直前の本数を基準に守る（並行した追加で超えないように）。
+            val currentUris = _clips.value.map { it.uri }.toSet()
+            val candidates = readable.filter { it.uri !in currentUris }
+            val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
+            val toMerge = candidates.take(room)
+            val overLimit = candidates.size - toMerge.size
+            if (toMerge.isEmpty()) return@withLock toMerge to overLimit
+
+            val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
+
+            recordHistory()
+            val (merged, insertions) = mergeByShotAt(_clips.value, toMerge)
+            _clips.value = merged
+            insertIntoPlaylist(insertions)
+
+            oldestAddedId?.let { id ->
+                val index = merged.indexOfFirst { it.id == id }
+                if (index >= 0) select(index)
+            }
+            toMerge to overLimit
+        }
+
+        addSkipMessage(
+            alreadyAdded = uris.size - toMerge.size - unreadable.size - overLimit,
+            unreadable = unreadable.size,
+            overLimit = overLimit
+        )?.let(::sendMessage)
     }
 
     fun select(index: Int) {
