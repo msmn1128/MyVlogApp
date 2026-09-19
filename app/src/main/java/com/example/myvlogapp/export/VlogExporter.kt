@@ -136,6 +136,8 @@ object VlogExporter {
         customTitleText: String? = null,
         onProgress: (message: String, progress: Float?) -> Unit
     ): String = withContext(Dispatchers.IO) {
+        // 前回の書き出しの中止要求を引きずらないよう、始める前に必ず下ろす
+        cancelRequested = false
         require(clips.isNotEmpty()) { "クリップがありません" }
         // 追加時に上限を守っているが、上限を設ける前の保存データを復元した場合などに超えうる
         if (clips.size > MAX_CLIPS) {
@@ -244,12 +246,27 @@ object VlogExporter {
      * 書き出し本体のセッションだけを狙って止める。
      */
     fun cancel() {
+        // セッションが始まる前（機能判定や下ごしらえの最中）に押された場合、この時点では
+        // 止める相手がいない。要求だけ覚えておき、セッションが始まった直後に
+        // [runFFmpegWithProgress]が拾って止める。
+        cancelRequested = true
         runningSessionId?.let { FFmpegKit.cancel(it) }
     }
 
     /** いま走らせている書き出しセッション。[cancel]が狙い撃ちするために控えておく */
     @Volatile
     private var runningSessionId: Long? = null
+
+    /**
+     * 「中止」が要求されたか。
+     *
+     * セッションIDは`executeWithArgumentsAsync`が返ってきて初めて分かるため、その直前に
+     * 中止されると[cancel]は止める相手を見つけられない。コルーチンは止まるが、
+     * ネイティブのエンコードだけが走り続けてしまう（CPUと電池を使い続ける）。
+     * 要求をここに残し、IDが分かった時点で取りこぼしを拾う。
+     */
+    @Volatile
+    private var cancelRequested = false
 
     /**
      * 前回起動時に書き出し中に強制終了（OSによるプロセス回収、強制停止、
@@ -869,6 +886,8 @@ object VlogExporter {
             }
         )
         runningSessionId = started.sessionId
+        // セッションが始まる前に「中止」が押されていた場合の取りこぼしを、ここで拾う
+        if (cancelRequested) FFmpegKit.cancel(started.sessionId)
 
         val session = try {
             completion.await()
