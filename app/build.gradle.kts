@@ -69,7 +69,31 @@ android {
                 // （タイトルカードのフォント焼き込み、H.264+AAC出力、ギャラリー保存）。
                 enable = true
             }
+
+            ndk {
+                // 配布物はarmの2種だけにする。ffmpeg-kitのネイティブライブラリは
+                // 4ABIで約175MBあり、その約81MB（44%）がx86/x86_64だった。
+                // x86のAndroid端末は事実上エミュレータとごく一部のChromebookだけで、
+                // 配布先の実機では使われない。
+                //
+                // debugには掛けていないので、x86_64エミュレータでの動作確認は
+                // これまでどおりできる（メモリ使用量の実測などはエミュレータで行っている）。
+                //
+                // splitsではなくabiFiltersを使うのは、splitsがリソース圧縮
+                // （shrinkResources）と競合してエラーになるため。abiFiltersは
+                // 「そもそも詰めないABIを決める」だけなので競合しない。
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            }
         }
+    }
+
+    lint {
+        // ChromeOsAbiSupport: リリースをarmの2ABIだけにしていることへの警告。
+        // ChromeOSはx86バイナリが無くてもARMバイナリをバイナリトランスレータ経由で
+        // 実行できる（lint自身の説明にもそう書かれている）ため、動かなくなるわけではない。
+        // x86を積むとAPKが81MB増えるのに対し、得られるのは一部のChromeOSでの
+        // 速度向上だけなので、このアプリでは割に合わないと判断して外している。
+        disable += "ChromeOsAbiSupport"
     }
 
     compileOptions {
