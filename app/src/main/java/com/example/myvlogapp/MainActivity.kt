@@ -209,11 +209,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     }
 
     if (showTitleDialog) {
-        // ダイアログを開いた時点の日付と時刻。表示している間に変わらないようrememberしておき、
-        // 画面に見えている文言がそのままタイトルになるようにする。
-        val defaultTitle = remember { defaultTitleText(System.currentTimeMillis()) }
         TitleCreationDialog(
-            defaultText = defaultTitle,
+            defaultText = clips.firstOrNull()?.dateText.orEmpty(),
             timeFontFamily = timeFontFamily,
             onDismiss = { showTitleDialog = false },
             onConfirm = { titleText ->

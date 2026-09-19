@@ -64,28 +64,6 @@ class FormattersTest {
     }
 
     @Test
-    fun defaultTitleText_isDateAndTimeInLocalZone() {
-        val original = java.util.TimeZone.getDefault()
-        try {
-            // 2026-03-19T09:30:00Z
-            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
-            assertEquals("2026/03/19 09:30", defaultTitleText(1_773_912_600_123L))
-
-            // 端末のローカル時刻で出す（JST=UTC+9 なら同じ瞬間が 18:30）
-            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"))
-            assertEquals("2026/03/19 18:30", defaultTitleText(1_773_912_600_123L))
-        } finally {
-            java.util.TimeZone.setDefault(original)
-        }
-    }
-
-    @Test
-    fun defaultTitleText_survivesFileNameSanitizing() {
-        // 既定のタイトルからファイル名を作っても、コロンやスラッシュが残らない
-        assertEquals("2026-03-19 09-30", VlogExporter.sanitizeForFileName("2026/03/19 09:30"))
-    }
-
-    @Test
     fun defaultSaveName_appendsFirstUnusedNumber() {
         val now = 1_800_000_000_000L
         val base = defaultSaveName(now, emptyList())
@@ -93,6 +71,21 @@ class FormattersTest {
         assertEquals(base, defaultSaveName(now, listOf("別の名前")))
         assertEquals("$base (1)", defaultSaveName(now, listOf(base)))
         assertEquals("$base (2)", defaultSaveName(now, listOf(base, "$base (1)")))
+    }
+}
+
+class CreationTimeMetadataTest {
+
+    @Test
+    fun isIso8601InUtcRegardlessOfDeviceZone() {
+        val original = java.util.TimeZone.getDefault()
+        try {
+            // 端末のタイムゾーンに関わらず、UTCで出す（2026-03-19T09:30:00Z）
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"))
+            assertEquals("2026-03-19T09:30:00Z", VlogExporter.creationTimeMetadata(1_773_912_600_123L))
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
     }
 }
 

@@ -28,7 +28,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToLong
 import com.example.myvlogapp.CANVAS_FPS
@@ -52,7 +54,6 @@ import com.example.myvlogapp.TITLE_SFX_FRAME_NUMBER
 import com.example.myvlogapp.TITLE_Y_OFFSET_PT
 import com.example.myvlogapp.TextSpan
 import com.example.myvlogapp.VlogClip
-import com.example.myvlogapp.defaultTitleText
 import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
@@ -118,8 +119,8 @@ object VlogExporter {
      *   falseのときは全クリップを結合するだけで、タイトルカードもその効果音も含めない。
      * @param muted タイムライン全体のミュート。trueのときは各クリップの音声
      *   （[VlogClip.isMuted] の状態に関わらず全て）とタイトルカードの効果音を無音にする。
-     * @param customTitleText タイトルカードに焼き込む文言。nullなら書き出し時点の
-     *   現在の日付と時刻（[defaultTitleText]）を使う。改行を含む場合は複数行として焼き込み、
+     * @param customTitleText タイトルカードに焼き込む文言。nullなら先頭クリップの
+     *   撮影日（[VlogClip.dateText]）を使う。改行を含む場合は複数行として焼き込み、
      *   1行目の位置は変えずに下へ積む（[buildTitleFilter]参照）。
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
@@ -143,6 +144,9 @@ object VlogExporter {
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
         val workDir = File(context.cacheDir, "vlog_work").apply { mkdirs() }
         val id = System.currentTimeMillis()
+        // 書き出した動画自体の作成日時。タイトルカードの日付（撮影日）とは別に、
+        // 書き出しを始めた現在時刻を、MP4のメタデータとギャラリーの撮影日時の両方へ入れる。
+        val createdAtMillis = id
         val mergedFile = File(workDir, "merged_$id.mp4")
         val textFiles = mutableListOf<File>()
 
@@ -164,10 +168,9 @@ object VlogExporter {
             coroutineContext.ensureActive()
 
             // タイトルカードの文言は自由入力があればそちらを優先する（空/未入力のときの
-            // 既定値はTitleCreationDialog側で決めて渡してくる）。ファイル名（ギャラリー表示名）も
-            // この文言から作る。タイトルなしの書き出し（長押し）でも、ファイル名のために
-            // 同じ既定値（現在の日付と時刻）を使う。
-            val titleText = customTitleText ?: defaultTitleText(System.currentTimeMillis())
+            // フォールバックはTitleCreationDialog側で解決済み）。ファイル名（ギャラリー表示名）も
+            // この文言から作る。タイトルなしの書き出し（長押し）では、先頭クリップの撮影日を使う。
+            val titleText = customTitleText ?: clips.first().dateText
             val sfxDelayMs = titleSfxDelayMs()
 
             // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
@@ -202,6 +205,7 @@ object VlogExporter {
                     "-map", "[vout]", "-map", "[aout]",
                     // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
                     *videoEncodeArgs(),
+                    "-metadata", "creation_time=${creationTimeMetadata(createdAtMillis)}",
                     "-y", mergedFile.absolutePath
                 ),
                 totalDurationMs,
@@ -209,7 +213,7 @@ object VlogExporter {
             )
 
             onProgress("保存中...")
-            saveToGallery(context, mergedFile, buildDisplayName(context, titleText))
+            saveToGallery(context, mergedFile, buildDisplayName(context, titleText), createdAtMillis)
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
@@ -543,7 +547,7 @@ object VlogExporter {
         .also { textFiles += it }
 
     /**
-     * タイトルカードの文言（既定は現在の日付と時刻、自由入力ならその文言）を改行ごとに
+     * タイトルカードの文言（既定は撮影日、自由入力ならその文言）を改行ごとに
      * 行単位のテキストファイルへ書き出す。空行は詰めて無視する
      * （タイトルはSpanLinesと違って行位置をenableで出し分ける必要が無く、
      * 空行のぶんだけ間隔を空けておく理由が無いため）。
@@ -562,7 +566,7 @@ object VlogExporter {
     /**
      * タイトルカードのフィルタ。
      * - 「Vlog.」 [fonts].logoType、[TITLE_FONT_PT]、中央やや上
-     * - タイトル文言（既定は現在の日付と時刻 "yyyy/MM/dd HH:mm"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
+     * - タイトル文言（既定は撮影日 "yyyy/MM/dd"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
      *   2行目以降になっても1行目のy座標（[TITLE_DATE_Y_OFFSET_PT]）は動かさず、
      *   下へ[TITLE_DATE_FONT_PT]+[TITLE_DATE_LINE_SPACING_PT]ずつ積む
      *   （中央揃えでブロックごと動かすと自由入力の行数次第で1行目の位置がずれてしまうため）。
@@ -910,14 +914,14 @@ object VlogExporter {
     private const val TITLE_FILENAME_MAX_CHARS = 60
 
     /**
-     * 保存するファイル名を決める。タイトルカードの文言（既定は現在の日付と時刻）をそのまま使い、
-     * 「Vlog_2026-08-24 09-20.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
+     * 保存するファイル名を決める。タイトルカードの文言（既定は撮影日）をそのまま使い、
+     * 「Vlog_2026-08-24.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
      *
-     * 日付・時刻の区切りにハイフンを使うのは、ファイル名にスラッシュやコロンを含められないため
+     * 日付の区切りにハイフンを使うのは、ファイル名にスラッシュを含められないため
      * （パス区切りと解釈されて保存に失敗する）。自由入力タイトルも改行やパス区切り文字を
      * 含みうるので、同じ理屈でまとめて1行のファイル名向け文字列にサニタイズする。
      *
-     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 09-20 (1).mp4」のように連番を付ける。
+     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
      */
     private fun buildDisplayName(context: Context, titleText: String): String {
         val base = "Vlog_${sanitizeForFileName(titleText)}"
@@ -968,11 +972,30 @@ object VlogExporter {
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         }
 
-    /** 完成した動画をギャラリー（Movies/[OUTPUT_SUBDIRECTORY]）へ保存する */
-    private suspend fun saveToGallery(context: Context, source: File, displayName: String): String {
+    /**
+     * MP4のcreation_time用のISO 8601表記（UTC）。
+     * 指定しないとメタデータが空（MP4の起点である1904/01/01と読める）になり、
+     * 書き出した動画を再び取り込んだときに撮影日時が1904年になってしまう。
+     */
+    internal fun creationTimeMetadata(millis: Long): String =
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .format(millis)
+
+    /**
+     * 完成した動画をギャラリー（Movies/[OUTPUT_SUBDIRECTORY]）へ保存する。
+     * @param createdAtMillis 動画の作成日時。ギャラリーが並び替えや日付表示に使う撮影日時へ入れる。
+     */
+    private suspend fun saveToGallery(
+        context: Context,
+        source: File,
+        displayName: String,
+        createdAtMillis: Long
+    ): String {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Video.Media.DATE_TAKEN, createdAtMillis)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(
