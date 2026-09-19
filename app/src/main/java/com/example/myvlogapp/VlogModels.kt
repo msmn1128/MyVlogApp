@@ -117,26 +117,35 @@ data class VlogClip(
          * uriの読み取り可否チェックやidの発行は呼び出し元（ClipStore）の責務なので、
          * ここでは純粋にJSON→VlogClipの変換だけを行う。
          */
-        fun fromJson(json: JSONObject, id: Long): VlogClip = VlogClip(
-            id = id,
-            uri = Uri.parse(json.getString(VlogClipKeys.URI)),
-            timeText = json.getString(VlogClipKeys.TIME_TEXT),
-            dateText = json.getString(VlogClipKeys.DATE_TEXT),
-            durationMs = json.getLong(VlogClipKeys.DURATION_MS),
-            texts = json.readTextSegments(),
-            startMs = json.getLong(VlogClipKeys.START_MS),
-            endMs = json.getLong(VlogClipKeys.END_MS),
-            // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
-            shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS),
-            // ミュート機能を追加する前の保存データにはキー自体が無いので optBoolean でfalseにフォールバック
-            isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false),
-            // 確かさを持たせる前の保存データにはキー自体が無い。追加時の手がかりが足りなかった値が
-            // 混ざっている可能性があるので、falseにして次回の復元時に取り直させる
-            shotAtReliable = json.optBoolean(VlogClipKeys.SHOT_AT_RELIABLE, false),
-            // 取り直し済みの目印を持たせる前の保存データにはキー自体が無い。falseにして
-            // 一度だけ取り直させる（そこで取れなければ、以後は試さない）
-            shotAtRefreshed = json.optBoolean(VlogClipKeys.SHOT_AT_REFRESHED, false)
-        )
+        fun fromJson(json: JSONObject, id: Long): VlogClip {
+            val durationMs = json.getLong(VlogClipKeys.DURATION_MS).coerceAtLeast(0L)
+            // トリム位置は「0 <= start <= end <= 尺」に正規化してから入れる。
+            // 保存データが壊れていて end < start になっていると、波形をタップした瞬間に
+            // coerceIn(min > max) で例外になり、画面ごと落ちる。読めた値は活かしつつ、
+            // 前後が入れ替わっている分だけを直す（ひとことや並び順は巻き添えにしない）。
+            val startMs = json.getLong(VlogClipKeys.START_MS).coerceIn(0L, durationMs)
+            val endMs = json.getLong(VlogClipKeys.END_MS).coerceIn(startMs, durationMs)
+            return VlogClip(
+                id = id,
+                uri = Uri.parse(json.getString(VlogClipKeys.URI)),
+                timeText = json.getString(VlogClipKeys.TIME_TEXT),
+                dateText = json.getString(VlogClipKeys.DATE_TEXT),
+                durationMs = durationMs,
+                texts = json.readTextSegments(),
+                startMs = startMs,
+                endMs = endMs,
+                // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
+                shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS),
+                // ミュート機能を追加する前の保存データにはキー自体が無いので optBoolean でfalseにフォールバック
+                isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false),
+                // 確かさを持たせる前の保存データにはキー自体が無い。追加時の手がかりが足りなかった値が
+                // 混ざっている可能性があるので、falseにして次回の復元時に取り直させる
+                shotAtReliable = json.optBoolean(VlogClipKeys.SHOT_AT_RELIABLE, false),
+                // 取り直し済みの目印を持たせる前の保存データにはキー自体が無い。falseにして
+                // 一度だけ取り直させる（そこで取れなければ、以後は試さない）
+                shotAtRefreshed = json.optBoolean(VlogClipKeys.SHOT_AT_REFRESHED, false)
+            )
+        }
     }
 }
 

@@ -56,6 +56,40 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun brokenTrimRangeIsNormalisedInsteadOfCrashingLater() {
+        // 保存データが壊れていて end < start のまま復元すると、波形をタップした瞬間に
+        // coerceIn(min > max) で落ちる。読み込み時に「0 <= start <= end <= 尺」へ直す
+        val broken = testClip(durationMs = 10_000L, startMs = 0L, endMs = 10_000L).toJson()
+            .put(VlogClipKeys.START_MS, 8_000L)
+            .put(VlogClipKeys.END_MS, 3_000L)
+
+        val restored = VlogClip.fromJson(broken, id = 1L)
+        assertEquals(8_000L, restored.startMs)
+        assertEquals(8_000L, restored.endMs)
+        assertTrue(restored.startMs <= restored.endMs)
+    }
+
+    @Test
+    fun trimRangeBeyondTheClipLengthIsPulledBackInside() {
+        val broken = testClip(durationMs = 5_000L, startMs = 0L, endMs = 5_000L).toJson()
+            .put(VlogClipKeys.START_MS, -100L)
+            .put(VlogClipKeys.END_MS, 9_999_999L)
+
+        val restored = VlogClip.fromJson(broken, id = 1L)
+        assertEquals(0L, restored.startMs)
+        assertEquals(5_000L, restored.endMs)
+    }
+
+    @Test
+    fun aValidTrimRangeIsLeftUntouched() {
+        val json = testClip(durationMs = 10_000L, startMs = 2_000L, endMs = 7_500L).toJson()
+
+        val restored = VlogClip.fromJson(json, id = 1L)
+        assertEquals(2_000L, restored.startMs)
+        assertEquals(7_500L, restored.endMs)
+    }
+
+    @Test
     fun savedTimeTextIsKeptAsIs() {
         // 復元では、保存された時刻をそのまま読む（取り直しは、確かでないものだけをViewModelが行う）
         val json: JSONObject = testClip(timeText = "09:00", dateText = "2026/09/19", shotAtReliable = true).toJson()
