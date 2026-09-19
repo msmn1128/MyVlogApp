@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（110件）
+./gradlew testDebugUnitTest        # JVM単体テスト（113件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -141,6 +141,14 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 （コルーチンを止めるだけではネイティブのエンコードが走り続ける）:
 `onStartCommand(ACTION_CANCEL)` / `onTimeout` / `onDestroy`。
 
+### 強制終了されたときの後始末
+
+書き出し中にプロセスごと回収されると、2箇所にゴミが残る。どちらも `VlogViewModel` の
+init から、**書き出しが走っていないときだけ**掃除する。
+
+- MediaStore に `IS_PENDING` のままの項目 → `cleanupOrphanedPendingFiles()`
+- cacheDir に結合途中の動画（数GBになりうる） → `cleanupOrphanedWorkFiles()`
+
 ---
 
 ## 再生（`PlaybackController`）
@@ -197,7 +205,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、110件。対象は純粋関数に限られる。
+JVM単体テスト（`src/test`）のみ、113件。対象は純粋関数に限られる。
 
 | ファイル | 対象 |
 |---|---|
