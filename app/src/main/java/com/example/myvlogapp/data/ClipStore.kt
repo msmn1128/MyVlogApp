@@ -220,7 +220,7 @@ object ClipStore {
             val savedName = uniqueSaveName(name, projects.map { it.optString(ProjectKeys.NAME) })
             val now = System.currentTimeMillis()
             val entry = JSONObject()
-                .put(ProjectKeys.ID, now)
+                .put(ProjectKeys.ID, nextProjectId(projects, now))
                 .put(ProjectKeys.NAME, savedName)
                 .put(ProjectKeys.SAVED_AT, now)
                 .put(ProjectKeys.CLIPS, clipsToJson(clips))
@@ -228,6 +228,20 @@ object ClipStore {
             writeProjects(context, projects + entry)
             savedName
         }
+    }
+
+    /**
+     * 一時保存のid。基本は保存した時刻だが、同じミリ秒の中で2件保存されると衝突する。
+     *
+     * idは読み出し・上書き・削除の対象を指す唯一の手がかりなので、重複すると
+     * [deleteProject]のfilterNotが**両方消す**（消したつもりのない保存が消える）。
+     * 既存と重ならないところまでずらして、その形を作らせない。
+     */
+    private fun nextProjectId(projects: List<JSONObject>, now: Long): Long {
+        val taken = projects.mapTo(HashSet()) { it.optLong(ProjectKeys.ID) }
+        var candidate = now
+        while (candidate in taken) candidate++
+        return candidate
     }
 
     /**
