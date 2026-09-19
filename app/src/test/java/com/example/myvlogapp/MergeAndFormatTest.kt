@@ -64,6 +64,27 @@ class FormattersTest {
     }
 
     @Test
+    fun uniqueSaveName_keepsANewNameAsIs() {
+        assertEquals("旅行", uniqueSaveName("旅行", emptyList()))
+        assertEquals("旅行", uniqueSaveName("旅行", listOf("別の名前", "旅行2")))
+    }
+
+    @Test
+    fun uniqueSaveName_appendsTheFirstFreeNumberForATypedName() {
+        assertEquals("旅行 (1)", uniqueSaveName("旅行", listOf("旅行")))
+        assertEquals("旅行 (2)", uniqueSaveName("旅行", listOf("旅行", "旅行 (1)")))
+        // 途中が空いていれば、そこを使う（消した番号の再利用）
+        assertEquals("旅行 (1)", uniqueSaveName("旅行", listOf("旅行", "旅行 (2)")))
+    }
+
+    @Test
+    fun uniqueSaveName_treatsNamesAsCaseAndSpaceSensitive() {
+        // 完全一致だけを重複とみなす（「旅行」と「旅行 」は別の名前）
+        assertEquals("abc", uniqueSaveName("abc", listOf("ABC")))
+        assertEquals("旅行", uniqueSaveName("旅行", listOf("旅行 ")))
+    }
+
+    @Test
     fun defaultSaveName_appendsFirstUnusedNumber() {
         val now = 1_800_000_000_000L
         val base = defaultSaveName(now, emptyList())

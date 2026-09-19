@@ -14,12 +14,19 @@ fun formatSavedAt(millis: Long): String =
     SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
 
 /**
- * 保存名の既定値 "M/d" を、同名がすでにあれば「M/d (1)」のように連番を付けて返す。
+ * 保存名の既定値 "M/d"。同名がすでにあれば「M/d (1)」のように連番を付ける（[uniqueSaveName]）。
+ */
+fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
+    uniqueSaveName(SimpleDateFormat("M/d", Locale.getDefault()).format(millis), existingNames)
+
+/**
+ * [base]と同じ名前が[existingNames]にすでにあれば、「base (1)」「base (2)」のように
+ * 空いている最初の連番を付けて返す。無ければ[base]のまま。
  *
+ * 一時保存の名前（既定値・自分で打った名前のどちらも）に使う。
  * 動画の書き出しファイル名（VlogExporter.buildDisplayName）と同じ考え方。
  */
-fun defaultSaveName(millis: Long, existingNames: Collection<String>): String {
-    val base = SimpleDateFormat("M/d", Locale.getDefault()).format(millis)
+fun uniqueSaveName(base: String, existingNames: Collection<String>): String {
     val taken = existingNames.toSet()
 
     var candidate = base

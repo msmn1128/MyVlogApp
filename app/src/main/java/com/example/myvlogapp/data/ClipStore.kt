@@ -14,6 +14,7 @@ import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.VlogClipKeys
 import com.example.myvlogapp.toJson
+import com.example.myvlogapp.uniqueSaveName
 import com.example.myvlogapp.trimmedDurationMs
 
 /** 復元結果。dropped は権限が無くて復元できなかった件数 */
@@ -150,26 +151,33 @@ object ClipStore {
 
     /**
      * いまの編集内容を名前を付けて残す。
-     * @return 上限に達していて保存できなかった場合は false
+     *
+     * 同じ名前の保存がすでにあれば、「名前 (1)」のように連番を付けて保存する。
+     * 判定は一覧を読んでから書き込むまでの間（ロックの中）で行うので、保存ボタンの連打などで
+     * ほぼ同時に保存しても、同じ名前が並ばない。
+     *
+     * @return 実際に保存した名前（重複して連番が付いた場合はその名前）。
+     *   上限に達していて保存できなかった場合は null
      */
     suspend fun saveProject(
         context: Context,
         name: String,
         clips: List<VlogClip>
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): String? = withContext(Dispatchers.IO) {
         projectsMutex.withLock {
             val projects = readProjects(context)
-            if (projects.size >= MAX_PROJECTS) return@withLock false
+            if (projects.size >= MAX_PROJECTS) return@withLock null
 
+            val savedName = uniqueSaveName(name, projects.map { it.optString(ProjectKeys.NAME) })
             val now = System.currentTimeMillis()
             val entry = JSONObject()
                 .put(ProjectKeys.ID, now)
-                .put(ProjectKeys.NAME, name)
+                .put(ProjectKeys.NAME, savedName)
                 .put(ProjectKeys.SAVED_AT, now)
                 .put(ProjectKeys.CLIPS, clipsToJson(clips))
 
             writeProjects(context, projects + entry)
-            true
+            savedName
         }
     }
 

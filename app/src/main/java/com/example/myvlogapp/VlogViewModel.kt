@@ -724,10 +724,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             val label = name.trim().ifBlank { formatSavedAt(System.currentTimeMillis()) }
-            val saved = ClipStore.saveProject(getApplication(), label, clipsToSave)
+            // 同名があれば連番が付く。メッセージには実際に付いた名前を出す
+            val savedName = ClipStore.saveProject(getApplication(), label, clipsToSave)
             _projects.value = ClipStore.listProjects(getApplication())
             sendMessage(
-                if (saved) "「$label」を保存しました"
+                if (savedName != null) "「$savedName」を保存しました"
                 else "保存は${ClipStore.MAX_PROJECTS}件までです。不要なものを削除してください"
             )
         }
