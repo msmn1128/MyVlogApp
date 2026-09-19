@@ -40,11 +40,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -387,19 +390,42 @@ private fun AddProgress(isAdding: Boolean) {
 
 @Composable
 private fun ExportProgress(exportState: ExportState) {
+    val running = exportState as? ExportState.Running
+    // 消えていくアニメーションの間はexportStateが既にIdleになっているため、
+    // 直前の進捗を覚えておいて描き続ける（覚えておかないと、閉じ際に
+    // バーが不定形へ戻ってちらつく）
+    var lastProgress by remember { mutableStateOf<Float?>(null) }
+    if (running != null) lastProgress = running.progress
+    val progress = running?.progress ?: lastProgress
+
     // 書き出し開始/終了でこのブロックごと瞬時に出入りせず、ふわっと現れる/消えるようにする
     AnimatedVisibility(
-        visible = exportState is ExportState.Running,
+        visible = running != null,
         enter = fadeIn() + expandVertically(),
         exit = fadeOut() + shrinkVertically()
     ) {
         Column {
             Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            // エンコード中は実際の割合を出す。割合が分からない工程（準備中・保存中）だけ
+            // 不定形のバーにする。ここを常に不定形にしていた頃は、長い書き出しで
+            // あと何割なのかが数字でしか分からなかった。
+            if (progress == null) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else {
+                // 進捗が飛び飛び（1%刻み）に届くので、バーの伸びだけは補間して滑らかに見せる
+                val animatedProgress by animateFloatAsState(
+                    targetValue = progress,
+                    label = "exportProgress"
+                )
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Spacer(Modifier.height(4.dp))
             // メッセージ（工程の切り替わり）も差し替わる瞬間にチラつかせず、文字だけフェードする
             AnimatedContent(
-                targetState = (exportState as? ExportState.Running)?.message.orEmpty(),
+                targetState = running?.message.orEmpty(),
                 label = "exportProgressMessage",
                 transitionSpec = { fadeIn() togetherWith fadeOut() }
             ) { message ->

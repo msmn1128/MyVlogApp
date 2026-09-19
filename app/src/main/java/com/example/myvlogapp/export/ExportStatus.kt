@@ -10,7 +10,14 @@ import kotlinx.coroutines.flow.asStateFlow
 /** 書き出しの進行状態。UIはこれを見るだけでよい */
 sealed interface ExportState {
     data object Idle : ExportState
-    data class Running(val message: String) : ExportState
+
+    /**
+     * @param message 画面と通知に出す工程名（「準備中...」「書き出し中... 42%」など）
+     * @param progress 0f〜1fの進捗。エンコードの進捗が分かっている間だけ値が入り、
+     *   工程が分からない間（準備中・保存中）はnull。UI側はnullなら不定形の
+     *   プログレスバー、値があれば実際の割合を出すバーに切り替える。
+     */
+    data class Running(val message: String, val progress: Float? = null) : ExportState
 }
 
 /** Toastなど「1回だけ通知したい」イベント */
@@ -45,8 +52,8 @@ object ExportStatus {
 
     val isRunning: Boolean get() = _state.value is ExportState.Running
 
-    fun setRunning(message: String) {
-        _state.value = ExportState.Running(message)
+    fun setRunning(message: String, progress: Float? = null) {
+        _state.value = ExportState.Running(message, progress)
     }
 
     fun setIdle() {

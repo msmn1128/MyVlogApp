@@ -47,6 +47,9 @@ class VlogExportService : Service() {
         private const val RESULT_NOTIFICATION_ID = 2
         private const val ACTION_CANCEL = "com.example.myvlogapp.action.CANCEL_EXPORT"
 
+        /** 通知の進捗バーの目盛り数。0〜100で百分率そのものとして扱う */
+        private const val NOTIFICATION_PROGRESS_MAX = 100
+
         /**
          * [start]から[onStartCommand]まで、書き出し内容をIntentを経由せず直接受け渡すための
          * 保留状態。1つのdata classにまとめてあるのは、書き出しオプションが増えるたびに
@@ -140,9 +143,9 @@ class VlogExportService : Service() {
                     includeTitle = includeTitle,
                     muted = muted,
                     customTitleText = customTitleText,
-                    onProgress = { message ->
-                        ExportStatus.setRunning(message)
-                        updateNotification(message)
+                    onProgress = { message, progress ->
+                        ExportStatus.setRunning(message, progress)
+                        updateNotification(message, progress)
                     }
                 )
                 val message = "ギャラリーに保存しました\n$name"
@@ -200,7 +203,11 @@ class VlogExportService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(message: String): Notification =
+    /**
+     * @param progress 0f〜1fの進捗。分かっている間だけ実際の割合のバーを出し、
+     *   分からない工程（準備中・保存中）は不定形のバーにする。
+     */
+    private fun buildNotification(message: String, progress: Float?): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("VLOGを書き出し中")
             .setContentText(message)
@@ -209,19 +216,28 @@ class VlogExportService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .apply {
+                if (progress == null) setProgress(0, 0, true)
+                else setProgress(
+                    NOTIFICATION_PROGRESS_MAX,
+                    (progress * NOTIFICATION_PROGRESS_MAX).toInt()
+                        .coerceIn(0, NOTIFICATION_PROGRESS_MAX),
+                    false
+                )
+            }
             .build()
 
     private fun startForegroundWithNotification(message: String) {
         startForeground(
             NOTIFICATION_ID,
-            buildNotification(message),
+            buildNotification(message, progress = null),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         )
     }
 
-    private fun updateNotification(message: String) {
+    private fun updateNotification(message: String, progress: Float?) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(message))
+        manager.notify(NOTIFICATION_ID, buildNotification(message, progress))
     }
 
     /// 完了・中止・失敗の結果を、進行中の通知とは別の通知として出す。

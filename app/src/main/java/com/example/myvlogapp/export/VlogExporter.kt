@@ -124,7 +124,9 @@ object VlogExporter {
      * @param customTitleText タイトルカードに焼き込む文言。nullなら先頭クリップの
      *   撮影日（[VlogClip.dateText]）を使う。改行を含む場合は複数行として焼き込み、
      *   1行目の位置は変えずに下へ積む（[buildTitleFilter]参照）。
-     * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
+     * @param onProgress 進捗の通知。呼び出しスレッドは決まっていない（FFmpegの統計
+     *   コールバックのスレッドから直接呼ばれることがある）ので、実装側はどのスレッドから
+     *   呼ばれても安全なようにしておくこと。進捗率が分からない工程では第2引数がnullになる。
      * @return ギャラリーに保存された表示名
      */
     suspend fun export(
@@ -133,7 +135,7 @@ object VlogExporter {
         includeTitle: Boolean = true,
         muted: Boolean = false,
         customTitleText: String? = null,
-        onProgress: suspend (String) -> Unit
+        onProgress: (message: String, progress: Float?) -> Unit
     ): String = withContext(Dispatchers.IO) {
         require(clips.isNotEmpty()) { "クリップがありません" }
         // 追加時に上限を守っているが、上限を設ける前の保存データを復元した場合などに超えうる
@@ -167,7 +169,7 @@ object VlogExporter {
                 copySfxAsset(context, TITLE_SFX_ASSET)
             } else null
 
-            onProgress("書き出し中...")
+            onProgress("書き出し中...", null)
             coroutineContext.ensureActive()
 
             // タイトルカードの文言は自由入力があればそちらを優先する（空/未入力のときの
@@ -225,7 +227,7 @@ object VlogExporter {
                 onProgress
             )
 
-            onProgress("保存中...")
+            onProgress("保存中...", null)
             saveToGallery(context, mergedFile, buildDisplayName(context, createdAtMillis), createdAtMillis)
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
@@ -823,15 +825,14 @@ object VlogExporter {
     /**
      * FFmpegを実行し、経過時間から進捗率（%）を算出してonProgressに渡す。
      *
-     * statisticsコールバックはFFmpegKit側の別スレッドから呼ばれるため、
-     * onProgress（呼び出し元のコルーチンコンテキストを前提とするsuspend関数）を
-     * 呼ぶにはrunBlockingで橋渡しする。パーセント値が変わったときだけ呼ぶことで、
-     * 呼び出し頻度（1秒間に何度も飛んでくる）による無駄な更新を減らす。
+     * statisticsコールバックはFFmpegKit側の別スレッドから呼ばれる。パーセント値が
+     * 変わったときだけ[onProgress]を呼ぶことで、呼び出し頻度（1秒間に何度も飛んでくる）に
+     * よる無駄な更新を減らす。
      */
     private suspend fun runFFmpegWithProgress(
         args: Array<String>,
         totalDurationMs: Long,
-        onProgress: suspend (String) -> Unit
+        onProgress: (message: String, progress: Float?) -> Unit
     ) {
         Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ").take(COMMAND_LOG_MAX_CHARS)}")
         val completion = CompletableDeferred<FFmpegSession>()
@@ -844,8 +845,8 @@ object VlogExporter {
             { /* ログはセッション完了後にまとめて参照するのでここでは何もしない */ },
             { statistics ->
                 if (totalDurationMs > 0 && callerContext.isActive) {
-                    val percent = (statistics.time / totalDurationMs.toDouble() * 100)
-                        .toInt().coerceIn(0, 100)
+                    val ratio = (statistics.time / totalDurationMs.toDouble()).coerceIn(0.0, 1.0)
+                    val percent = (ratio * 100).toInt()
                     if (percent != lastPercent) {
                         lastPercent = percent
                         // 「中止」を押した直後は、この統計コールバックが飛んでくる頃には
@@ -854,7 +855,7 @@ object VlogExporter {
                         // コールバックスレッドへ投げ出され、キャッチされずにアプリごと
                         // 落ちうる。進捗表示は落としても実害が無いので握り潰す。
                         runCatching {
-                            runBlocking(callerContext) { onProgress("書き出し中... $percent%") }
+                            runBlocking(callerContext) { onProgress("書き出し中... $percent%", ratio.toFloat()) }
                         }
                     }
                 }
