@@ -89,31 +89,20 @@ class CreationTimeMetadataTest {
     }
 }
 
-class SanitizeForFileNameTest {
+class FileNameTimestampTest {
 
     @Test
-    fun replacesPathSeparatorsInDates() {
-        assertEquals("2026-08-24", VlogExporter.sanitizeForFileName("2026/08/24"))
-    }
-
-    @Test
-    fun replacesForbiddenCharacters() {
-        assertEquals("a-b-c-d-e-f-g-h-i", VlogExporter.sanitizeForFileName("a\\b/c:d*e?f\"g<h>i"))
-    }
-
-    @Test
-    fun flattensNewlines() {
-        assertEquals("夏休み 旅行", VlogExporter.sanitizeForFileName("夏休み\n旅行"))
-    }
-
-    @Test
-    fun blankBecomesUntitled() {
-        assertEquals("Untitled", VlogExporter.sanitizeForFileName(""))
-        assertEquals("Untitled", VlogExporter.sanitizeForFileName("  \n "))
-    }
-
-    @Test
-    fun longTitleIsCutTo60Chars() {
-        assertEquals(60, VlogExporter.sanitizeForFileName("あ".repeat(100)).length)
+    fun isLocalDateAndTimeWithoutForbiddenCharacters() {
+        val original = java.util.TimeZone.getDefault()
+        try {
+            // 2026-03-19T09:30:00Z。端末のローカル時刻（JST=UTC+9）で出す
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"))
+            val stamp = VlogExporter.fileNameTimestamp(1_773_912_600_123L)
+            assertEquals("2026-03-19 18-30", stamp)
+            // ファイル名に使えない文字（スラッシュ・コロンなど）を含まない
+            assertEquals(false, Regex("[\\\\/:*?\"<>|]").containsMatchIn(stamp))
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
     }
 }

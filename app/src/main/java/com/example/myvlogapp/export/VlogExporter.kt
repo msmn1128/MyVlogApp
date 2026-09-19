@@ -168,8 +168,8 @@ object VlogExporter {
             coroutineContext.ensureActive()
 
             // タイトルカードの文言は自由入力があればそちらを優先する（空/未入力のときの
-            // フォールバックはTitleCreationDialog側で解決済み）。ファイル名（ギャラリー表示名）も
-            // この文言から作る。タイトルなしの書き出し（長押し）では、先頭クリップの撮影日を使う。
+            // フォールバックはTitleCreationDialog側で解決済み）。ファイル名はこの文言とは無関係に、
+            // 書き出しを始めた現在の日付と時刻から作る。
             val titleText = customTitleText ?: clips.first().dateText
             val sfxDelayMs = titleSfxDelayMs()
 
@@ -213,7 +213,7 @@ object VlogExporter {
             )
 
             onProgress("保存中...")
-            saveToGallery(context, mergedFile, buildDisplayName(context, titleText), createdAtMillis)
+            saveToGallery(context, mergedFile, buildDisplayName(context, createdAtMillis), createdAtMillis)
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
@@ -910,21 +910,19 @@ object VlogExporter {
         return (n * 1000.0 / CANVAS_FPS).roundToLong()
     }
 
-    /** ファイル名に使う文言の長さ上限。自由入力タイトルが長文でもファイル名として扱える長さに切る */
-    private const val TITLE_FILENAME_MAX_CHARS = 60
-
     /**
-     * 保存するファイル名を決める。タイトルカードの文言（既定は撮影日）をそのまま使い、
-     * 「Vlog_2026-08-24.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
+     * 保存するファイル名を決める。書き出しを始めた現在の日付と時刻から作り、
+     * 「Vlog_2026-08-24 09-20.mp4」のような形にする（動画自体の作成日時と揃えてある）。
+     * タイトルカードの文言（撮影日や自由入力）は使わない。自由入力は改行やパス区切り文字などを
+     * 含みうるため、ファイル名にはしないほうが安全で、書き出しの時刻なら常に安全な文字だけで済む。
      *
-     * 日付の区切りにハイフンを使うのは、ファイル名にスラッシュを含められないため
-     * （パス区切りと解釈されて保存に失敗する）。自由入力タイトルも改行やパス区切り文字を
-     * 含みうるので、同じ理屈でまとめて1行のファイル名向け文字列にサニタイズする。
+     * 日付・時刻の区切りにハイフンを使うのは、ファイル名にスラッシュやコロンを含められないため
+     * （パス区切りと解釈されて保存に失敗する）。
      *
-     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
+     * 同じ分のうちに複数回書き出したときは「Vlog_2026-08-24 09-20 (1).mp4」のように連番を付ける。
      */
-    private fun buildDisplayName(context: Context, titleText: String): String {
-        val base = "Vlog_${sanitizeForFileName(titleText)}"
+    private fun buildDisplayName(context: Context, createdAtMillis: Long): String {
+        val base = "Vlog_${fileNameTimestamp(createdAtMillis)}"
         val taken = existingDisplayNames(context, base)
 
         var candidate = "$base.mp4"
@@ -936,12 +934,9 @@ object VlogExporter {
         return candidate
     }
 
-    /** タイトル文言をファイル名の一部として使える形にする（改行・パス区切りの除去、長さの切り詰め） */
-    internal fun sanitizeForFileName(titleText: String): String {
-        val singleLine = titleText.replace("\n", " ").trim()
-        val withoutPathChars = singleLine.replace(Regex("[\\\\/:*?\"<>|]"), "-")
-        return withoutPathChars.take(TITLE_FILENAME_MAX_CHARS).ifBlank { "Untitled" }
-    }
+    /** ファイル名用の日付と時刻 "yyyy-MM-dd HH-mm"（端末のローカル時刻。Locale.USで数字の字形を固定） */
+    internal fun fileNameTimestamp(millis: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.US).format(millis)
 
     /**
      * すでに保存済みの、同じ名前で始まる動画の一覧。

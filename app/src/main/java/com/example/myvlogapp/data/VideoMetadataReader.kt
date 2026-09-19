@@ -118,6 +118,6 @@ private fun queryLongColumn(context: Context, uri: Uri, column: String): Long? =
 private fun formatTime(millis: Long): String =
     SimpleDateFormat("HH:mm", Locale.US).format(millis)
 
-/** 撮影日 "yyyy/MM/dd"。書き出しファイル名にも使うためロケール固定（理由は[formatTime]と同じ） */
+/** 撮影日 "yyyy/MM/dd"。タイトルカードへ焼き込むためロケール固定（理由は[formatTime]と同じ） */
 private fun formatDate(millis: Long): String =
     SimpleDateFormat("yyyy/MM/dd", Locale.US).format(millis)
