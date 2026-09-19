@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -129,6 +130,14 @@ private fun TimelinePane(
         selectedClip?.let { viewModel.requestWaveform(it) }
     }
 
+    // 選択中のタイルが常に見えるようにする。連続再生の自動遷移や「ひとつ後ろへ移動」で
+    // 選択が変わっても、本数が多いとタイルが画面外のままになり、いまどれを編集して
+    // いるのかタイムラインから読み取れなくなるため。
+    val clipListState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, clips.size) {
+        if (selectedIndex in clips.indices) clipListState.animateScrollToItem(selectedIndex)
+    }
+
     Card(modifier = modifier) {
         Column(
             modifier = Modifier
@@ -162,6 +171,7 @@ private fun TimelinePane(
             // 空になってもLazyRow自体は消さない（条件で囲むと、最後の1件が消える
             // アニメーションの途中でLazyRowごと引っ込んで打ち切られていた）
             LazyRow(
+                state = clipListState,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
