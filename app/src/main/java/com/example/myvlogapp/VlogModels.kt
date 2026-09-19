@@ -35,7 +35,16 @@ data class VlogClip(
      * 取れたか。falseは、手がかりが足りず追加時刻などで代用した値で、次回の復元時に取り直す
      * （[com.example.myvlogapp.VlogViewModel]）。保存データに無い旧データはfalse扱い。
      */
-    val shotAtReliable: Boolean = true
+    val shotAtReliable: Boolean = true,
+    /**
+     * [shotAtReliable]がfalseのクリップについて、動画から取り直すのを一度試したか。
+     *
+     * 手がかりが本当に何も無い動画（作成日時もファイル名も更新日時も取れないもの）は、
+     * 何度取り直しても確かな値にならない。これが無いと、そういう動画が1本でも
+     * タイムラインに残っている限り、起動のたびに全部を開き直す処理が走り続ける
+     * （100本なら数秒、画面には何も出ない）。一度試したら二度目は行わない目印。
+     */
+    val shotAtRefreshed: Boolean = false
 ) {
     val trimmedDurationMs: Long get() = trimmedDurationMs(startMs, endMs)
     val isValid: Boolean get() = durationMs > 0 && endMs > startMs
@@ -124,7 +133,10 @@ data class VlogClip(
             isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false),
             // 確かさを持たせる前の保存データにはキー自体が無い。追加時の手がかりが足りなかった値が
             // 混ざっている可能性があるので、falseにして次回の復元時に取り直させる
-            shotAtReliable = json.optBoolean(VlogClipKeys.SHOT_AT_RELIABLE, false)
+            shotAtReliable = json.optBoolean(VlogClipKeys.SHOT_AT_RELIABLE, false),
+            // 取り直し済みの目印を持たせる前の保存データにはキー自体が無い。falseにして
+            // 一度だけ取り直させる（そこで取れなければ、以後は試さない）
+            shotAtRefreshed = json.optBoolean(VlogClipKeys.SHOT_AT_REFRESHED, false)
         )
     }
 }
@@ -157,6 +169,7 @@ object VlogClipKeys {
     const val SHOT_AT_MILLIS = "shotAtMillis"
     const val IS_MUTED = "isMuted"
     const val SHOT_AT_RELIABLE = "shotAtReliable"
+    const val SHOT_AT_REFRESHED = "shotAtRefreshed"
 
     /** 区間(texts)を持たせる前の旧バージョンで使われていたキー。読み込み専用の後方互換 */
     const val LEGACY_USER_TEXT = "userText"
@@ -184,6 +197,7 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
     put(VlogClipKeys.SHOT_AT_MILLIS, shotAtMillis)
     put(VlogClipKeys.IS_MUTED, isMuted)
     put(VlogClipKeys.SHOT_AT_RELIABLE, shotAtReliable)
+    put(VlogClipKeys.SHOT_AT_REFRESHED, shotAtRefreshed)
 }
 
 /**

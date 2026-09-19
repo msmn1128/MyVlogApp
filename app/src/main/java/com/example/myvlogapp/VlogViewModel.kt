@@ -398,11 +398,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 撮影時刻は動画ファイルから決まる値で、ユーザーが編集するものではない。それなのに追加した時点の
      * 値をそのまま保存し続けると、その時に手がかりが足りず追加時刻などで代用した値が、
      * 同じ動画を追加し直しても「追加済み」でスキップされるため、消して追加し直すまで残ってしまう。
-     * 取り直しても確かな値が取れなければ、いまの値のままにする。
+     * 取り直しても確かな値が取れなければ、いまの値のままにして[VlogClip.shotAtRefreshed]を立て、
+     * 以後は試さない（手がかりが何も無い動画を毎起動読み直すのを避けるため）。
      * 並び順は変えない（ユーザーが並べ替えた順序を壊さないため）。履歴にも積まない（編集ではないため）。
      */
     private fun refreshUnreliableShotTimes() {
-        val targets = _clips.value.filter { !it.shotAtReliable }
+        val targets = _clips.value.filter { !it.shotAtReliable && !it.shotAtRefreshed }
         if (targets.isEmpty()) return
 
         val context = getApplication<Application>()
@@ -419,12 +420,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
             clipsMutationMutex.withLock {
                 _clips.value = _clips.value.map { clip ->
-                    val meta = refreshed[clip.id]?.takeIf { it.shotAtReliable } ?: return@map clip
+                    // 取り直しの対象でなかったクリップ（この間に追加されたものなど）は触らない
+                    val meta = refreshed[clip.id] ?: return@map clip
+                    // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
+                    if (!meta.shotAtReliable) return@map clip.copy(shotAtRefreshed = true)
                     clip.copy(
                         timeText = meta.timeText,
                         dateText = meta.dateText,
                         shotAtMillis = meta.shotAtMillis,
-                        shotAtReliable = true
+                        shotAtReliable = true,
+                        shotAtRefreshed = true
                     )
                 }
             }
