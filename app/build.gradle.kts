@@ -33,7 +33,7 @@ android {
         applicationId = "com.masamune.myvlogapp"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
+        versionCode = 3
         versionName = "1.1"
     }
 
