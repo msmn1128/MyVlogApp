@@ -1020,8 +1020,10 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * クリップが削除されたときに、対応する波形取得ジョブが残っていればキャンセルする。
-     * キャンセルしないと、無駄なデコードが完了時まで走り続ける。
+     * クリップが削除されたときに、対応する波形の取得ジョブとキャッシュを捨てる。
+     * ジョブをキャンセルしないと無駄なデコードが完了時まで走り続け、キャッシュを
+     * 残したままだと、もう画面に出ないクリップの波形（長い動画だと1本あたり
+     * 数万バイト）をアプリが終わるまで抱えたままになる。
      *
      * 同じ動画を2回追加している場合はURIが重複するため、削除後もまだ他のクリップが
      * 同じURIを参照していれば消さない（そちらの表示に使われている波形を巻き添えにしない）。
@@ -1031,6 +1033,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val key = uri.toString()
         if (_clips.value.none { it.uri.toString() == key }) {
             waveformJobs.remove(key)?.cancel()
+            _waveforms.value = _waveforms.value - key
         }
     }
 
