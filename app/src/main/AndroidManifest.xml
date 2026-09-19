@@ -43,8 +43,15 @@
     -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      保存対象は「編集内容（動画のURI）」だけで、別の端末へ復元してもそのURIは読めない
+      （MediaStoreのidやSAFの権限は端末ごと）ため、バックアップ・端末間移行の対象から外す。
+      Android 12以降は dataExtractionRules、11以前は fullBackupContent で指定する。
+    -->
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

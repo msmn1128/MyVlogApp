@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.Font
@@ -209,8 +209,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     }
 
     if (showTitleDialog) {
+        // ダイアログを開いた時点の日付と時刻。表示している間に変わらないようrememberしておき、
+        // 画面に見えている文言がそのままタイトルになるようにする。
+        val defaultTitle = remember { defaultTitleText(System.currentTimeMillis()) }
         TitleCreationDialog(
-            defaultDateText = clips.firstOrNull()?.dateText.orEmpty(),
+            defaultText = defaultTitle,
             timeFontFamily = timeFontFamily,
             onDismiss = { showTitleDialog = false },
             onConfirm = { titleText ->
@@ -261,12 +264,13 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
 
     VlogAppSideEffects(viewModel = viewModel, clips = clips)
 
-    // 縦横の判定にはConfigurationの画面サイズを使う。
+    // 縦横の判定にはウィンドウ全体の大きさ（containerSize）を使う。
     // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
     // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
     // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
-    val configuration = LocalConfiguration.current
-    val isWide = configuration.screenWidthDp > configuration.screenHeightDp
+    // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
+    val windowSize = LocalWindowInfo.current.containerSize
+    val isWide = windowSize.width > windowSize.height
 
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。
     // collectは1箇所にまとめて引数で渡す。値を読まずStateのまま渡しているのは、

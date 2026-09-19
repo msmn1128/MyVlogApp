@@ -10,8 +10,8 @@ import androidx.compose.ui.unit.dp
  * タイムライン操作バーのアイコン。
  *
  * material-icons-extended を足せば undo / redo / delete_sweep は既製品で揃うが、
- * あれは3万個ぶんのImageVectorを含む巨大な依存で、R8を切っている現状では
- * 使わないアイコンまで丸ごとAPKに載ってしまう。必要なぶんだけをここに置く。
+ * あれは3万個ぶんのImageVectorを含む巨大な依存で、ビルドが重くなる
+ * （R8で未使用ぶんは削れるが、使うのは数個だけ）。必要なぶんだけをここに置く。
  *
  * パスはMaterial Iconsの24dp版と同じ形。塗りを白にしてあるのは、
  * Iconコンポーザブルが上からtintを掛けて配色に合わせるため（色は呼び出し側が決める）。

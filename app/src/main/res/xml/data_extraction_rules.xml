@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12以降のバックアップ／端末間移行の対象外にする。
+  保存しているのは編集内容（動画のURI）だけで、別の端末では読めないため復元しても意味が無い。
+  filesDirに展開するフォント・効果音は、書き出しのたびに作り直すので不要。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </device-transfer>
+</data-extraction-rules>

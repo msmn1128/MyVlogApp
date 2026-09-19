@@ -75,11 +75,19 @@ fun getVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long): VideoMet
     }
 }
 
-private fun parseCreationTime(raw: String): Long? = runCatching {
+/**
+ * 埋め込みの作成日時（creation_time）を読む。
+ *
+ * MP4の日時は1904年1月1日が起点で、作成日時が未設定の動画（変換ツールなどで作られたもの）は
+ * 0＝1904/01/01と読める。これを撮影日時として採用すると、日付・並び順・ファイル名が
+ * 1904年になってしまうため、エポック（1970年）以前は「無い」として扱い、
+ * MediaStoreの日時へフォールバックさせる。
+ */
+internal fun parseCreationTime(raw: String): Long? = runCatching {
     SimpleDateFormat("yyyyMMdd'T'HHmmss.SSS'Z'", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
         .parse(raw)?.time
-}.getOrNull()
+}.getOrNull()?.takeIf { it > 0L }
 
 /**
  * DATE_TAKEN はms精度の実撮影時刻。DATE_ADDED は端末への追加日時（秒精度）で、

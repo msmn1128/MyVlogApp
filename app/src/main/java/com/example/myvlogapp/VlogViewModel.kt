@@ -1036,6 +1036,5 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 書き出し自体は VlogExportService で継続させる（ここではキャンセルしない）。
         // ユーザーが画面を閉じてもバックグラウンドで書き出しを終わらせるための挙動。
         player.release()
-        super.onCleared()
     }
 }

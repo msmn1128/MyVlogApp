@@ -29,18 +29,18 @@ import androidx.compose.ui.unit.dp
 /**
  * 書き出しボタン（タップ＝タイトルあり）を押した直後に出す、タイトルカード文言の選択ダイアログ。
  *
- * 上の選択肢は先頭クリップの撮影日（既定で選択済み）、下は自由入力。
+ * 上の選択肢はダイアログを開いた時点の日付と時刻（既定で選択済み）、下は自由入力。
  * 自由入力欄は書き出し結果に焼き込む日付と同じフォント（[timeFontFamily]）で表示する。
  *
  * 選択状態は`customText`1つだけで表す（null＝日付を選択中、非null＝自由入力を選択中）。
  * 自由入力欄への入力自体が選択を兼ねるので、別建てのラジオ選択肢の状態は持たない。
  *
- * @param onConfirm 「書き出し」タップ時に呼ばれる。自由入力が空/未選択なら[defaultDateText]を渡す
+ * @param onConfirm 「書き出し」タップ時に呼ばれる。自由入力が空/未選択なら[defaultText]を渡す
  *   （フォールバックの判定はここ1箇所だけで行い、呼び出し元やExporter側では持たない）。
  */
 @Composable
 internal fun TitleCreationDialog(
-    defaultDateText: String,
+    defaultText: String,
     timeFontFamily: FontFamily,
     onDismiss: () -> Unit,
     onConfirm: (titleText: String) -> Unit
@@ -57,7 +57,7 @@ internal fun TitleCreationDialog(
                     selected = !isCustomSelected,
                     onClick = { customText = null }
                 ) {
-                    Text(defaultDateText, fontFamily = timeFontFamily)
+                    Text(defaultText, fontFamily = timeFontFamily)
                 }
                 RadioOptionRow(
                     selected = isCustomSelected,
@@ -75,7 +75,7 @@ internal fun TitleCreationDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                onConfirm(customText?.takeIf { it.isNotBlank() } ?: defaultDateText)
+                onConfirm(customText?.takeIf { it.isNotBlank() } ?: defaultText)
             }) { Text("書き出し") }
         },
         dismissButton = {

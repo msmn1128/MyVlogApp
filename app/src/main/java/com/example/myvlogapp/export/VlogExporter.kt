@@ -52,6 +52,7 @@ import com.example.myvlogapp.TITLE_SFX_FRAME_NUMBER
 import com.example.myvlogapp.TITLE_Y_OFFSET_PT
 import com.example.myvlogapp.TextSpan
 import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.defaultTitleText
 import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
@@ -117,8 +118,8 @@ object VlogExporter {
      *   falseのときは全クリップを結合するだけで、タイトルカードもその効果音も含めない。
      * @param muted タイムライン全体のミュート。trueのときは各クリップの音声
      *   （[VlogClip.isMuted] の状態に関わらず全て）とタイトルカードの効果音を無音にする。
-     * @param customTitleText タイトルカードに焼き込む文言。null/空文字なら先頭クリップの
-     *   撮影日（[VlogClip.dateText]）を使う。改行を含む場合は複数行として焼き込み、
+     * @param customTitleText タイトルカードに焼き込む文言。nullなら書き出し時点の
+     *   現在の日付と時刻（[defaultTitleText]）を使う。改行を含む場合は複数行として焼き込み、
      *   1行目の位置は変えずに下へ積む（[buildTitleFilter]参照）。
      * @param onProgress 進捗テキスト（UIスレッドで呼ばれる）
      * @return ギャラリーに保存された表示名
@@ -162,11 +163,11 @@ object VlogExporter {
             onProgress("書き出し中...")
             coroutineContext.ensureActive()
 
-            val firstDate = clips.first().dateText
-            // タイトルカードの文言は自由入力があればそちらを優先（空/未入力ならの
-            // フォールバックはTitleCreationDialog側で解決済み）。ファイル名（ギャラリー表示名）は
-            // 常に撮影日ベースのfirstDateを使うので、ここでは分けて持つ。
-            val titleText = customTitleText ?: firstDate
+            // タイトルカードの文言は自由入力があればそちらを優先する（空/未入力のときの
+            // 既定値はTitleCreationDialog側で決めて渡してくる）。ファイル名（ギャラリー表示名）も
+            // この文言から作る。タイトルなしの書き出し（長押し）でも、ファイル名のために
+            // 同じ既定値（現在の日付と時刻）を使う。
+            val titleText = customTitleText ?: defaultTitleText(System.currentTimeMillis())
             val sfxDelayMs = titleSfxDelayMs()
 
             // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
@@ -542,7 +543,7 @@ object VlogExporter {
         .also { textFiles += it }
 
     /**
-     * タイトルカードの文言（既定は撮影日、自由入力ならその文言）を改行ごとに
+     * タイトルカードの文言（既定は現在の日付と時刻、自由入力ならその文言）を改行ごとに
      * 行単位のテキストファイルへ書き出す。空行は詰めて無視する
      * （タイトルはSpanLinesと違って行位置をenableで出し分ける必要が無く、
      * 空行のぶんだけ間隔を空けておく理由が無いため）。
@@ -561,7 +562,7 @@ object VlogExporter {
     /**
      * タイトルカードのフィルタ。
      * - 「Vlog.」 [fonts].logoType、[TITLE_FONT_PT]、中央やや上
-     * - タイトル文言（既定は撮影日 "yyyy/MM/dd"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
+     * - タイトル文言（既定は現在の日付と時刻 "yyyy/MM/dd HH:mm"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
      *   2行目以降になっても1行目のy座標（[TITLE_DATE_Y_OFFSET_PT]）は動かさず、
      *   下へ[TITLE_DATE_FONT_PT]+[TITLE_DATE_LINE_SPACING_PT]ずつ積む
      *   （中央揃えでブロックごと動かすと自由入力の行数次第で1行目の位置がずれてしまうため）。
@@ -909,14 +910,14 @@ object VlogExporter {
     private const val TITLE_FILENAME_MAX_CHARS = 60
 
     /**
-     * 保存するファイル名を決める。タイトルカードの文言（既定は撮影日）をそのまま使い、
-     * 「Vlog_2026-08-24.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
+     * 保存するファイル名を決める。タイトルカードの文言（既定は現在の日付と時刻）をそのまま使い、
+     * 「Vlog_2026-08-24 09-20.mp4」「Vlog_夏休みの旅行.mp4」のような形にする。
      *
-     * 日付の区切りにハイフンを使うのは、ファイル名にスラッシュを含められないため
+     * 日付・時刻の区切りにハイフンを使うのは、ファイル名にスラッシュやコロンを含められないため
      * （パス区切りと解釈されて保存に失敗する）。自由入力タイトルも改行やパス区切り文字を
      * 含みうるので、同じ理屈でまとめて1行のファイル名向け文字列にサニタイズする。
      *
-     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 (1).mp4」のように連番を付ける。
+     * 同じ文言で複数回書き出したときは「Vlog_2026-08-24 09-20 (1).mp4」のように連番を付ける。
      */
     private fun buildDisplayName(context: Context, titleText: String): String {
         val base = "Vlog_${sanitizeForFileName(titleText)}"

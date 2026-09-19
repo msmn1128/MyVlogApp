@@ -1,19 +1,19 @@
 [versions]
-agp = "9.3.2"
-coreKtx = "1.10.1"
+agp = "9.4.1"
+coreKtx = "1.19.0"
 junit = "4.13.2"
 # VlogClip は android.net.Uri を持つ。JVM単体テストではスタブが例外を投げるため、モックで差し替える
-mockk = "1.13.13"
-activityCompose = "1.8.0"
-kotlin = "2.2.10"
-composeBom = "2026.02.01"
+mockk = "1.14.11"
+activityCompose = "1.13.0"
+kotlin = "2.4.20"
+composeBom = "2026.09.00"
 
 # 2.6.1 から更新。collectAsStateWithLifecycle と
 # lifecycle.compose.LocalLifecycleOwner には 2.8.7 以上が必要。
-lifecycle = "2.9.4"
+lifecycle = "2.11.0"
 
 # 1.2.1 から更新（1.2.1 は2024年初頭のバージョン）
-media3 = "1.11.0"
+media3 = "1.11.1"
 
 # Javaパッケージが com.arthenica.ffmpegkit のままのフォークを使うこと。
 # com.antonkarpenko 版はパッケージ名が異なりimportが解決できない。

@@ -14,6 +14,16 @@ fun formatSavedAt(millis: Long): String =
     SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
 
 /**
+ * タイトルカードの既定の文言 "yyyy/MM/dd HH:mm"（渡された時点の日付と時刻）。
+ *
+ * 動画へ焼き込む文字列なので、Locale.USを明示して数字の字形を固定する
+ * （既定ロケールに任せると、書き出しに使うフォントに字形が無い数字になりうる）。
+ * タイムゾーンは既定のまま＝端末のローカル時刻。
+ */
+fun defaultTitleText(millis: Long): String =
+    SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).format(millis)
+
+/**
  * 保存名の既定値 "M/d" を、同名がすでにあれば「M/d (1)」のように連番を付けて返す。
  *
  * 動画の書き出しファイル名（VlogExporter.buildDisplayName）と同じ考え方。

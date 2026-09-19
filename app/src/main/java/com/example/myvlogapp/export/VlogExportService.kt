@@ -166,6 +166,17 @@ class VlogExportService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Android 15以降、dataSync型のフォアグラウンドサービスには24時間あたり合計6時間の
+     * 上限があり、超えるとOSがこれを呼ぶ。数秒以内にstopSelf()しないとOSがアプリを
+     * 異常終了させるため、書き出しを中止して即座に畳む（通常の書き出し時間では到達しない）。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        VlogExporter.cancel()
+        exportJob?.cancel()
+        stopSelf()
+    }
+
     override fun onDestroy() {
         exportJob?.cancel()
         serviceScope.cancel()

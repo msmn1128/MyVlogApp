@@ -292,7 +292,7 @@ private fun TimelineToolbar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         val enabled = selectedClip != null && !isExporting
-        val trimPresetEnabled = enabled && (selectedClip?.durationMs ?: 0L) > 0L
+        val trimPresetEnabled = enabled && selectedClip.durationMs > 0L
 
         // 並びは 削除 → 入れ替え → 連続再生 → もとに戻す → やり直す
         //        → 2s/4sプリセット → ひとことを分割
