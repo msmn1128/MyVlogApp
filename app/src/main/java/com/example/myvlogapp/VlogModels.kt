@@ -3,6 +3,7 @@ package com.example.myvlogapp
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
 // =====================================================================================
@@ -284,6 +285,18 @@ private fun parseShotAtText(dateText: String, timeText: String): Long = runCatch
     java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.US)
         .parse("$dateText $timeText")?.time
 }.getOrNull() ?: Long.MAX_VALUE
+
+/**
+ * クリップの[VlogClip.id]を発行する。プロセス内で重複しない通し番号。
+ *
+ * idはLazyRowのkeyと、撮影時刻の取り直し時の突き合わせに使う。以前は
+ * `System.nanoTime() + index` で作っていたが、「同じ瞬間に2箇所から発行されても
+ * ぶつからない」ことが時計の分解能頼みで、正しさを読み取れなかった。
+ * 単調増加のカウンタなら、ぶつからないことが定義から明らかになる。
+ */
+private val clipIdCounter = AtomicLong(0L)
+
+internal fun nextClipId(): Long = clipIdCounter.incrementAndGet()
 
 data class VideoMeta(
     val timeText: String,

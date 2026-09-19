@@ -498,7 +498,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                         gate.withPermit {
                             val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                             VlogClip(
-                                id = System.nanoTime() + offset,
+                                id = nextClipId(),
                                 uri = uri,
                                 timeText = meta.timeText,
                                 dateText = meta.dateText,

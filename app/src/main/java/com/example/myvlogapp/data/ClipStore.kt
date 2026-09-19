@@ -15,6 +15,7 @@ import org.json.JSONObject
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.VlogClipKeys
+import com.example.myvlogapp.nextClipId
 import com.example.myvlogapp.toJson
 import com.example.myvlogapp.uniqueSaveName
 import com.example.myvlogapp.trimmedDurationMs
@@ -167,7 +168,7 @@ object ClipStore {
                     dropped++
                     return@runCatching null
                 }
-                VlogClip.fromJson(json, id = System.nanoTime() + index)
+                VlogClip.fromJson(json, id = nextClipId())
             }.getOrElse { e ->
                 Log.w(LOG_TAG, "1件のクリップ復元に失敗しました（この1件だけ落とします）", e)
                 dropped++
