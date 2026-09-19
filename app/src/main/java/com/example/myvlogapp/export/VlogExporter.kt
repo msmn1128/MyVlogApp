@@ -22,8 +22,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -236,8 +234,21 @@ object VlogExporter {
         }
     }
 
-    /** 実行中のFFmpeg処理を中断する */
-    fun cancel() = FFmpegKit.cancel()
+    /**
+     * 実行中のFFmpeg処理を中断する。
+     *
+     * 引数なしの`FFmpegKit.cancel()`は**実行中の全セッション**を止めるため、
+     * 起動直後の機能判定（[capabilities]の`-encoders`/`-filters`）が同時に走っていると
+     * それも巻き込んで空文字を返させ、エンコーダの判定結果が変わってしまう。
+     * 書き出し本体のセッションだけを狙って止める。
+     */
+    fun cancel() {
+        runningSessionId?.let { FFmpegKit.cancel(it) }
+    }
+
+    /** いま走らせている書き出しセッション。[cancel]が狙い撃ちするために控えておく */
+    @Volatile
+    private var runningSessionId: Long? = null
 
     /**
      * 前回起動時に書き出し中に強制終了（OSによるプロセス回収、強制停止、
@@ -825,9 +836,15 @@ object VlogExporter {
     /**
      * FFmpegを実行し、経過時間から進捗率（%）を算出してonProgressに渡す。
      *
-     * statisticsコールバックはFFmpegKit側の別スレッドから呼ばれる。パーセント値が
-     * 変わったときだけ[onProgress]を呼ぶことで、呼び出し頻度（1秒間に何度も飛んでくる）に
+     * statisticsコールバックはFFmpegKit側の別スレッドから呼ばれる。[onProgress]は
+     * suspendではない素の関数にしてあるので、そのスレッドからそのまま呼べる
+     * （以前はsuspend関数をrunBlockingで橋渡ししており、呼び出し元のディスパッチャが
+     * 混んでいるとFFmpeg側のコールバックスレッドを待たせていた）。
+     * パーセント値が変わったときだけ呼ぶことで、呼び出し頻度（1秒間に何度も飛んでくる）に
      * よる無駄な更新を減らす。
+     *
+     * セッションは[runningSessionId]に控えておき、[cancel]がこのセッションだけを狙って
+     * 止められるようにする。
      */
     private suspend fun runFFmpegWithProgress(
         args: Array<String>,
@@ -836,33 +853,32 @@ object VlogExporter {
     ) {
         Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ").take(COMMAND_LOG_MAX_CHARS)}")
         val completion = CompletableDeferred<FFmpegSession>()
-        val callerContext = coroutineContext
         var lastPercent = -1
 
-        FFmpegKit.executeWithArgumentsAsync(
+        val started = FFmpegKit.executeWithArgumentsAsync(
             args,
             { session -> completion.complete(session) },
             { /* ログはセッション完了後にまとめて参照するのでここでは何もしない */ },
             { statistics ->
-                if (totalDurationMs > 0 && callerContext.isActive) {
+                if (totalDurationMs > 0) {
                     val ratio = (statistics.time / totalDurationMs.toDouble()).coerceIn(0.0, 1.0)
                     val percent = (ratio * 100).toInt()
                     if (percent != lastPercent) {
                         lastPercent = percent
-                        // 「中止」を押した直後は、この統計コールバックが飛んでくる頃には
-                        // callerContextのJobが既にキャンセル済みのことがある。その状態で
-                        // runBlockingを呼ぶとCancellationExceptionがFFmpegKit側の
-                        // コールバックスレッドへ投げ出され、キャッチされずにアプリごと
-                        // 落ちうる。進捗表示は落としても実害が無いので握り潰す。
-                        runCatching {
-                            runBlocking(callerContext) { onProgress("書き出し中... $percent%", ratio.toFloat()) }
-                        }
+                        onProgress("書き出し中... $percent%", ratio.toFloat())
                     }
                 }
             }
         )
+        runningSessionId = started.sessionId
 
-        val session = completion.await()
+        val session = try {
+            completion.await()
+        } finally {
+            // キャンセルで抜ける場合もここを通る。呼び出し元（サービス）がcancel()を
+            // 呼んでいれば既に止まっているが、控えを残したままにしないよう必ず消す。
+            runningSessionId = null
+        }
         when {
             ReturnCode.isSuccess(session.returnCode) -> Unit
             ReturnCode.isCancel(session.returnCode) -> throw VlogExportException("書き出しを中止しました")
