@@ -176,7 +176,16 @@ class VlogExportService : Service() {
         stopSelf()
     }
 
+    /**
+     * サービスが畳まれるときは、コルーチンだけでなくFFmpegのセッション自体も止める。
+     *
+     * exportJob.cancel()だけだと、待っているコルーチンが抜けるのは早いが、ネイティブ側の
+     * エンコードはそのまま最後まで走り続ける（CPUと電池を使い続け、作業ファイルの掃除も
+     * 走らない）。OSがサービスを停止した場合など、ACTION_CANCEL や onTimeout を
+     * 経由しない経路がここなので、ここでも明示的に止める。
+     */
     override fun onDestroy() {
+        VlogExporter.cancel()
         exportJob?.cancel()
         serviceScope.cancel()
         ExportStatus.setIdle()
