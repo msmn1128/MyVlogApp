@@ -36,6 +36,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -43,7 +45,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -552,6 +556,21 @@ private fun EditorPane(
         derivedStateOf { selectedClip?.textAt(positionMs.value) ?: "" }
     }
 
+    // 入力欄の文字とカーソル位置は、この場のstateとして持つ。
+    //
+    // ViewModelへ流した文字がStateFlowを一巡して戻ってきたものをvalueに入れていた頃は、
+    // 日本語IMEの変換中に「未確定の文字」ごと外から差し替えられ、変換が勝手に確定したり
+    // カーソルが末尾へ飛んだりした。ここで持てば、打っている最中に外から入れ替わることは
+    // 無くなる（ViewModelへは打つたびに通知するので、保存やプレビューの反映は変わらない）。
+    var field by remember { mutableStateOf(TextFieldValue()) }
+    // 外から文字が変わったとき（区間の切り替わり・クリップの選択変更・もとに戻す）だけ
+    // 入れ替える。自分が打った文字は一巡して同じ値で戻ってくるので、ここは素通りする。
+    LaunchedEffect(selectedClip?.id, segmentNumber, hitokoto) {
+        if (field.text != hitokoto) {
+            field = TextFieldValue(hitokoto, TextRange(hitokoto.length))
+        }
+    }
+
     Card(modifier = modifier) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -584,8 +603,11 @@ private fun EditorPane(
             }
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(
-                value = hitokoto,
-                onValueChange = onTextChange,
+                value = field,
+                onValueChange = {
+                    field = it
+                    onTextChange(it.text)
+                },
                 enabled = selectedClip != null && !isExporting,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     textAlign = TextAlign.Center
