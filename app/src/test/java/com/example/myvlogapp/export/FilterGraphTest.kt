@@ -65,7 +65,12 @@ class FilterGraphTest {
 
         // 入力0は効果音なので、クリップは1番から
         assertTrue(graph.contains("[1:v]setpts=PTS-STARTPTS,trim=end=5.000,scale="))
-        assertTrue(graph.contains("[1:a]asetpts=PTS-STARTPTS,atrim=end=5.000[a0]"))
+        // 実音声は apad→atrim で映像と同じ尺に揃える。素材の音声は映像より
+        // わずかに短いことがあり、その差がconcatのセグメントごとに積み上がって
+        // 本数が多いほど後半の音がずれていくため
+        assertTrue(
+            graph.contains("[1:a]asetpts=PTS-STARTPTS,apad,atrim=end=5.000,asetpts=PTS-STARTPTS[a0]")
+        )
         assertTrue(graph.contains("[2:v]setpts=PTS-STARTPTS,trim=end=3.000,scale="))
         // 音声の無いクリップは無音で埋める
         assertTrue(graph.contains("anullsrc=r=44100:cl=stereo:d=3.000[a1]"))

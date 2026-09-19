@@ -470,8 +470,15 @@ object VlogExporter {
 
             // concatは各セグメントの音声ストリームを明示参照するため、
             // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
+            //
+            // 実音声には apad → atrim を掛けて、映像と寸分違わぬ長さに揃える。素材の
+            // 音声トラックは映像より数十ms短いことがよくあり（エンコーダの都合）、
+            // その差はconcatのセグメントごとに積み上がって、本数が多いほど後半の音が
+            // 前へずれていく。apadで足りない分を無音で埋め、atrimで必ず尺ぴったりに切る
+            // （apadは終端を指定しないと無限に無音を継ぎ足すので、atrimと必ず対で使う）。
             graph += if (audioPlan.hasRealAudio(index)) {
-                "[$inputIndex:a]asetpts=PTS-STARTPTS,${trimFilter(durationSec, audio = true)}" +
+                "[$inputIndex:a]asetpts=PTS-STARTPTS,apad," +
+                        "${trimFilter(durationSec, audio = true)},asetpts=PTS-STARTPTS" +
                         "[${aTag(index)}]"
             } else {
                 "anullsrc=r=$AUDIO_SAMPLE_RATE:cl=$AUDIO_CHANNEL_LAYOUT" +
