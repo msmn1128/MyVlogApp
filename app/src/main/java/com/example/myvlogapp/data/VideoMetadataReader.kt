@@ -11,8 +11,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import com.example.myvlogapp.CANVAS_HEIGHT
-import com.example.myvlogapp.CANVAS_WIDTH
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.VideoMeta
 
@@ -24,7 +22,7 @@ import com.example.myvlogapp.VideoMeta
 // =====================================================================================
 
 /**
- * 動画から撮影日時・長さ・解像度を取得する。
+ * 動画から撮影日時と長さを取得する。
  *
  * 撮影日時メタデータ（creation_time）は、SNS経由で共有された動画や
  * PCで変換した動画、画面録画では失われていることが多いため、
@@ -67,25 +65,12 @@ private fun readVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long):
         // 撮影時刻がどこから取れたか。「時刻がおかしい」という報告の原因を追うために残す。
         Log.i(LOG_TAG, "撮影時刻の取得元: ${shotAt?.source ?: "なし（追加時刻で代用）"} / $uri")
 
-        // 生の幅・高さは回転情報(90/270度)を反映していないため補正する。
-        // 縦持ち撮影の動画は内部的に横長のままrotation=90が入っていることが多い。
-        val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-            ?.toIntOrNull() ?: CANVAS_WIDTH
-        val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-            ?.toIntOrNull() ?: CANVAS_HEIGHT
-        val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
-            ?.toIntOrNull() ?: 0
-        val (width, height) =
-            if (rotation == 90 || rotation == 270) rawHeight to rawWidth else rawWidth to rawHeight
-
         VideoMeta(
             timeText = formatTime(shotAtMillis),
             dateText = formatDate(shotAtMillis),
             shotAtMillis = shotAtMillis,
             shotAtReliable = shotAt?.reliable == true,
-            durationMs = durationMs,
-            width = width.coerceAtLeast(1),
-            height = height.coerceAtLeast(1)
+            durationMs = durationMs
         )
     } catch (e: Exception) {
         // メタデータが1件も取れない動画（壊れたファイル、非対応コーデックなど）。
@@ -93,7 +78,7 @@ private fun readVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long):
         Log.w(LOG_TAG, "動画のメタデータを取得できませんでした: $uri", e)
         VideoMeta(
             formatTime(fallbackMillis), formatDate(fallbackMillis), fallbackMillis,
-            shotAtReliable = false, 0L, CANVAS_WIDTH, CANVAS_HEIGHT
+            shotAtReliable = false, durationMs = 0L
         )
     } finally {
         runCatching { retriever.release() }

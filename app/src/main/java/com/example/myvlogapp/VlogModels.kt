@@ -24,8 +24,8 @@ data class VlogClip(
     val timeText: String,       // 撮影時刻 "HH:mm"（24時間表記）
     val dateText: String,       // 撮影日 "yyyy/MM/dd"
     val durationMs: Long,
-    val width: Int,             // 回転補正済みの実表示幅
-    val height: Int,            // 回転補正済みの実表示高さ
+    // 解像度は持たない。書き出しは scale + pad で1920x1080のキャンバスへ入れるだけで
+    // 入力サイズを知る必要がなく、プレビューもPlayerViewが動画から直接読むため
     val texts: List<TextSegment> = listOf(TextSegment()),
     val startMs: Long = 0L,
     val endMs: Long = 0L,
@@ -123,8 +123,6 @@ data class VlogClip(
             timeText = json.getString(VlogClipKeys.TIME_TEXT),
             dateText = json.getString(VlogClipKeys.DATE_TEXT),
             durationMs = json.getLong(VlogClipKeys.DURATION_MS),
-            width = json.getInt(VlogClipKeys.WIDTH),
-            height = json.getInt(VlogClipKeys.HEIGHT),
             texts = json.readTextSegments(),
             startMs = json.getLong(VlogClipKeys.START_MS),
             endMs = json.getLong(VlogClipKeys.END_MS),
@@ -161,8 +159,6 @@ object VlogClipKeys {
     const val TIME_TEXT = "timeText"
     const val DATE_TEXT = "dateText"
     const val DURATION_MS = "durationMs"
-    const val WIDTH = "width"
-    const val HEIGHT = "height"
     const val TEXTS = "texts"
     const val TEXT = "text"
     const val START_MS = "startMs"
@@ -182,8 +178,6 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
     put(VlogClipKeys.TIME_TEXT, timeText)
     put(VlogClipKeys.DATE_TEXT, dateText)
     put(VlogClipKeys.DURATION_MS, durationMs)
-    put(VlogClipKeys.WIDTH, width)
-    put(VlogClipKeys.HEIGHT, height)
     put(VlogClipKeys.TEXTS, JSONArray().apply {
         texts.forEach { segment ->
             put(
@@ -304,7 +298,5 @@ data class VideoMeta(
     val shotAtMillis: Long,
     /** 撮影時刻を確かな手がかりから取れたか（[VlogClip.shotAtReliable]） */
     val shotAtReliable: Boolean,
-    val durationMs: Long,
-    val width: Int,
-    val height: Int
+    val durationMs: Long
 )

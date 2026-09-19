@@ -28,8 +28,6 @@ internal fun testClip(
     timeText = timeText,
     dateText = dateText,
     durationMs = durationMs,
-    width = 1920,
-    height = 1080,
     texts = texts,
     startMs = startMs,
     endMs = endMs,

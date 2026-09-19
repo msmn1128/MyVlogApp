@@ -44,6 +44,18 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun saveDataFromWhenResolutionWasStoredStillRestores() {
+        // 解像度(width/height)を持っていた頃の保存データ。もう読まないキーが
+        // 余分に入っていても、復元は素通りできること
+        val legacy = testClip(timeText = "09:00").toJson()
+            .put("width", 1920)
+            .put("height", 1080)
+
+        val restored = VlogClip.fromJson(legacy, id = 1L)
+        assertEquals("09:00", restored.timeText)
+    }
+
+    @Test
     fun savedTimeTextIsKeptAsIs() {
         // 復元では、保存された時刻をそのまま読む（取り直しは、確かでないものだけをViewModelが行う）
         val json: JSONObject = testClip(timeText = "09:00", dateText = "2026/09/19", shotAtReliable = true).toJson()

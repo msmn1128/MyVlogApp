@@ -341,8 +341,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                                 timeText = meta.timeText,
                                 dateText = meta.dateText,
                                 durationMs = meta.durationMs,
-                                width = meta.width,
-                                height = meta.height,
                                 startMs = 0L,
                                 endMs = meta.durationMs,
                                 shotAtMillis = meta.shotAtMillis,
