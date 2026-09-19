@@ -36,7 +36,22 @@ import com.example.myvlogapp.VideoMeta
  * 選択順と違う並びになったりするため、呼び出し側で選択順に基づいて
  * 一意に決めた値を渡してもらう。
  */
-fun getVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long): VideoMeta {
+fun getVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long): VideoMeta =
+    synchronized(RETRIEVER_LOCK) { readVideoMetadata(context, uri, fallbackMillis) }
+
+/**
+ * [getVideoMetadata]を同時に1本ずつしか動かさないためのロック（プロセス全体で1つ）。
+ *
+ * MediaMetadataRetrieverを複数同時に使うと、**別の動画の撮影日時（METADATA_KEY_DATE）が
+ * 返ってくることがある**（長さや幅は正しいまま、日付だけが取り違えられる）。実測（Android 17の
+ * エミュレータ、4本を同時に読む）で、1,000回のうち数回の割合で起きた。動画を同時に追加すると、
+ * 1本の動画の時刻が全部に反映されて見えたのはこのため。
+ * 動画を追加する処理・起動時に時刻を取り直す処理など、どこから呼ばれても守られるよう、
+ * 呼び出し側ではなくここで直列化している（1本あたりは数十ミリ秒で、進捗表示も出るため待ちは目立たない）。
+ */
+private val RETRIEVER_LOCK = Any()
+
+private fun readVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long): VideoMeta {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, uri)

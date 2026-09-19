@@ -58,10 +58,11 @@ private const val HISTORY_COALESCE_MS = 900L
 private const val AUTOSAVE_DEBOUNCE_MS = 500L
 
 /**
- * 動画を追加するとき、メタデータ（長さ・撮影時刻など）を同時に読む本数の上限。
+ * 動画を追加するとき、メタデータ（長さ・撮影時刻など）の取得を同時に待たせておく本数の上限。
  *
- * 選んだ本数ぶんを一斉に読むと、本数が多いときにネイティブのデコーダとファイルを
- * 同時に大量に開いてしまう。数本ずつなら、合計時間は最も遅い数本ぶんに近いまま抑えられる。
+ * 実際の読み取りは、取り違えを防ぐため[getVideoMetadata]の中で1本ずつ直列に行われる
+ * （MediaMetadataRetrieverを同時に使うと、別の動画の撮影日時が返ることがあるため）。
+ * ここで絞るのは、選んだ本数ぶんのスレッドがロック待ちで塞がってしまわないようにするため。
  */
 private const val METADATA_PARALLELISM = 4
 
@@ -367,16 +368,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
         viewModelScope.launch {
             val now = System.currentTimeMillis()
+            // getVideoMetadata は直列に動くので、並列にしても速くならない。順番に読む
             val refreshed = withContext(Dispatchers.IO) {
-                coroutineScope {
-                    targets.map { clip ->
-                        async {
-                            clip.id to getVideoMetadata(
-                                context, clip.uri, clip.shotAtMillis.takeIf { it > 0L } ?: now
-                            )
-                        }
-                    }.awaitAll()
-                }.toMap()
+                targets.associate { clip ->
+                    clip.id to getVideoMetadata(
+                        context, clip.uri, clip.shotAtMillis.takeIf { it > 0L } ?: now
+                    )
+                }
             }
 
             clipsMutationMutex.withLock {
@@ -440,9 +438,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 並列で取得して待ち時間が本数ぶん積み上がるのを避けつつ、同時に読む本数は
-        // METADATA_PARALLELISM に絞る（一度に多くの本数を選んでも、
-        // ネイティブのデコーダを一斉に開かないようにする）。
+        // 読み取り自体は getVideoMetadata の中で1本ずつ直列に行われる（同時に読むと、別の動画の
+        // 撮影日時が返ることがあるため）。ここでは待たせる本数をMETADATA_PARALLELISMに絞るだけ。
         //
         // メタデータが一切取れない動画のための最終フォールバック時刻は、並列取得の完了
         // タイミング（実行順とは無関係）に左右されないよう、ここで選択順に沿って1件ずつ
