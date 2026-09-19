@@ -103,7 +103,6 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
 
     // --- Lifecycle / ViewModel ---
@@ -120,7 +119,13 @@ dependencies {
     // --- 動画エンコード（16KBページサイズ対応フォーク） ---
     implementation(libs.ffmpeg.kit)
 
-    // --- 開発用（デバッグビルドのみ。Layout Inspectorやプレビューで使う） ---
+    // --- 開発用（デバッグビルドのみ。Layout Inspectorで使う） ---
+    //
+    // ui-tooling-preview（@Preview アノテーション）は入れていない。このアプリには
+    // @Preview が1つも無いため。プレビューを書き始めるときは
+    // implementation(libs.androidx.compose.ui.tooling.preview) を足すこと
+    // （@Preview を main のソースに書くので、debugImplementation では
+    // リリースビルドが通らなくなる）。
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // --- JVM単体テスト（src/test）。座標・区間まわりの純粋関数が対象 ---
