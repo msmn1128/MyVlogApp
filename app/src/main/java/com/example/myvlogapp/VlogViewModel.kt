@@ -33,6 +33,8 @@ import kotlin.math.abs
 import com.example.myvlogapp.data.ClipStore
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
+import com.example.myvlogapp.edit.EditHistory
+import com.example.myvlogapp.edit.EditTag
 import com.example.myvlogapp.export.ExportState
 import com.example.myvlogapp.export.ExportStatus
 import com.example.myvlogapp.export.VlogEvent
@@ -40,16 +42,6 @@ import com.example.myvlogapp.export.VlogExportService
 import com.example.myvlogapp.export.VlogExporter
 import com.example.myvlogapp.waveform.Waveform
 import com.example.myvlogapp.waveform.extractWaveform
-
-/** 履歴に積む上限。1件あたりクリップ一覧の参照コピーなので軽い */
-private const val HISTORY_LIMIT = 50
-
-/**
- * 同種の連続編集をひとつの履歴にまとめる時間。
- * スライダーを1回ドラッグしただけで数十件積まれると、「もとに戻す」を
- * 何度押しても元に戻らなくなるため。
- */
-private const val HISTORY_COALESCE_MS = 900L
 
 /**
  * 編集内容の自動保存デバウンス。
@@ -106,19 +98,6 @@ internal fun playFromWhere(
 }
 
 /**
- * 履歴コピーの粒度を決めるタグ。
- * 同じタグの編集が[HISTORY_COALESCE_MS]以内に連続した場合はひとつの履歴にまとめる。
- * "trim:0"のような文字列連結にしないのは、タイプミスが「まとまるはずが別々に積まれる」
- * 「別操作なのにまとまってしまう」という気付きにくいバグに直結するため。型で表す。
- */
-private sealed interface EditTag {
-    data class Trim(val clipIndex: Int) : EditTag
-    data class TrimMove(val clipIndex: Int) : EditTag
-    data class SplitMove(val clipIndex: Int, val segmentIndex: Int) : EditTag
-    data class Text(val clipIndex: Int, val segmentIndex: Int) : EditTag
-}
-
-/**
  * 画面状態と書き出し処理の保持先。
  *
  * ViewModelに置く理由：Composable内の remember だけだと画面回転や
@@ -141,11 +120,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private val _events = Channel<VlogEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    private val _canUndo = MutableStateFlow(false)
-    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
-
-    private val _canRedo = MutableStateFlow(false)
-    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+    val canUndo: StateFlow<Boolean> get() = history.canUndo
+    val canRedo: StateFlow<Boolean> get() = history.canRedo
 
     /**
      * 動画を追加中（メタデータを読んでいる間）か。画面に進捗を出し、追加ボタンの連打を止めるのに使う。
@@ -186,12 +162,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private val waveformJobs = mutableMapOf<String, Job>()
 
     // --- 履歴（もとに戻す / やり直す） ---------------------------------------------------
+    //
+    // 積む・まとめる・取り出すの仕組みは EditHistory（edit/EditHistory.kt）が持つ。
+    // ここに残すのは「スナップショットに何を含めるか」と「取り出した状態を画面へ戻す方法」
+    // の2つだけ。
     private data class Snapshot(val clips: List<VlogClip>, val selectedIndex: Int)
 
-    private val undoStack = ArrayDeque<Snapshot>()
-    private val redoStack = ArrayDeque<Snapshot>()
-    private var lastEditTag: EditTag? = null
-    private var lastEditAt = 0L
+    // 壁時計ではなく端末の起動からの経過時間を渡す。時刻合わせで巻き戻ると、
+    // まとめ判定が意図せず効いたり効かなかったりするため。
+    private val history = EditHistory<Snapshot>(elapsedMs = SystemClock::elapsedRealtime)
 
     /** タイムラインの動画は自動再生しない */
     val player: ExoPlayer = ExoPlayer.Builder(application).build().apply {
@@ -360,7 +339,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         // 復元直後を「起点」にする。ここで履歴を消しておかないと、
         // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
-        clearHistory()
+        history.clear()
 
         refreshUnreliableShotTimes()
         releaseUnusedPermissions()
@@ -925,41 +904,18 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- もとに戻す / やり直す -----------------------------------------------------------
 
-    fun undo() = undoRedo(from = undoStack, to = redoStack)
+    fun undo() {
+        history.undo(currentSnapshot())?.let(::applySnapshot)
+    }
 
-    fun redo() = undoRedo(from = redoStack, to = undoStack)
-
-    /** undo/redoは互いに鏡像の処理なので1つにまとめてある。行き先のスタックだけが違う */
-    private fun undoRedo(from: ArrayDeque<Snapshot>, to: ArrayDeque<Snapshot>) {
-        val target = from.removeLastOrNull() ?: return
-        to.addLast(currentSnapshot())
-        resetCoalescing()
-        applySnapshot(target)
-        refreshHistoryFlags()
+    fun redo() {
+        history.redo(currentSnapshot())?.let(::applySnapshot)
     }
 
     /**
-     * 変更を加える「直前」に呼ぶ。
-     *
-     * @param tag 同じタグの編集が [HISTORY_COALESCE_MS] 以内に続いた場合はまとめる。
-     *   スライダーのドラッグや文字入力のように連続で飛んでくる編集に付ける。
-     *   nullを渡すと必ず1件として積まれる（追加・削除・並べ替えなど一発で完結する操作）。
+     * 変更を加える「直前」に呼ぶ。[tag]の意味は [EditHistory.record] を参照。
      */
-    private fun recordHistory(tag: EditTag? = null) {
-        val now = SystemClock.elapsedRealtime()
-        if (tag != null && tag == lastEditTag && now - lastEditAt < HISTORY_COALESCE_MS) {
-            lastEditAt = now
-            return
-        }
-
-        undoStack.addLast(currentSnapshot())
-        if (undoStack.size > HISTORY_LIMIT) undoStack.removeFirst()
-        redoStack.clear()
-
-        lastEditTag = tag
-        lastEditAt = now
-        refreshHistoryFlags()
-    }
+    private fun recordHistory(tag: EditTag? = null) = history.record(currentSnapshot(), tag)
 
     private fun currentSnapshot() = Snapshot(_clips.value, _selectedIndex.value)
 
@@ -982,23 +938,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             .coerceIn(0, snapshot.clips.lastIndex.coerceAtLeast(0))
         _selectedIndex.value = index
         snapshot.clips.getOrNull(index)?.let { seekWithoutPause(it.startMs) }
-    }
-
-    private fun clearHistory() {
-        undoStack.clear()
-        redoStack.clear()
-        resetCoalescing()
-        refreshHistoryFlags()
-    }
-
-    private fun resetCoalescing() {
-        lastEditTag = null
-        lastEditAt = 0L
-    }
-
-    private fun refreshHistoryFlags() {
-        _canUndo.value = undoStack.isNotEmpty()
-        _canRedo.value = redoStack.isNotEmpty()
     }
 
     // --- 波形 ---------------------------------------------------------------------------
