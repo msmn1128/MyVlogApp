@@ -143,6 +143,9 @@ class VlogExportService : Service() {
                     includeTitle = includeTitle,
                     muted = muted,
                     customTitleText = customTitleText,
+                    // FFmpegの統計コールバックのスレッドから直接呼ばれうる。
+                    // StateFlowへの代入もNotificationManager.notifyもスレッド安全なので、
+                    // そのまま呼んでよい（以前はrunBlockingで呼び出し元へ戻していた）。
                     onProgress = { message, progress ->
                         ExportStatus.setRunning(message, progress)
                         updateNotification(message, progress)
