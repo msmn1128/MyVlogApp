@@ -104,6 +104,7 @@ internal fun ColumnScope.PreviewSection(
         selectedClip = selectedClip,
         positionMs = positionMs,
         player = viewModel.player,
+        onTogglePlayback = viewModel::togglePlayback,
         hitokotoFontFamily = hitokotoFontFamily,
         timeFontFamily = timeFontFamily,
         modifier = Modifier.fillMaxWidth().weight(previewWeight)
@@ -138,6 +139,7 @@ private fun PreviewPane(
     selectedClip: VlogClip?,
     positionMs: State<Long>,
     player: ExoPlayer,
+    onTogglePlayback: () -> Unit,
     hitokotoFontFamily: FontFamily,
     timeFontFamily: FontFamily,
     modifier: Modifier = Modifier
@@ -215,7 +217,7 @@ private fun PreviewPane(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        if (player.isPlaying) player.pause() else player.play()
+                        onTogglePlayback()
                     }
             )
             // ここから下は書き出しに焼き込まれる文字。配色はテーマに追従させず、

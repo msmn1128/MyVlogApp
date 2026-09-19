@@ -66,6 +66,45 @@ private const val AUTOSAVE_DEBOUNCE_MS = 500L
  */
 private const val METADATA_PARALLELISM = 4
 
+/** 再生を押したとき、どこから再生するか */
+internal enum class PlayFrom {
+    /** いまの位置から（途中で止めていた、または次のクリップへ進める） */
+    CURRENT_POSITION,
+
+    /** タイムラインの先頭のクリップから（連続再生で最後のクリップの終わりで止まっていた） */
+    TIMELINE_START,
+
+    /** 選択中のクリップの頭から（連続再生オフで、クリップの終わりで止まっていた） */
+    SELECTED_CLIP_START
+}
+
+/**
+ * クリップの終わりで止まっているときに再生を押すと、そのまま再生してもトリミング終端の監視が
+ * 直ちにまた止めてしまい、「再生できない」ように見える。終わりで止まっているときだけ、頭出しする。
+ *
+ * - 終わりで止まっていない → いまの位置から
+ * - 連続再生オンで、最後のクリップではない → いまの位置から（次のクリップへ進む）
+ * - 連続再生オンで、最後のクリップ → タイムラインの先頭から（最後で止めたあとの、再生のやり直し）
+ * - 連続再生オフ → 選択中のクリップの頭から（1本ずつ見直す使い方）
+ *
+ * @param playerEnded プレイヤーが最後まで進んで STATE_ENDED になっている（最後のクリップのみ）
+ */
+internal fun playFromWhere(
+    isLastClip: Boolean,
+    autoAdvance: Boolean,
+    positionMs: Long,
+    clipEndMs: Long,
+    playerEnded: Boolean
+): PlayFrom {
+    val atEnd = positionMs >= clipEndMs - PLAY_AT_END_TOLERANCE_MS || (isLastClip && playerEnded)
+    return when {
+        !atEnd -> PlayFrom.CURRENT_POSITION
+        autoAdvance && !isLastClip -> PlayFrom.CURRENT_POSITION
+        autoAdvance -> PlayFrom.TIMELINE_START
+        else -> PlayFrom.SELECTED_CLIP_START
+    }
+}
+
 /**
  * 履歴コピーの粒度を決めるタグ。
  * 同じタグの編集が[HISTORY_COALESCE_MS]以内に連続した場合はひとつの履歴にまとめる。
@@ -213,23 +252,25 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 先頭へ戻して止める。最後まで再生し終えたときの共通処理。
+     * 最後のクリップの再生が終わったところで止める（先頭のクリップへは戻らない）。
+     * 最後のコマを出したままにする。最後まで再生し終えたときの共通処理。
      *
      * `enforceTrimBounds`の監視とExoPlayerのSTATE_ENDEDリスナーの両方から
      * 呼ばれうる（同じ「最後まで再生し終えた」を別経路で検知しているため）。
-     * 既に先頭で止まっていれば何もしないことで、二重の呼び出しがあっても
+     * 既にそこで止まっていれば何もしないことで、二重の呼び出しがあっても
      * 無駄なシークを起こさないようにする。
      */
-    private fun returnToStart() {
-        val first = _clips.value.firstOrNull() ?: return
-        if (_selectedIndex.value == 0 &&
+    private fun stopAtTimelineEnd() {
+        val lastIndex = _clips.value.lastIndex
+        val last = _clips.value.lastOrNull() ?: return
+        if (_selectedIndex.value == lastIndex &&
             !player.playWhenReady &&
-            player.currentPosition == first.startMs
+            player.currentPosition == last.endMs
         ) {
             return
         }
-        _selectedIndex.value = 0
-        seekAndPause(first.startMs)
+        _selectedIndex.value = lastIndex
+        seekAndPause(last.endMs)
     }
 
     /**
@@ -288,7 +329,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             /**
-             * 最後まで再生し終えたら先頭へ戻す。
+             * 最後まで再生し終えたら、最後のクリップの終わりで止める（先頭へは戻らない）。
              *
              * enforceTrimBounds では拾えないケースがある。トリミング終端が動画の
              * 実際の末尾と一致していると、[PLAYBACK_POLL_INTERVAL_MS]間隔の監視が
@@ -298,8 +339,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState != Player.STATE_ENDED) return
                 player.playWhenReady = false
-                if (!_autoAdvance.value) return
-                returnToStart()
+                stopAtTimelineEnd()
             }
         })
     }
@@ -1004,7 +1044,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * トリミング終端に達したら次のクリップの開始位置へ進める。
-     * 最後まで再生し終えたら停止して先頭に戻す（書き出し結果と同じ流れをプレビューできる）。
+     * 最後のクリップの終端に達したら、そこで停止する（先頭へは戻らない）。
      *
      * selectedIndexではなく再生中のインデックスを見るのは、
      * ExoPlayerが自動遷移した直後の一瞬だけ両者がずれるため。
@@ -1028,8 +1068,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 seekWithoutPause(_clips.value[next].startMs)
             }
 
-            // 最後まで再生し終えたら先頭へ戻す（書き出し結果と同じ流れを繰り返し確認できる）
-            else -> returnToStart()
+            // 連続再生で最後のクリップまで再生し終えたら、そこで止める（先頭へは戻らない）
+            else -> stopAtTimelineEnd()
         }
     }
 
@@ -1105,6 +1145,41 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pause() {
         player.playWhenReady = false
+    }
+
+    /**
+     * 再生／一時停止の切り替え（プレビューのタップ）。
+     *
+     * クリップの終わりで止まっているときは、そのまま再生しても直ちにまた止まって
+     * 「動かない」ように見えてしまうので、[playFromWhere]に従って頭出ししてから再生する。
+     */
+    fun togglePlayback() {
+        if (player.isPlaying) {
+            player.pause()
+            return
+        }
+        val clips = _clips.value
+        val index = _selectedIndex.value
+        val clip = clips.getOrNull(index) ?: return
+
+        when (
+            playFromWhere(
+                isLastClip = index == clips.lastIndex,
+                autoAdvance = _autoAdvance.value,
+                positionMs = _playbackPositionMs.value,
+                clipEndMs = clip.endMs,
+                playerEnded = player.playbackState == Player.STATE_ENDED
+            )
+        ) {
+            PlayFrom.CURRENT_POSITION -> Unit
+            PlayFrom.TIMELINE_START -> {
+                _selectedIndex.value = 0
+                applyVolume()
+                seekWithoutPause(clips.first().startMs)
+            }
+            PlayFrom.SELECTED_CLIP_START -> seekWithoutPause(clip.startMs)
+        }
+        player.play()
     }
 
     /**
