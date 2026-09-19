@@ -122,4 +122,5 @@ dependencies {
     // --- JVM単体テスト（src/test）。座標・区間まわりの純粋関数が対象 ---
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
+    testImplementation(libs.org.json)
 }

@@ -4,6 +4,8 @@ coreKtx = "1.19.0"
 junit = "4.13.2"
 # VlogClip は android.net.Uri を持つ。JVM単体テストではスタブが例外を投げるため、モックで差し替える
 mockk = "1.14.11"
+# JVM単体テストではAndroid標準のorg.jsonがスタブで動かないため、同じAPIの実装を使う
+orgJson = "20260814"
 activityCompose = "1.13.0"
 kotlin = "2.4.20"
 composeBom = "2026.09.00"
@@ -23,6 +25,7 @@ ffmpegKit = "6.1.1"
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
 # --- Compose ---

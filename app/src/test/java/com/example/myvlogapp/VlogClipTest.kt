@@ -20,7 +20,8 @@ internal fun testClip(
     shotAtMillis: Long = 0L,
     dateText: String = "2026/01/01",
     timeText: String = "00:00",
-    isMuted: Boolean = false
+    isMuted: Boolean = false,
+    shotAtReliable: Boolean = true
 ) = VlogClip(
     id = id,
     uri = mockk<Uri>(relaxed = true),
@@ -33,7 +34,8 @@ internal fun testClip(
     startMs = startMs,
     endMs = endMs,
     shotAtMillis = shotAtMillis,
-    isMuted = isMuted
+    isMuted = isMuted,
+    shotAtReliable = shotAtReliable
 )
 
 class VlogClipTest {

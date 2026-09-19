@@ -29,7 +29,13 @@ data class VlogClip(
     val startMs: Long = 0L,
     val endMs: Long = 0L,
     val shotAtMillis: Long = 0L, // 撮影/作成日時（並び替えの基準）。0は未取得・旧データ
-    val isMuted: Boolean = false // このクリップの音声を書き出しで無音にするか
+    val isMuted: Boolean = false, // このクリップの音声を書き出しで無音にするか
+    /**
+     * 撮影時刻を、動画自体が持つ確かな手がかり（作成日時メタデータ・ファイル名・更新日時など）から
+     * 取れたか。falseは、手がかりが足りず追加時刻などで代用した値で、次回の復元時に取り直す
+     * （[com.example.myvlogapp.VlogViewModel]）。保存データに無い旧データはfalse扱い。
+     */
+    val shotAtReliable: Boolean = true
 ) {
     val trimmedDurationMs: Long get() = trimmedDurationMs(startMs, endMs)
     val isValid: Boolean get() = durationMs > 0 && endMs > startMs
@@ -115,7 +121,10 @@ data class VlogClip(
             // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
             shotAtMillis = json.optLong(VlogClipKeys.SHOT_AT_MILLIS),
             // ミュート機能を追加する前の保存データにはキー自体が無いので optBoolean でfalseにフォールバック
-            isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false)
+            isMuted = json.optBoolean(VlogClipKeys.IS_MUTED, false),
+            // 確かさを持たせる前の保存データにはキー自体が無い。追加時の手がかりが足りなかった値が
+            // 混ざっている可能性があるので、falseにして次回の復元時に取り直させる
+            shotAtReliable = json.optBoolean(VlogClipKeys.SHOT_AT_RELIABLE, false)
         )
     }
 }
@@ -147,6 +156,7 @@ object VlogClipKeys {
     const val END_MS = "endMs"
     const val SHOT_AT_MILLIS = "shotAtMillis"
     const val IS_MUTED = "isMuted"
+    const val SHOT_AT_RELIABLE = "shotAtReliable"
 
     /** 区間(texts)を持たせる前の旧バージョンで使われていたキー。読み込み専用の後方互換 */
     const val LEGACY_USER_TEXT = "userText"
@@ -173,6 +183,7 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
     put(VlogClipKeys.END_MS, endMs)
     put(VlogClipKeys.SHOT_AT_MILLIS, shotAtMillis)
     put(VlogClipKeys.IS_MUTED, isMuted)
+    put(VlogClipKeys.SHOT_AT_RELIABLE, shotAtReliable)
 }
 
 /**
@@ -264,6 +275,8 @@ data class VideoMeta(
     val timeText: String,
     val dateText: String,
     val shotAtMillis: Long,
+    /** 撮影時刻を確かな手がかりから取れたか（[VlogClip.shotAtReliable]） */
+    val shotAtReliable: Boolean,
     val durationMs: Long,
     val width: Int,
     val height: Int

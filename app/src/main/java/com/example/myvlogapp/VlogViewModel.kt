@@ -303,11 +303,56 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
         clearHistory()
 
+        refreshUnreliableShotTimes()
+
         if (restored.dropped > 0) {
             sendMessage(
                 "${restored.dropped} 件の動画は復元できませんでした" +
                         "（移動・削除されたか、アクセス権限が取り消されています）"
             )
+        }
+    }
+
+    /**
+     * 撮影時刻を確かな手がかりから取れていないクリップ（[VlogClip.shotAtReliable]がfalse）の時刻を、
+     * 動画から取り直す。復元時と一時保存の読み出し時に呼ぶ。
+     *
+     * 撮影時刻は動画ファイルから決まる値で、ユーザーが編集するものではない。それなのに追加した時点の
+     * 値をそのまま保存し続けると、その時に手がかりが足りず追加時刻などで代用した値が、
+     * 同じ動画を追加し直しても「追加済み」でスキップされるため、消して追加し直すまで残ってしまう。
+     * 取り直しても確かな値が取れなければ、いまの値のままにする。
+     * 並び順は変えない（ユーザーが並べ替えた順序を壊さないため）。履歴にも積まない（編集ではないため）。
+     */
+    private fun refreshUnreliableShotTimes() {
+        val targets = _clips.value.filter { !it.shotAtReliable }
+        if (targets.isEmpty()) return
+
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val refreshed = withContext(Dispatchers.IO) {
+                coroutineScope {
+                    targets.map { clip ->
+                        async {
+                            clip.id to getVideoMetadata(
+                                context, clip.uri, clip.shotAtMillis.takeIf { it > 0L } ?: now
+                            )
+                        }
+                    }.awaitAll()
+                }.toMap()
+            }
+
+            clipsMutationMutex.withLock {
+                _clips.value = _clips.value.map { clip ->
+                    val meta = refreshed[clip.id]?.takeIf { it.shotAtReliable } ?: return@map clip
+                    clip.copy(
+                        timeText = meta.timeText,
+                        dateText = meta.dateText,
+                        shotAtMillis = meta.shotAtMillis,
+                        shotAtReliable = true
+                    )
+                }
+            }
         }
     }
 
@@ -356,7 +401,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                                 height = meta.height,
                                 startMs = 0L,
                                 endMs = meta.durationMs,
-                                shotAtMillis = meta.shotAtMillis
+                                shotAtMillis = meta.shotAtMillis,
+                                shotAtReliable = meta.shotAtReliable
                             )
                         }
                     }.awaitAll()
@@ -734,6 +780,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                     _playbackPositionMs.value = 0L
                 }
             }
+            refreshUnreliableShotTimes()
 
             sendMessage(
                 if (restored.dropped > 0) {
