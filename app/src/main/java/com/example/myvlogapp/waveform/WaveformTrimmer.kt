@@ -1,7 +1,6 @@
 package com.example.myvlogapp.waveform
 
 import android.graphics.Rect as AndroidRect
-import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -227,22 +226,14 @@ fun WaveformTrimmer(
     // 奪われる端末がある。波形トリマー全体（左端〜右端）をジェスチャー除外領域として
     // 申告し、この範囲では常に自前のタッチ処理を優先させる。選択中クリップが変わって
     // 表示が消えるときは除外を解除しないと、別の場所にまで戻るジェスチャーが効かなくなる。
-    //
-    // systemGestureExclusionRects はAPI 29以降にしか無い。minSdkは24なので、
-    // 直に呼ぶと Android 9 以下で NoSuchMethodError で落ちる。
-    // ジェスチャーナビゲーション自体がAPI 29からの機能なので、それ未満では何もしない。
     val view = LocalView.current
-    val supportsGestureExclusion = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-    DisposableEffect(view, supportsGestureExclusion) {
-        onDispose {
-            if (supportsGestureExclusion) view.systemGestureExclusionRects = emptyList()
-        }
+    DisposableEffect(view) {
+        onDispose { view.systemGestureExclusionRects = emptyList() }
     }
 
     Box(
         modifier = modifier
             .onGloballyPositioned { coordinates ->
-                if (!supportsGestureExclusion) return@onGloballyPositioned
                 val bounds = coordinates.boundsInWindow()
                 view.systemGestureExclusionRects = listOf(
                     AndroidRect(

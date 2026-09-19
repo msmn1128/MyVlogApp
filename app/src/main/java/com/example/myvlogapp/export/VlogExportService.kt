@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -185,11 +184,6 @@ class VlogExportService : Service() {
     }
 
     private fun createChannel() {
-        // NotificationChannelはAPI 26以降の概念。minSdkは24なので、
-        // それ未満の端末では通知チャンネル自体を作らず素通りする
-        // （NotificationCompat.Builderは26未満ではチャンネルIDを無視して動く）。
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID, "VLOG書き出し", NotificationManager.IMPORTANCE_LOW
@@ -209,12 +203,11 @@ class VlogExportService : Service() {
             .build()
 
     private fun startForegroundWithNotification(message: String) {
-        val notification = buildNotification(message)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(message),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
     }
 
     private fun updateNotification(message: String) {

@@ -2,7 +2,6 @@ package com.example.myvlogapp.data
 
 import android.content.ContentUris
 import android.content.Context
-import android.os.Build
 import android.provider.MediaStore
 import android.net.Uri
 import android.util.Log
@@ -26,11 +25,7 @@ data class GalleryVideo(
 /** 端末内の動画を新しい順に取得する */
 suspend fun queryGalleryVideos(context: Context): List<GalleryVideo> =
     withContext(Dispatchers.IO) {
-        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        } else {
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
+        val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DISPLAY_NAME,

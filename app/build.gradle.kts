@@ -31,7 +31,11 @@ android {
         // 変更前(com.example.myvlogapp)で入れたアプリとは別アプリ扱いになり、
         // 端末内の自動保存・一時保存は引き継がれない。
         applicationId = "com.masamune.myvlogapp"
-        minSdk = 24
+        // Android 10 (API 29) 未満は切っている。ギャラリー保存に使う MediaStore の
+        // RELATIVE_PATH + IS_PENDING、サムネイル取得の loadThumbnail、戻るジェスチャーの
+        // 除外指定（systemGestureExclusionRects）がいずれもAPI 29からで、それ未満では
+        // 「書き出した動画が保存できない・サムネイルが出ない」状態になるため。
+        minSdk = 29
         targetSdk = 37
         versionCode = 3
         versionName = "1.0"

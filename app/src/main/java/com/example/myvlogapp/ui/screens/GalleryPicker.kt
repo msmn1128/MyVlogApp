@@ -2,7 +2,6 @@ package com.example.myvlogapp.ui.screens
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -62,7 +61,8 @@ private val TILE_SHAPE = RoundedCornerShape(6.dp)
 
 /**
  * サムネイル。1件ずつ非同期に読み込む。
- * loadThumbnail は API 29 以降。それ以前は無地のタイルにファイル名だけ出す。
+ * 取得できなかった動画（生成待ち・非対応コーデックなど）は無地のタイルに
+ * ファイル名だけを出す。
  */
 @Composable
 private fun rememberThumbnail(uri: Uri): Bitmap? {
@@ -70,11 +70,7 @@ private fun rememberThumbnail(uri: Uri): Bitmap? {
     return produceState<Bitmap?>(initialValue = null, uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.loadThumbnail(uri, THUMBNAIL_SIZE, null)
-                } else {
-                    null
-                }
+                context.contentResolver.loadThumbnail(uri, THUMBNAIL_SIZE, null)
             }.getOrNull()
         }
     }.value

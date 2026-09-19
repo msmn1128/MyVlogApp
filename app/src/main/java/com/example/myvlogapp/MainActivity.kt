@@ -460,20 +460,18 @@ private fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>) 
  * ドロワーを開いて階層を降りる必要がある。カメラの保存先を初期表示にして
  * その手間を無くす。
  *
- * EXTRA_INITIAL_URI が効くのは API 26 以上。それ以前や、指定先が存在しない端末では
- * 単に無視されて従来どおりの画面が開くだけなので、フォールバックは要らない。
+ * 指定先が存在しない端末ではEXTRA_INITIAL_URIが単に無視され、従来どおりの画面が
+ * 開くだけなので、フォールバックは要らない。
  */
 private class OpenVideosFromCamera : ActivityResultContracts.OpenMultipleDocuments() {
     override fun createIntent(context: Context, input: Array<String>): Intent =
         super.createIntent(context, input).apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                putExtra(
-                    DocumentsContract.EXTRA_INITIAL_URI,
-                    DocumentsContract.buildDocumentUri(
-                        "com.android.externalstorage.documents",
-                        "primary:DCIM/Camera"
-                    )
+            putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents",
+                    "primary:DCIM/Camera"
                 )
-            }
+            )
         }
 }

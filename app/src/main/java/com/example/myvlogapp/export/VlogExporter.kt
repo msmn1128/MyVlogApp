@@ -253,7 +253,7 @@ object VlogExporter {
      */
     fun cleanupOrphanedPendingFiles(context: Context) {
         // QUERY_ARG_MATCH_PENDING / MATCH_INCLUDE はAPI 30以降でしか効かない。
-        // それ未満ではIS_PENDINGなアイテムがそもそもクエリに出てこないため、
+        // Android 10ではIS_PENDINGなアイテムがそもそもクエリに出てこないため、
         // 掃除のしようがなく実行しても意味が無い（実害はないが早期returnする）。
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 
@@ -985,11 +985,7 @@ object VlogExporter {
     }.getOrDefault(emptySet())
 
     private fun videoCollection() =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
+        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
     /**
      * MP4のcreation_time用のISO 8601表記（UTC）。
@@ -1016,13 +1012,13 @@ object VlogExporter {
             put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Video.Media.DATE_TAKEN, createdAtMillis)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(
-                    MediaStore.Video.Media.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_MOVIES}/$OUTPUT_SUBDIRECTORY"
-                )
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
+            put(
+                MediaStore.Video.Media.RELATIVE_PATH,
+                "${Environment.DIRECTORY_MOVIES}/$OUTPUT_SUBDIRECTORY"
+            )
+            // 書き込み終わりで0に戻すまで、他アプリからは見えない（＝途中まで書けた
+            // 壊れた動画がギャラリーに並ばない）
+            put(MediaStore.Video.Media.IS_PENDING, 1)
         }
 
         val uri = resolver.insert(videoCollection(), values)
@@ -1042,11 +1038,9 @@ object VlogExporter {
             throw e
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-        }
+        values.clear()
+        values.put(MediaStore.Video.Media.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
         return displayName
     }
 

@@ -2,24 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-      Android 9 (API 28) 以下では、MediaStore経由でギャラリーに動画を保存するのに
-      書き込み権限が必要。API 29以上は RELATIVE_PATH + IS_PENDING で権限不要のため
-      maxSdkVersion で対象を28までに限定する。
-
-      動画の読み込み自体には権限が要らない（SAFのOpenMultipleDocumentsも併用している）が、
-      アプリ内のギャラリー画面は下の READ_MEDIA_VIDEO に依存している。
-    -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-
-    <!--
       アプリ内のギャラリー画面で端末の動画を一覧・選択するために必要。
       この権限があれば MediaStore の URI を恒久的に読めるので、動画を
       アプリ内へコピーしなくても、次回起動時に編集の続きを復元できる。
 
       READ_MEDIA_VISUAL_USER_SELECTED は Android 14 以降の「選択した項目のみ許可」用。
       全件許可を選ばなかった場合でも、選ばれた動画には継続してアクセスできる。
+
+      書き込み権限(WRITE_EXTERNAL_STORAGE)は宣言しない。書き出した動画は
+      MediaStore の RELATIVE_PATH + IS_PENDING で保存しており、API 29以上では
+      権限が要らないため（minSdkが29なので、権限が必要な API 28以下は対象外）。
     -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
