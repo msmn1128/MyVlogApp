@@ -586,7 +586,7 @@ object VlogExporter {
         text: String,
         textFiles: MutableList<File>
     ): File = File(workDir, name)
-        .apply { writeText(text.escapePercentExpansion(), Charsets.UTF_8) }
+        .apply { writeText(text, Charsets.UTF_8) }
         .also { textFiles += it }
 
     /**
@@ -777,6 +777,12 @@ object VlogExporter {
         val alphaPart = if (alpha != null) ":alpha='$alpha'" else ""
         return "drawtext=fontfile='${fontfile.absolutePath}'" +
                 ":$content" +
+                // expansion=none で %{...}（strftimeやメタデータの展開）を止める。
+                // 既定のnormalのままだと、ひとことにたまたま "%" が入っているだけで
+                // 展開を試みて表示が壊れたり、パースエラーで書き出しごと失敗したりする。
+                // 以前は文字列側で "%" を "%%" に置換して逃げていたが、
+                // 展開機能自体を切れば置換は要らない（=置換漏れの余地も無くなる）。
+                ":expansion=none" +
                 ":fontsize=${fontsizePt.toInt()}:fontcolor=$color" +
                 ":x=$x:y=$y$alphaPart$enable"
     }
@@ -797,15 +803,6 @@ object VlogExporter {
             else -> "(h-text_h)/2-${-offset}"
         }
     }
-
-    /**
-     * drawtextの %{...} 展開（strftimeやメタデータなど）を無効化する。
-     *
-     * text= 経由かtextfile= 経由かに関わらず、読み込んだ文字列に対して効いてしまうため、
-     * ひとことにたまたま "%" が含まれているだけでも展開を試みて表示が壊れたり
-     * フィルタのパースエラーで書き出しごと失敗したりする。%を%%にすると無効化できる。
-     */
-    private fun String.escapePercentExpansion() = replace("%", "%%")
 
     /** 動画に音声トラックが存在するか（[Waveform.hasAudio]と同じ判定方法） */
     private fun hasAudioTrack(context: Context, uri: Uri): Boolean {
