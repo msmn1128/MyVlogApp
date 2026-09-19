@@ -105,6 +105,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     /** 選択中クリップの再生位置。波形の再生ヘッド表示に使う */
     val playbackPositionMs: StateFlow<Long> get() = playback.playbackPositionMs
 
+    /** 再生中か。画面側が再生位置のポーリングを回すかどうかの判断に使う */
+    val isPlaying: StateFlow<Boolean> get() = playback.isPlaying
+
     /**
      * 波形のキャッシュ。キーはURI文字列。
      *

@@ -99,6 +99,16 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     private val _timelineMuted = MutableStateFlow(false)
     val timelineMuted: StateFlow<Boolean> = _timelineMuted.asStateFlow()
 
+    /**
+     * いま実際に音と映像が進んでいるか。
+     *
+     * 画面側の再生位置ポーリング（MainActivity）を、再生中だけに絞るために公開している。
+     * `playWhenReady`ではなく`isPlaying`なのは、バッファ待ちで止まっている間は位置が
+     * 進まず、ポーリングしても意味が無いため。
+     */
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
     val selectedIndexValue: Int get() = _selectedIndex.value
     val positionMsValue: Long get() = _playbackPositionMs.value
     val isTimelineMuted: Boolean get() = _timelineMuted.value
@@ -129,6 +139,10 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
                 if (playbackState != Player.STATE_ENDED) return
                 player.playWhenReady = false
                 stopAtTimelineEnd()
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                _isPlaying.value = isPlaying
             }
         })
     }

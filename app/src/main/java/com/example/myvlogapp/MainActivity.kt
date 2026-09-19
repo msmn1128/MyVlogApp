@@ -434,20 +434,24 @@ private fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>) 
     }
 
     // 再生位置の更新とトリミング範囲の連続再生。
-    // キーをUnitにしているのは、selectedIndexだとクリップが切り替わるたびに
-    // ループが作り直されて監視が途切れてしまうため。
     //
-    // repeatOnLifecycleで囲むのは、アプリをバックグラウンドに回しても
-    // （BackHandlerでmoveTaskToBackした場合など）この無限ループ自体は
-    // Composition生存中ずっと動き続け、上のDisposableEffectが再生こそ止めるものの
-    // PLAYBACK_POLL_INTERVAL_MS間隔のポーリングは止まらず無駄にCPU/バッテリーを
-    // 消費していたため。STARTED未満（バックグラウンド）になると自動的に一時停止し、
-    // 前面に戻ると再開する。
+    // 回すのは「前面」かつ「再生中」のときだけ。
+    //  - repeatOnLifecycle：バックグラウンドに回しても（BackHandlerでmoveTaskToBackした
+    //    場合など）ループ自体はComposition生存中ずっと動き続けてしまうため
+    //  - collectLatest(isPlaying)：一時停止中は再生位置が進まず、ポーリングしても
+    //    毎回同じ値を読んで捨てるだけの空振りになるため。再生が止まると
+    //    collectLatestが内側のループごとキャンセルし、再生を押すとまた始まる
+    //
+    // 一時停止中の位置あわせはポーリングではなく、シーク系の操作
+    // （PlaybackControllerのseekWithoutPause/seekAndPause）が直接行っている。
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                delay(PLAYBACK_POLL_INTERVAL_MS)
-                viewModel.refreshPlaybackProgress()
+            viewModel.isPlaying.collectLatest { playing ->
+                if (!playing) return@collectLatest
+                while (true) {
+                    delay(PLAYBACK_POLL_INTERVAL_MS)
+                    viewModel.refreshPlaybackProgress()
+                }
             }
         }
     }
