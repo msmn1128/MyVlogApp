@@ -316,16 +316,22 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
         // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
         // ケースは既知の制約として残す。
+        // 通知の件数は、引き算で辻褄を合わせるのではなく理由ごとに数える。
+        // uris.size から引いていた頃は、呼び出し元が同じURIを2回渡しただけで
+        // 「1件は追加済みのためスキップしました」と出ていた（タイムラインには無いのに）。
+        // また、スキップの理由が増えるたびに引き算の式を直す必要があった。
+        val requested = uris.distinct()
         val existingUris = _clips.value.map { it.uri }.toSet()
-        val newUris = uris.distinct().filter { it !in existingUris }
+        val newUris = requested.filter { it !in existingUris }
+        val alreadyInTimeline = requested.size - newUris.size
         if (newUris.isEmpty()) {
-            addSkipMessage(alreadyAdded = uris.size, unreadable = 0)?.let(::sendMessage)
+            addSkipMessage(alreadyAdded = alreadyInTimeline, unreadable = 0)?.let(::sendMessage)
             return
         }
         // すでに上限いっぱいなら、読み込むまでもなく断る
         if (_clips.value.size >= MAX_CLIPS) {
             addSkipMessage(
-                alreadyAdded = uris.size - newUris.size, unreadable = 0, overLimit = newUris.size
+                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = newUris.size
             )?.let(::sendMessage)
             return
         }
@@ -363,6 +369,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 長さを読めなかった動画は入れない（尺0のクリップは書き出しを止めてしまう）
         val (readable, unreadable) = loaded.partition { it.isValid }
 
+        // メタデータの取得中に、別のaddClips呼び出しが同じ動画を先に追加していた件数。
+        // ロックの中でしか分からないので、ここで受け取って通知の件数に足す。
+        var addedWhileLoading = 0
         val (toMerge, overLimit) = clipsMutationMutex.withLock {
             // ロック取得前のチェックは、メタデータ取得中に別の
             // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
@@ -370,6 +379,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // 上限もここで、追加の直前の本数を基準に守る（並行した追加で超えないように）。
             val currentUris = _clips.value.map { it.uri }.toSet()
             val candidates = readable.filter { it.uri !in currentUris }
+            addedWhileLoading = readable.size - candidates.size
             val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
             val toMerge = candidates.take(room)
             val overLimit = candidates.size - toMerge.size
@@ -390,7 +400,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         addSkipMessage(
-            alreadyAdded = uris.size - toMerge.size - unreadable.size - overLimit,
+            alreadyAdded = alreadyInTimeline + addedWhileLoading,
             unreadable = unreadable.size,
             overLimit = overLimit
         )?.let(::sendMessage)
