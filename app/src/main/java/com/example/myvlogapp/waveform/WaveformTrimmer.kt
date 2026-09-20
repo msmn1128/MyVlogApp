@@ -195,29 +195,29 @@ fun WaveformTrimmer(
             if (!pinnedLeft && !pinnedRight) continue
             val direction = if (pinnedLeft) -1L else 1L
             val tickMs = edgeScrollTickMs(lockedViewportState.value, latestDuration)
+            // クランプ・パン・通知は、指でドラッグしているときと同じ関数を呼ぶ
+            // （dragTrimHandle / dragBodyOrMove と扱いがずれないように）
+            val handle = activeHandle
             when {
-                activeHandle == TrimHandle.Start -> {
-                    val newMs = clampHandleMs(
-                        TrimHandle.Start, latestStart + direction * tickMs, latestStart, latestEnd, latestDuration
-                    )
-                    panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
-                    latestCallbacks.onTrimChange(newMs, latestEnd, newMs)
-                }
-                activeHandle == TrimHandle.End -> {
-                    val newMs = clampHandleMs(
-                        TrimHandle.End, latestEnd + direction * tickMs, latestStart, latestEnd, latestDuration
-                    )
-                    panViewportIfNeeded(newMs, latestDuration, lockedViewportState)
-                    latestCallbacks.onTrimChange(latestStart, newMs, newMs)
-                }
-                isMovingTrim -> {
-                    val (newStart, newEnd) = computeMoveSpan(
-                        latestStart + direction * tickMs, latestStart, latestEnd, latestDuration
-                    )
-                    panViewportIfNeeded(newStart, latestDuration, lockedViewportState)
-                    panViewportIfNeeded(newEnd, latestDuration, lockedViewportState)
-                    latestCallbacks.onTrimMove(newStart, newStart)
-                }
+                handle != null -> applyHandleMove(
+                    handleKind = handle,
+                    candidateMs = (if (handle == TrimHandle.Start) latestStart else latestEnd) +
+                            direction * tickMs,
+                    start = latestStart,
+                    end = latestEnd,
+                    duration = latestDuration,
+                    lockedViewportState = lockedViewportState,
+                    onTrimChange = latestCallbacks.onTrimChange
+                )
+
+                isMovingTrim -> applyTrimMove(
+                    candidateStartMs = latestStart + direction * tickMs,
+                    start = latestStart,
+                    end = latestEnd,
+                    duration = latestDuration,
+                    lockedViewportState = lockedViewportState,
+                    onTrimMove = latestCallbacks.onTrimMove
+                )
             }
         }
     }

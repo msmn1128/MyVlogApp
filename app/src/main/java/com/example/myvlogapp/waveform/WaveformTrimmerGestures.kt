@@ -72,6 +72,14 @@ internal class TrackMetrics(
     /** 1msあたりのpx幅。区間ごと移動のドラッグ量計算に使う */
     val pxPerMs: Float get() = width / viewSpanMs
 
+    /**
+     * トラックの幅（left/right）はそのままに、ビューポート（ズーム範囲）だけを
+     * 差し替えたものを作る。ドラッグ中はパンでビューポートが書き換わるので、
+     * px⇔msの変換のたびにこれで作り直す。
+     */
+    fun withViewport(viewport: LongRange) =
+        TrackMetrics(left, right, viewport.first, viewport.last)
+
     companion object {
         /** つまみの半径ぶん内側に縮めたトラック範囲を作る（左右0%・100%でもつまみが切れないように） */
         fun forWidth(totalWidth: Float, handleHalfPx: Float, viewStartMs: Long, viewEndMs: Long) =
@@ -131,6 +139,15 @@ internal fun edgeScrollTickMs(viewport: LongRange?, durationMs: Long): Long {
 }
 
 /**
+ * いまロックされているビューポートを基準にしたトラック。
+ * ロックされていなければ（＝ドラッグの開始前）[track]をそのまま使う。
+ */
+private fun currentTrack(
+    track: TrackMetrics,
+    lockedViewportState: MutableState<LongRange?>
+): TrackMetrics = lockedViewportState.value?.let(track::withViewport) ?: track
+
+/**
  * つまみ（[TrimHandle.Start]/[TrimHandle.End]）を動かした先の候補[ms]を、動画の範囲・
  * MIN_TRIM_MSの制約へクランプする。指でドラッグしているとき（[dragTrimHandle]）と、
  * 端に張り付いたまま自動で進めるとき（WaveformTrimmer内のオートスクロール
@@ -145,6 +162,56 @@ internal fun clampHandleMs(handleKind: TrimHandle, ms: Long, start: Long, end: L
         TrimHandle.Start -> ms.coerceIn(0L, (end - MIN_TRIM_MS).coerceAtLeast(0L))
         TrimHandle.End -> ms.coerceIn((start + MIN_TRIM_MS).coerceAtMost(duration), duration)
     }
+
+/**
+ * つまみを[candidateMs]へ動かす。クランプ → ビューポートのパン → 通知 までを1つにまとめてある。
+ *
+ * 指でドラッグしているとき（[dragTrimHandle]）と、端に張り付いたまま自動で進めるとき
+ * （WaveformTrimmer内のオートスクロール）の両方がこれを呼ぶ。以前は
+ * 「どちらの端を動かしたか」に応じた onTrimChange の引数の組み立てが3箇所に散っており、
+ * start と end を取り違えても気付きにくかった。
+ *
+ * @return クランプ後の位置
+ */
+internal fun applyHandleMove(
+    handleKind: TrimHandle,
+    candidateMs: Long,
+    start: Long,
+    end: Long,
+    duration: Long,
+    lockedViewportState: MutableState<LongRange?>,
+    onTrimChange: (startMs: Long, endMs: Long, seekMs: Long) -> Unit
+): Long {
+    val next = clampHandleMs(handleKind, candidateMs, start, end, duration)
+    panViewportIfNeeded(next, duration, lockedViewportState)
+    when (handleKind) {
+        TrimHandle.Start -> onTrimChange(next, end, next)
+        TrimHandle.End -> onTrimChange(start, next, next)
+    }
+    return next
+}
+
+/**
+ * 区間ごと移動を[candidateStartMs]へ適用する。幅のクランプ → 両端がビューポートから
+ * はみ出していればパン → 通知 までを1つにまとめてある。[applyHandleMove]と同じく、
+ * 指ドラッグとオートスクロールの両方がこれを呼ぶ。
+ *
+ * @return 適用後の開始・終了位置（呼び出し側が端への張り付き判定に使う）
+ */
+internal fun applyTrimMove(
+    candidateStartMs: Long,
+    start: Long,
+    end: Long,
+    duration: Long,
+    lockedViewportState: MutableState<LongRange?>,
+    onTrimMove: (startMs: Long, seekMs: Long) -> Unit
+): MoveSpanResult {
+    val moved = computeMoveSpan(candidateStartMs, start, end, duration)
+    panViewportIfNeeded(moved.newStart, duration, lockedViewportState)
+    panViewportIfNeeded(moved.newEnd, duration, lockedViewportState)
+    onTrimMove(moved.newStart, moved.newStart)
+    return moved
+}
 
 /** [computeMoveSpan]の結果。区間ごと移動後の新しい開始・終了位置。 */
 internal data class MoveSpanResult(val newStart: Long, val newEnd: Long)
@@ -340,22 +407,23 @@ internal suspend fun AwaitPointerEventScope.dragTrimHandle(
     // 「動かせる余地が無ければ現在地のまま」に倒す。
     dragUntilRelease(downId) { change ->
         val rawX = change.position.x - grabOffset
-        val locked = lockedViewportState.value
-        if (locked != null) {
-            val extrapolated = TrackMetrics(track.left, track.right, locked.first, locked.last)
+        // 指がビューポートの外へ出たら、まず表示範囲の方を指へ追従させる。
+        // そのうえで、パン後のトラックで x → ms に直す。
+        lockedViewportState.value?.let { locked ->
+            val extrapolated = track.withViewport(locked)
                 .extrapolatedMs(rawX)
                 .coerceIn(0L, latestDuration.value)
             panViewportIfNeeded(extrapolated, latestDuration.value, lockedViewportState)
         }
-        val currentTrack = lockedViewportState.value?.let {
-            TrackMetrics(track.left, track.right, it.first, it.last)
-        } ?: track
-        val ms = currentTrack.xToMs(rawX)
-        val next = clampHandleMs(handleKind, ms, latestStart.value, latestEnd.value, latestDuration.value)
-        when (handleKind) {
-            TrimHandle.Start -> onTrimChange(next, latestEnd.value, next)
-            TrimHandle.End -> onTrimChange(latestStart.value, next, next)
-        }
+        applyHandleMove(
+            handleKind = handleKind,
+            candidateMs = currentTrack(track, lockedViewportState).xToMs(rawX),
+            start = latestStart.value,
+            end = latestEnd.value,
+            duration = latestDuration.value,
+            lockedViewportState = lockedViewportState,
+            onTrimChange = onTrimChange
+        )
         // 指を動かさなくても、つまみがビューポート端に張り付いている間は波形が
         // 連続でパンし続ける（実際に毎フレーム進める処理はComposable側の
         // LaunchedEffectが担う。ここではそのトリガーとなるフラグを立てるだけ）。
@@ -444,23 +512,21 @@ internal suspend fun AwaitPointerEventScope.dragBodyOrMove(
 
                 dragUntilRelease(down.id) { change ->
                     val rawX = change.position.x - grabOffset
-                    val currentTrack = lockedViewportState.value?.let {
-                        TrackMetrics(track.left, track.right, it.first, it.last)
-                    } ?: track
-                    val (newStart, newEnd) = computeMoveSpan(
-                        currentTrack.extrapolatedMs(rawX), latestStart.value, latestEnd.value, latestDuration.value
+                    val (newStart, newEnd) = applyTrimMove(
+                        candidateStartMs = currentTrack(track, lockedViewportState)
+                            .extrapolatedMs(rawX),
+                        start = latestStart.value,
+                        end = latestEnd.value,
+                        duration = latestDuration.value,
+                        lockedViewportState = lockedViewportState,
+                        onTrimMove = callbacks.onTrimMove
                     )
-                    panViewportIfNeeded(newStart, latestDuration.value, lockedViewportState)
-                    panViewportIfNeeded(newEnd, latestDuration.value, lockedViewportState)
-                    callbacks.onTrimMove(newStart, newStart)
                     // 指を動かさなくても、区間が端に張り付いている間は波形が連続で
                     // パンし続ける（実際に毎フレーム進める処理はComposable側の
                     // LaunchedEffectが担う。ここではそのトリガーとなるフラグを立てるだけ）。
                     // 区間ごと移動は左右どちらの端がビューポート外に張り付くか分からないので、
                     // 実際に描画される位置（パン後のトラックでmsToXした位置）で両方判定する
-                    val pannedTrack = lockedViewportState.value?.let {
-                        TrackMetrics(track.left, track.right, it.first, it.last)
-                    } ?: track
+                    val pannedTrack = currentTrack(track, lockedViewportState)
                     isPinnedAtLeftEdgeState.value = pannedTrack.msToX(newStart) <= track.left + edgeScrollZonePx
                     isPinnedAtRightEdgeState.value = pannedTrack.msToX(newEnd) >= track.right - edgeScrollZonePx
                 }

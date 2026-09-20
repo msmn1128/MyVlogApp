@@ -10,10 +10,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,9 +19,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import com.example.myvlogapp.data.ClipStore
@@ -343,27 +338,20 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // タイミング（実行順とは無関係）に左右されないよう、ここで選択順に沿って1件ずつ
         // 確実にずらした時刻を用意しておく。
         val fallbackBaseMillis = System.currentTimeMillis()
-        val gate = Semaphore(METADATA_PARALLELISM)
         val loaded = withContext(Dispatchers.IO) {
-            coroutineScope {
-                newUris.mapIndexed { offset, uri ->
-                    async {
-                        gate.withPermit {
-                            val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
-                            VlogClip(
-                                id = nextClipId(),
-                                uri = uri,
-                                timeText = meta.timeText,
-                                dateText = meta.dateText,
-                                durationMs = meta.durationMs,
-                                startMs = 0L,
-                                endMs = meta.durationMs,
-                                shotAtMillis = meta.shotAtMillis,
-                                shotAtReliable = meta.shotAtReliable
-                            )
-                        }
-                    }
-                }.awaitAll()
+            newUris.mapParallel(METADATA_PARALLELISM) { offset, uri ->
+                val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
+                VlogClip(
+                    id = nextClipId(),
+                    uri = uri,
+                    timeText = meta.timeText,
+                    dateText = meta.dateText,
+                    durationMs = meta.durationMs,
+                    startMs = 0L,
+                    endMs = meta.durationMs,
+                    shotAtMillis = meta.shotAtMillis,
+                    shotAtReliable = meta.shotAtReliable
+                )
             }
         }
         // 長さを読めなかった動画は入れない（尺0のクリップは書き出しを止めてしまう）

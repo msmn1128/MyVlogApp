@@ -12,17 +12,13 @@ import android.provider.MediaStore
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.coroutineContext
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MAX_CLIPS
+import com.example.myvlogapp.mapParallel
 import com.example.myvlogapp.TIME_FONT_ASSET
 import com.example.myvlogapp.TITLE_DURATION_MS
 import com.example.myvlogapp.TITLE_FONT_ASSET
@@ -69,14 +65,8 @@ internal class AudioPlan(
             muted: Boolean
         ): AudioPlan = AudioPlan(
             needsTitleSfxInput = includeTitle && !muted,
-            clipHasRealAudio = coroutineScope {
-                val gate = Semaphore(AUDIO_PROBE_PARALLELISM)
-                clips.map { clip ->
-                    async {
-                        !clip.isSilentInExport(muted) &&
-                                gate.withPermit { hasAudioTrack(context, clip.uri) }
-                    }
-                }.awaitAll()
+            clipHasRealAudio = clips.mapParallel(AUDIO_PROBE_PARALLELISM) { _, clip ->
+                !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri)
             }
         )
     }
