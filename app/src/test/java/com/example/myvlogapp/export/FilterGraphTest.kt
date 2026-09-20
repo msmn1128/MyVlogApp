@@ -28,13 +28,13 @@ class FilterGraphTest {
     private fun buildGraph(): String {
         val workDir = Files.createTempDirectory("vlog_graph_test").toFile()
         return try {
-            val fonts = VlogExporter.ExportFonts(File(workDir, "logo.otf"), File(workDir, "time.ttf"))
-            val audioPlan = VlogExporter.AudioPlan(
+            val fonts = ExportFonts(File(workDir, "logo.otf"), File(workDir, "time.ttf"))
+            val audioPlan = AudioPlan(
                 needsTitleSfxInput = true,
                 clipHasRealAudio = listOf(true, false)
             )
             runBlocking {
-                VlogExporter.buildFilterGraph(
+                buildFilterGraph(
                     listOf(splitClip, silentClip), fonts, "2026/01/01", 667L, workDir, 1L,
                     mutableListOf(), includeTitle = true, audioPlan = audioPlan
                 )
@@ -50,11 +50,11 @@ class FilterGraphTest {
         // スレッドごとのバッファが本数ぶん積み上がる）。-i の前に置いて、その入力のデコーダに効かせる
         assertEquals(
             listOf("-threads", "1", "-ss", "4.000", "-t", "5.000", "-i", "saf:1"),
-            VlogExporter.clipInputArgs(splitClip, "saf:1")
+            clipInputArgs(splitClip, "saf:1")
         )
         assertEquals(
             listOf("-threads", "1", "-ss", "0.000", "-t", "3.000", "-i", "saf:2"),
-            VlogExporter.clipInputArgs(silentClip, "saf:2")
+            clipInputArgs(silentClip, "saf:2")
         )
     }
 
