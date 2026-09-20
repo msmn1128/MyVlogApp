@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（113件）
+./gradlew testDebugUnitTest        # JVM単体テスト（130件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -49,22 +49,28 @@ ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
 
 ```
 MainActivity            画面構成（縦1カラム / 横2ペイン）、権限、ダイアログ、ポーリング
-  └ VlogViewModel       クリップ一覧の所有者。編集操作の窓口。画面はここだけを見る
+  └ VlogViewModel       配線と窓口。画面はここだけを見る
+      ├ TimelineStore       クリップ一覧・履歴・プレイリスト同期・編集操作の本体
+      │    └ EditHistory       もとに戻す / やり直す
       ├ PlaybackController  ExoPlayer・選択位置・再生位置・自動遷移・トリム終端の停止
-      ├ EditHistory         もとに戻す / やり直す
-      ├ ClipStore           自動保存・一時保存（SharedPreferences、動画はコピーしない）
+      ├ ProjectsController  一時保存の保存・上書き・読み出し・削除
+      │    └ ClipStore         自動保存・一時保存（SharedPreferences、動画はコピーしない）
       ├ Waveform            音声をMediaCodecでデコードして波形にする
       └ VlogExportService   書き出し（フォアグラウンドサービス）
-            └ VlogExporter  FFmpegのフィルタグラフ構築と実行、ギャラリー保存
+            └ VlogExporter  書き出しの手順（中身は export/ の各ファイル）
 ```
+
+画面（`ui/screens/`）は `VlogViewModel` を受け取らない。MainActivity が
+`TimelineState`（状態を **StateFlow のまま**）と `TimelineActions`（操作）に組み立てて渡す。
+値まで上げないのは再コンポーズ範囲を絞るためで、理由は `ui/screens/TimelineActions.kt` にある。
 
 | パッケージ | 役割 |
 |---|---|
-| ルート | `VlogModels`(純粋データ) / `VlogConstants`(定数) / `Formatters`(表示整形) / `VlogViewModel` / `MainActivity` |
-| `data/` | `ClipStore`(永続化) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
+| ルート | `VlogModels`(純粋データ) / `VlogConstants`(定数) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity` |
+| `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
 | `playback/` | `PlaybackController` とその純粋関数 `playFromWhere` |
-| `edit/` | `EditHistory`（スナップショット型を問わない汎用の履歴） |
-| `export/` | `VlogExporter` `VlogExportService` `ExportStatus`（プロセス共有の進行状態） |
+| `edit/` | `TimelineStore`(クリップ一覧の持ち主) `EditHistory`（スナップショット型を問わない汎用の履歴） |
+| `export/` | 下記「書き出しパイプライン」参照 |
 | `waveform/` | 波形の抽出・描画・ジェスチャー・トリマーUI |
 | `ui/` | `screens/`（画面の塊） `components/`（共通部品） `theme/` |
 
@@ -103,10 +109,23 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 
 ---
 
-## 書き出しパイプライン（`VlogExporter`）
+## 書き出しパイプライン（`export/`）
 
 タイトルカードと全クリップを**仮想タイムライン上に並べ、1回のFFmpeg呼び出しで結合・エンコード**する。
 クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため。
+
+`VlogExporter.export()` が持つのは手順だけで、各工程は同じパッケージの別ファイルにある。
+
+| ファイル | 役割 |
+|---|---|
+| `VlogExporter.kt` | `export()` の手順、`AudioPlan`、強制終了時の後始末2種 |
+| `FilterGraph.kt` | `filter_complex` の組み立て。**下の地雷はほぼすべてここ** |
+| `ExportTextFiles.kt` | drawtextへ渡す行ごとのテキストファイル |
+| `ExportAssets.kt` | フォント・効果音のassetsからの展開 |
+| `FFmpegCapabilities.kt` | 使えるエンコーダ・フィルタの判定と出力フォーマット |
+| `FFmpegRunner.kt` | 実行・進捗・中止（実行中セッションを控えるのはここだけ） |
+| `GalleryOutput.kt` | MediaStoreへの保存、ファイル名の連番 |
+| `VlogExportService.kt` / `ExportStatus.kt` | フォアグラウンドサービスと、プロセス共有の進行状態 |
 
 ```
 -i 効果音(タイトルありのときのみ) -i clip1 -i clip2 ... -filter_complex_script graph.txt
@@ -205,19 +224,19 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、113件。対象は純粋関数に限られる。
+JVM単体テスト（`src/test`）のみ、130件。対象は純粋関数に限られる。
 
 | ファイル | 対象 |
 |---|---|
-| `VlogClipTest` | 尺・区間・分割点の判定 |
-| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換 |
+| `VlogClipTest` | 尺・区間・分割点の判定、区間ごと移動でずらせる量（`clampTimelineShift`） |
+| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順） |
 | `MergeAndFormatTest` | 撮影日時順の差し込み、連番付け、表示整形 |
 | `AddClipsSpecTest` | 追加時のスキップ通知、選択順 |
 | `ProjectSpecTest` | 一時保存の読み出し可否、保存領域の移行 |
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
-| `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ |
+| `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
@@ -248,11 +267,22 @@ JVMで動かないため実装を入れている。
 
 ---
 
+## 採った設計（似た形に戻さないために）
+
+- **UI層へは値ではなく `StateFlow` を渡す。** `canUndo` や選択中の波形を「値」まで上げると、
+  undo可否が変わったり波形が1本届いたりするたびに画面全体が再コンポーズされる。
+  `StateFlow` のまま渡して collect は葉のComposableに残すと、依存だけが切れて
+  再コンポーズ範囲は変わらない。操作は `@Stable` なホルダー（`TimelineActions`）に
+  まとめ、`remember(viewModel)` で**1度だけ**作る（毎回作り直すと `@Stable` の意味が消える）。
+- **波形は選択中の1本だけを流す**（`VlogViewModel.selectedWaveform`）。
+  `Map<URI, Waveform?>` を画面へ渡すと、1本届くたびにMapが差し替わって全体が再コンポーズされる。
+- **ViewModelは「クリップ一覧 vs 一時保存」ではなく「状態の層 vs その上の機能」で分ける。**
+  一時保存の読み出しはクリップ一覧・再生・履歴を同時に触るため、一時保存だけを切り出そうと
+  すると必ず失敗する。この3つを `TimelineStore` にまとめたことで、`ProjectsController` は
+  その上に独立して載るようになった。
+
 ## 未解決 / 今後
 
-- **UI層の state hoisting をしていない。** `PreviewSection` / `EditSection` が `VlogViewModel` を
-  直接受け取っている。`canUndo` や `waveforms` を各Composableの中で collect することで
-  再コンポーズ範囲を絞っており、素直に上へ上げると波形が1本届くたびに画面全体が
-  再コンポーズされる。やるなら再コンポーズ範囲を保つ設計とセットで。
-- 一時保存のViewModel分離は見送った。読み出しがクリップ一覧・再生・履歴を同時に触るため
-  切り出せず、保存系だけ分けると関連コードが2ファイルに散る。
+- instrumented テストと Compose UI テストが無いのは変わっていない（「テスト」節を参照）。
+  `TimelineStore` / `ProjectsController` / `VlogViewModel` は JVM 単体テストで
+  1件も守られていないので、触ったら実機で確認すること。

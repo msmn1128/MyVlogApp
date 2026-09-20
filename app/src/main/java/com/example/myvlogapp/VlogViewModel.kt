@@ -2,7 +2,6 @@ package com.example.myvlogapp
 
 import android.app.Application
 import android.net.Uri
-import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,15 +21,12 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 import com.example.myvlogapp.data.ClipStore
+import com.example.myvlogapp.data.ProjectsController
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
-import com.example.myvlogapp.edit.EditHistory
-import com.example.myvlogapp.edit.EditTag
+import com.example.myvlogapp.edit.TimelineStore
 import com.example.myvlogapp.export.ExportState
 import com.example.myvlogapp.export.ExportStatus
 import com.example.myvlogapp.export.VlogEvent
@@ -62,14 +58,48 @@ private const val METADATA_PARALLELISM = 4
  * ViewModelに置く理由：Composable内の remember だけだと画面回転や
  * ダークモード切替で読み込んだクリップが消え、書き出しも中断されてしまう。
  * ExoPlayerもここで保持して再生位置を維持する。
+ *
+ * 中身は3つに分かれていて、ここはその配線と、どれにも属さない仕事（動画の追加・波形・
+ * 書き出しの窓口・Toastの中継）だけを持つ：
+ * - [playback]   : ExoPlayerと再生位置（playback/PlaybackController.kt）
+ * - [timeline]   : クリップ一覧・履歴・プレイリスト同期（edit/TimelineStore.kt）
+ * - [projects]   : 一時保存（data/ProjectsController.kt）
+ *
+ * 画面（MainActivity）はこのクラスだけを見て、状態と操作を組み立てて下へ渡す。
  */
 @OptIn(UnstableApi::class)
 class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _clips = MutableStateFlow<List<VlogClip>>(emptyList())
-    val clips: StateFlow<List<VlogClip>> = _clips.asStateFlow()
+    /**
+     * プレビュー再生の受け持ち。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
+     * トリミング終端での停止はすべてこちら（playback/PlaybackController.kt）にある。
+     */
+    private val playback = PlaybackController(application) { timeline.current }
 
+    /**
+     * クリップ一覧・履歴・プレイリスト同期の持ち主（edit/TimelineStore.kt）。
+     * 編集操作はすべてここを通る。
+     */
+    private val timeline: TimelineStore = TimelineStore(
+        playback = playback,
+        sendMessage = ::sendMessage,
+        // 一覧から外れた動画の波形は捨てる。一覧を更新したあとに呼ばれる
+        onUrisReleased = { uris -> uris.forEach(::cancelWaveformJobIfUnused) }
+    )
+
+    /** 一時保存（data/ProjectsController.kt） */
+    private val projectsController: ProjectsController = ProjectsController(
+        context = application,
+        scope = viewModelScope,
+        timeline = timeline,
+        isAdding = { _isAdding.value },
+        sendMessage = ::sendMessage
+    )
+
+    val clips: StateFlow<List<VlogClip>> get() = timeline.clips
     val selectedIndex: StateFlow<Int> get() = playback.selectedIndex
+    val canUndo: StateFlow<Boolean> get() = timeline.canUndo
+    val canRedo: StateFlow<Boolean> get() = timeline.canRedo
 
     // 書き出しの実体は VlogExportService（Activity/ViewModelより長生きする）が持つ。
     // ここは ExportStatus を覗くだけ。
@@ -77,9 +107,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _events = Channel<VlogEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
-
-    val canUndo: StateFlow<Boolean> get() = history.canUndo
-    val canRedo: StateFlow<Boolean> get() = history.canRedo
 
     /**
      * 動画を追加中（メタデータを読んでいる間）か。画面に進捗を出し、追加ボタンの連打を止めるのに使う。
@@ -108,6 +135,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     /** 再生中か。画面側が再生位置のポーリングを回すかどうかの判断に使う */
     val isPlaying: StateFlow<Boolean> get() = playback.isPlaying
 
+    /** プレビュー(PlayerView)へ渡すためだけに公開している */
+    val player: ExoPlayer get() = playback.player
+
     /**
      * 波形のキャッシュ。キーはURI文字列。
      *
@@ -121,43 +151,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val waveformJobs = mutableMapOf<String, Job>()
 
-    // --- 履歴（もとに戻す / やり直す） ---------------------------------------------------
-    //
-    // 積む・まとめる・取り出すの仕組みは EditHistory（edit/EditHistory.kt）が持つ。
-    // ここに残すのは「スナップショットに何を含めるか」と「取り出した状態を画面へ戻す方法」
-    // の2つだけ。
-    private data class Snapshot(val clips: List<VlogClip>, val selectedIndex: Int)
-
-    // 壁時計ではなく端末の起動からの経過時間を渡す。時刻合わせで巻き戻ると、
-    // まとめ判定が意図せず効いたり効かなかったりするため。
-    private val history = EditHistory<Snapshot>(elapsedMs = SystemClock::elapsedRealtime)
-
-    /**
-     * プレビュー再生の受け持ち。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
-     * トリミング終端での停止はすべてこちら（playback/PlaybackController.kt）にあり、
-     * ViewModelはクリップ一覧を渡して操作を頼むだけにしてある。
-     */
-    private val playback = PlaybackController(application) { _clips.value }
-
-    /** プレビュー(PlayerView)へ渡すためだけに公開している */
-    val player: ExoPlayer get() = playback.player
-
-    val selectedClip: VlogClip? get() = _clips.value.getOrNull(playback.selectedIndexValue)
-
-    /**
-     * `_clips`を非同期の後始末を伴って書き換える操作（クリップ追加・一時保存の読み込みなど）を
-     * 直列化するロック。
-     *
-     * これらは「バックグラウンドでの下ごしらえ → 完了後に_clips.valueへ反映」という
-     * 形を取るため、2つの操作が重なると片方の反映が失われることがある
-     * （例：動画追加のメタデータ取得中に一時保存を読み込むと、その後addClipsが
-     * 古い_clips.valueを基準に追記してしまい、loadProjectの結果を巻き戻すか、
-     * 逆にloadProjectがaddClipsの結果を消してしまう）。
-     * 反映（コミット）部分だけをこのロックで囲み、常に最新の_clips.valueを
-     * 基準にする。
-     */
-    private val clipsMutationMutex = Mutex()
-
     init {
         // 復元してから保存を始める。順番が逆だと、復元前の空リストを
         // 保存してしまい前回の内容が消える。
@@ -166,7 +159,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
             // 編集内容を自動保存する。collectLatestとdelayの組み合わせで、
             // ひとことを1文字打つたびに書き込むのを避けている。
-            _clips.collectLatest { clips ->
+            timeline.clips.collectLatest { clips ->
                 delay(AUTOSAVE_DEBOUNCE_MS)
                 // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない。
                 // DefaultではなくIOなのは、SharedPreferencesの初回アクセスがディスクの
@@ -180,7 +173,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // LaunchedEffect が担っていたが、画面に波形のMapを持たせないために
         // こちらへ移した。同じURIを選び直しただけでは取り直さない。
         viewModelScope.launch {
-            combine(_clips, playback.selectedIndex) { clips, index -> clips.getOrNull(index) }
+            combine(timeline.clips, playback.selectedIndex) { clips, index -> clips.getOrNull(index) }
                 .distinctUntilChangedBy { it?.uri }
                 .collect { clip -> clip?.let(::requestWaveform) }
         }
@@ -207,18 +200,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         playback.setAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
 
         val restored = ClipStore.restore(getApplication())
-
-        clipsMutationMutex.withLock {
-            if (restored.clips.isNotEmpty()) {
-                _clips.value = restored.clips
-                playback.rebuildPlaylist(restored.clips)
-                playback.select(0)
-            }
-        }
+        timeline.replaceAll(restored.clips, record = false)
 
         // 復元直後を「起点」にする。ここで履歴を消しておかないと、
         // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
-        history.clear()
+        timeline.clearHistory()
 
         refreshUnreliableShotTimes()
         releaseUnusedPermissions()
@@ -244,7 +230,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             ClipStore.releaseUnreferencedPermissions(
                 context = getApplication(),
                 isBusy = { _isAdding.value },
-                timelineUris = { _clips.value.map { it.uri } }
+                timelineUris = { timeline.current.map { it.uri } }
             )
         }
     }
@@ -258,10 +244,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 同じ動画を追加し直しても「追加済み」でスキップされるため、消して追加し直すまで残ってしまう。
      * 取り直しても確かな値が取れなければ、いまの値のままにして[VlogClip.shotAtRefreshed]を立て、
      * 以後は試さない（手がかりが何も無い動画を毎起動読み直すのを避けるため）。
-     * 並び順は変えない（ユーザーが並べ替えた順序を壊さないため）。履歴にも積まない（編集ではないため）。
      */
     private fun refreshUnreliableShotTimes() {
-        val targets = _clips.value.filter { !it.shotAtReliable && !it.shotAtRefreshed }
+        val targets = timeline.current.filter { !it.shotAtReliable && !it.shotAtRefreshed }
         if (targets.isEmpty()) return
 
         val context = getApplication<Application>()
@@ -275,22 +260,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
-
-            clipsMutationMutex.withLock {
-                _clips.value = _clips.value.map { clip ->
-                    // 取り直しの対象でなかったクリップ（この間に追加されたものなど）は触らない
-                    val meta = refreshed[clip.id] ?: return@map clip
-                    // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
-                    if (!meta.shotAtReliable) return@map clip.copy(shotAtRefreshed = true)
-                    clip.copy(
-                        timeText = meta.timeText,
-                        dateText = meta.dateText,
-                        shotAtMillis = meta.shotAtMillis,
-                        shotAtReliable = true,
-                        shotAtRefreshed = true
-                    )
-                }
-            }
+            timeline.applyRefreshedShotTimes(refreshed)
         }
     }
 
@@ -327,12 +297,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
         // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
         // ケースは既知の制約として残す。
+        //
         // 通知の件数は、引き算で辻褄を合わせるのではなく理由ごとに数える。
         // uris.size から引いていた頃は、呼び出し元が同じURIを2回渡しただけで
         // 「1件は追加済みのためスキップしました」と出ていた（タイムラインには無いのに）。
-        // また、スキップの理由が増えるたびに引き算の式を直す必要があった。
         val requested = uris.distinct()
-        val existingUris = _clips.value.map { it.uri }.toSet()
+        val existingUris = timeline.current.map { it.uri }.toSet()
         val newUris = requested.filter { it !in existingUris }
         val alreadyInTimeline = requested.size - newUris.size
         if (newUris.isEmpty()) {
@@ -340,7 +310,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         // すでに上限いっぱいなら、読み込むまでもなく断る
-        if (_clips.value.size >= MAX_CLIPS) {
+        if (timeline.current.size >= MAX_CLIPS) {
             addSkipMessage(
                 alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = newUris.size
             )?.let(::sendMessage)
@@ -373,436 +343,31 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 長さを読めなかった動画は入れない（尺0のクリップは書き出しを止めてしまう）
         val (readable, unreadable) = loaded.partition { it.isValid }
 
-        // メタデータの取得中に、別のaddClips呼び出しが同じ動画を先に追加していた件数。
-        // ロックの中でしか分からないので、ここで受け取って通知の件数に足す。
-        var addedWhileLoading = 0
-        val (toMerge, overLimit) = clipsMutationMutex.withLock {
-            // ロック取得前のチェックは、メタデータ取得中に別の
-            // addClips 呼び出しが同じ動画を先に追加してしまう競合には対応できない。
-            // マージ直前にロック内でもう一度チェックし、その分を除外する。
-            // 上限もここで、追加の直前の本数を基準に守る（並行した追加で超えないように）。
-            val currentUris = _clips.value.map { it.uri }.toSet()
-            val candidates = readable.filter { it.uri !in currentUris }
-            addedWhileLoading = readable.size - candidates.size
-            val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
-            val toMerge = candidates.take(room)
-            val overLimit = candidates.size - toMerge.size
-            if (toMerge.isEmpty()) return@withLock toMerge to overLimit
-
-            val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
-
-            recordHistory()
-            val (merged, insertions) = mergeByShotAt(_clips.value, toMerge)
-            _clips.value = merged
-            playback.insertIntoPlaylist(insertions)
-
-            oldestAddedId?.let { id ->
-                val index = merged.indexOfFirst { it.id == id }
-                if (index >= 0) playback.select(index)
-            }
-            toMerge to overLimit
-        }
+        val result = timeline.insertByShotAt(readable)
 
         addSkipMessage(
-            alreadyAdded = alreadyInTimeline + addedWhileLoading,
+            // alreadyPresent は、メタデータの取得中に別の追加が先に入れてしまった分
+            alreadyAdded = alreadyInTimeline + result.alreadyPresent,
             unreadable = unreadable.size,
-            overLimit = overLimit
+            overLimit = result.overLimit
         )?.let(::sendMessage)
     }
 
-    fun select(index: Int) = playback.select(index)
+    // --- 一時保存（実処理は ProjectsController） ------------------------------------------
 
-    /**
-     * トリミング範囲の変更。
-     *
-     * @param previewAtMs プレビューに出す位置。波形の右端を掴んでいるのに左端の映像が
-     *   出ると「どこで切れるのか」が確認できないため、掴んでいる側を渡してもらう。
-     */
-    fun updateTrim(startMs: Long, endMs: Long, previewAtMs: Long = startMs) {
-        recordHistory(EditTag.Trim(playback.selectedIndexValue))
-        updateSelected { it.copy(startMs = startMs, endMs = endMs) }
+    val projects: StateFlow<List<SavedProject>> get() = projectsController.projects
 
-        // 再生したまま端を動かすと、映像が流れていって切れ目を確認できない。
-        // 触った時点で止めて、指の位置のコマを出す。
-        val previewMs = previewAtMs.coerceIn(startMs, endMs)
-        playback.seekAndPause(previewMs)
-    }
+    fun refreshProjects() = projectsController.refresh()
 
-    /**
-     * いまのトリム選択の左端から指定の長さだけを選び直す（操作バーの 2s / 4s プリセット）。
-     * 常に先頭からだと押すたびにシークし直しになって面倒なため、
-     * 選択済みの開始位置をそのまま起点にする。
-     */
-    fun applyTrimPreset(lengthMs: Long) {
-        val clip = selectedClip ?: return
-        if (clip.durationMs <= 0L) return
-        val startMs = clip.startMs.coerceIn(0L, clip.durationMs)
-        updateTrim(startMs = startMs, endMs = (startMs + lengthMs).coerceAtMost(clip.durationMs))
-    }
+    fun saveProject(name: String) = projectsController.save(name)
 
-    /**
-     * トリミング区間を長さそのままで前後に移動する。
-     *
-     * 端をつまんで伸縮するのとは別に、範囲の内側を長押し→スライドしたときに使う。
-     * ひとことの区切り（先頭は除く）も同じ分だけ一緒にずらし、区間との相対位置を保つ。
-     *
-     * @param targetStartMs 動かした先の開始位置（クランプ前）。ドラッグ開始時の値からの
-     *   絶対位置で渡してもらう（毎フレーム相対差分を積み上げると誤差が溜まるため）。
-     */
-    fun moveTrim(targetStartMs: Long, previewAtMs: Long) {
-        val clip = selectedClip ?: return
-        val span = clip.trimmedDurationMs
-        if (span <= 0L) return
+    fun overwriteProject(id: Long, name: String) = projectsController.overwrite(id, name)
 
-        val maxStart = (clip.durationMs - span).coerceAtLeast(0L)
-        // トリム範囲と区切りは同じ量だけ動かす（相対位置を保つのがこの操作の目的）。
-        // 区切りが動画の範囲からはみ出すぶんは、区切りを丸めるのではなく移動そのものを
-        // 手前で止める（理由は[clampTimelineShift]）。
-        val delta = clampTimelineShift(
-            texts = clip.texts,
-            requested = targetStartMs.coerceIn(0L, maxStart) - clip.startMs,
-            durationMs = clip.durationMs
-        )
-        if (delta == 0L) return
-        val newStart = clip.startMs + delta
-        val newEnd = newStart + span
+    /** 読み出したあとは、撮影時刻が確かでないクリップを取り直す（復元時と同じ扱い） */
+    fun loadProject(id: Long) =
+        projectsController.load(id, onLoaded = ::refreshUnreliableShotTimes)
 
-        recordHistory(EditTag.TrimMove(playback.selectedIndexValue))
-        updateSelected { current ->
-            current.copy(
-                startMs = newStart,
-                endMs = newEnd,
-                // 先頭の区間は常に絶対位置0（動画そのものの頭）なので動かさない。
-                // それ以外はすべて同じdeltaで動く。はみ出さない量まで詰めてあるので、
-                // ここで個別に丸める必要はない。
-                texts = current.texts.map { segment ->
-                    if (segment.startMs == 0L) segment
-                    else segment.copy(startMs = segment.startMs + delta)
-                }
-            )
-        }
-
-        val previewMs = previewAtMs.coerceIn(newStart, newEnd)
-        playback.seekAndPause(previewMs)
-    }
-
-    /**
-     * ひとことの区切りをひとつ、時間軸上で動かす。
-     *
-     * 前後の区切り（無ければクリップの端）を越えないようクランプする。
-     * [index] は [VlogClip.texts] の添字（0＝先頭は区切りではないので対象外）。
-     */
-    fun moveSplit(index: Int, newAtMs: Long) {
-        val clip = selectedClip ?: return
-        if (index !in clip.texts.indices || index == 0) return
-
-        val lowerBound = clip.texts[index - 1].startMs + MIN_TEXT_SEGMENT_MS
-        // 次の区切りが無い（＝最後の区間を動かす）場合の上限はクリップ全体の長さ(durationMs)
-        // ではなく、いまのトリム終端(endMs)にする。durationMsのままだと、トリムで
-        // 後半を切り落とした後も区切りをトリム範囲の外まで動かせてしまう。
-        val upperBound =
-            (clip.texts.getOrNull(index + 1)?.startMs ?: clip.endMs) - MIN_TEXT_SEGMENT_MS
-        if (lowerBound > upperBound) return
-
-        val clamped = newAtMs.coerceIn(lowerBound, upperBound)
-        if (clamped == clip.texts[index].startMs) return
-
-        recordHistory(EditTag.SplitMove(playback.selectedIndexValue, index))
-        updateSelected { current ->
-            current.copy(
-                texts = current.texts.mapIndexed { i, segment ->
-                    if (i == index) segment.copy(startMs = clamped) else segment
-                }
-            )
-        }
-
-        playback.seekAndPause(clamped)
-    }
-
-    /** 波形をタップしたときの頭出し。トリミング範囲の外へは飛ばさない */
-    fun seekWithinTrim(positionMs: Long) = playback.seekWithinTrim(positionMs)
-
-    /**
-     * ひとことの書き換え。書き換わるのは再生ヘッドが指している区間だけ。
-     *
-     * 入力欄の表示も同じ「再生ヘッドの位置の区間」を出しているので、
-     * 見えている文字と書き換わる文字は必ず一致する。
-     */
-    fun updateText(text: String) {
-        val clip = selectedClip ?: return
-        val target = clip.textIndexAt(playback.positionMsValue)
-        recordHistory(EditTag.Text(playback.selectedIndexValue, target))
-        updateSelected { current ->
-            current.copy(
-                texts = current.texts.mapIndexed { index, segment ->
-                    if (index == target) segment.copy(text = text) else segment
-                }
-            )
-        }
-    }
-
-    /**
-     * 再生ヘッドの位置でひとことを2つに割る。動画は切らない。
-     *
-     * 後半には初期値の「ひとこと」を入れる。前半の文字をそのまま複製すると、
-     * 分割できたのかどうかがプレビューからは分からないため。
-     */
-    fun splitTextAtPlayhead() {
-        val clip = selectedClip ?: return
-        val at = playback.positionMsValue
-
-        val tooCloseToEdge =
-            at - clip.startMs < MIN_TEXT_SEGMENT_MS || clip.endMs - at < MIN_TEXT_SEGMENT_MS
-        if (tooCloseToEdge) {
-            sendMessage("区切る位置が端に寄りすぎています")
-            return
-        }
-        if (clip.texts.any { abs(it.startMs - at) < MIN_TEXT_SEGMENT_MS }) {
-            sendMessage("すぐ近くに区切りがあります")
-            return
-        }
-
-        recordHistory()
-        val inserted = (clip.texts + TextSegment(at, DEFAULT_HITOKOTO)).sortedBy { it.startMs }
-        updateSelected { it.copy(texts = inserted) }
-
-        // 分割した後半の頭を出しておく。編集対象がそのまま新しい区間になるので、
-        // 続けて入力欄へ打ち込める。
-        playback.seekAndPause(at)
-    }
-
-    /**
-     * 区切りをひとつ解除する。手前の区間の文字が、後ろの区間ぶんまで伸びる。
-     *
-     * 位置が同じ区切りが万一2つあっても、消すのは1つだけにする
-     * （まとめて消すと、押した覚えのない区切りまで一緒に消えてしまう）。
-     */
-    fun removeSplit(atMs: Long) {
-        val clip = selectedClip ?: return
-        val target = clip.texts.indexOfFirst { it.startMs == atMs && it.startMs != 0L }
-        if (target < 0) return
-
-        recordHistory()
-        updateSelected { current ->
-            current.copy(
-                texts = current.texts.filterIndexed { index, _ -> index != target }
-            )
-        }
-    }
-
-    /**
-     * 指定したクリップのミュートを切り替える。タイムラインのクリップタイルの
-     * 長押しで呼ぶ想定のため、選択中インデックスではなくidで対象を探す
-     * （長押しされたクリップが選択中とは限らないため）。
-     */
-    fun toggleClipMute(clipId: Long) {
-        val index = _clips.value.indexOfFirst { it.id == clipId }
-        if (index < 0) return
-
-        recordHistory()
-        updateClips { this[index] = this[index].copy(isMuted = !this[index].isMuted) }
-        playback.applyVolume()
-    }
-
-    /**
-     * 選択中のクリップを前後に動かす（書き出し順もこの並びになる）。
-     * ExoPlayerのプレイリストも同時に動かして、プレビューと順番をずらさない。
-     */
-    fun moveSelected(offset: Int) {
-        val from = playback.selectedIndexValue
-        val to = from + offset
-        if (from !in _clips.value.indices || to !in _clips.value.indices) return
-
-        recordHistory()
-        updateClips { add(to, removeAt(from)) }
-        playback.moveItem(from, to)
-    }
-
-    fun removeSelected() {
-        val index = playback.selectedIndexValue
-        if (index !in _clips.value.indices) return
-        val removedUri = _clips.value[index].uri
-
-        recordHistory()
-        updateClips { removeAt(index) }
-        playback.removeItem(index)
-        cancelWaveformJobIfUnused(removedUri)
-
-        val newIndex = index.coerceAtMost(_clips.value.lastIndex.coerceAtLeast(0))
-        playback.setSelectedIndex(newIndex)
-        val nextPositionMs = selectedClip?.startMs ?: 0L
-
-        // removeMediaItemによる自動遷移はreason=REMOVEで、AUTO専用の頭出し
-        // （onMediaItemTransition内）が効かない。ここで明示的に合わせないと、
-        // 表示中のひとこと・時刻は新しいクリップのものなのに、映像だけ0秒目のままずれる。
-        if (_clips.value.isNotEmpty()) {
-            playback.seekAndPause(nextPositionMs)
-        } else {
-            playback.setPositionMs(nextPositionMs)
-        }
-    }
-
-    /** タイムラインを空にする。押し間違えても「もとに戻す」で復帰できる */
-    fun removeAll() {
-        if (_clips.value.isEmpty()) return
-        val removedUris = _clips.value.map { it.uri }.distinct()
-
-        recordHistory()
-        _clips.value = emptyList()
-        playback.clearItems()
-        removedUris.forEach { cancelWaveformJobIfUnused(it) }
-    }
-
-    // --- 一時保存 -----------------------------------------------------------------------
-
-    private val _projects = MutableStateFlow<List<SavedProject>>(emptyList())
-    val projects: StateFlow<List<SavedProject>> = _projects.asStateFlow()
-
-    /** 保存一覧を開くたびに呼ぶ。ここでしか変わらないので常時監視はしない */
-    fun refreshProjects() {
-        viewModelScope.launch {
-            _projects.value = ClipStore.listProjects(getApplication())
-        }
-    }
-
-    /**
-     * 動画を読み込み中は、一時保存の保存・上書き・読み出しをしない。
-     * 読み込み中のタイムラインは途中の状態で、保存すると一部だけが残り、読み出すと
-     * あとから読み込み終えた動画が読み出した内容に混ざってしまうため。
-     * @return 読み込み中で断った場合はtrue（通知済み）
-     */
-    private fun refuseWhileAdding(): Boolean {
-        if (!_isAdding.value) return false
-        sendMessage("動画を読み込み中です。終わってからもう一度お試しください")
-        return true
-    }
-
-    /** いまの編集内容に名前を付けて残す。動画はコピーしないので一瞬で終わる */
-    fun saveProject(name: String) {
-        if (refuseWhileAdding()) return
-        val clipsToSave = _clips.value
-        if (clipsToSave.isEmpty()) {
-            sendMessage("保存できる編集内容がありません")
-            return
-        }
-
-        viewModelScope.launch {
-            val label = name.trim().ifBlank { formatSavedAt(System.currentTimeMillis()) }
-            // 同名があれば連番が付く。メッセージには実際に付いた名前を出す
-            val savedName = ClipStore.saveProject(getApplication(), label, clipsToSave)
-            _projects.value = ClipStore.listProjects(getApplication())
-            sendMessage(
-                if (savedName != null) "「$savedName」を保存しました"
-                else "保存は${ClipStore.MAX_PROJECTS}件までです。不要なものを削除してください"
-            )
-        }
-    }
-
-    /**
-     * 既存の保存内容へ上書きする（一覧の行を長押しして確認したときの動作）。
-     * 上書きされた保存の中身は戻せない（「もとに戻す」で戻るのはタイムラインの編集だけ）ため、
-     * 呼び出し側（SaveLoadDialog）で確認ダイアログを挟む。
-     */
-    fun overwriteProject(id: Long, name: String) {
-        if (refuseWhileAdding()) return
-        val clipsToSave = _clips.value
-        if (clipsToSave.isEmpty()) {
-            sendMessage("保存できる編集内容がありません")
-            return
-        }
-
-        viewModelScope.launch {
-            val overwritten = ClipStore.overwriteProject(getApplication(), id, clipsToSave)
-            _projects.value = ClipStore.listProjects(getApplication())
-            sendMessage(
-                if (overwritten) "「$name」に上書きしました"
-                else "この保存は上書きできませんでした"
-            )
-        }
-    }
-
-    /**
-     * 保存した編集内容へ差し替える。
-     *
-     * 履歴に積んでから入れ替えるので、読み出す前の状態には「もとに戻す」で戻れる。
-     * ただし、保存内の動画が1本も読めないときは、作業中のタイムラインが空になってしまうので
-     * 差し替えずに断る（[canReplaceWithProject]）。
-     */
-    fun loadProject(id: Long) {
-        if (refuseWhileAdding()) return
-        viewModelScope.launch {
-            val restored = ClipStore.loadProject(getApplication(), id)
-            if (restored == null) {
-                sendMessage("この保存は読み出せませんでした")
-                return@launch
-            }
-            if (!canReplaceWithProject(loaded = restored.clips.size, dropped = restored.dropped)) {
-                sendMessage(projectUnreadableMessage(restored.dropped))
-                return@launch
-            }
-
-            clipsMutationMutex.withLock {
-                recordHistory()
-                _clips.value = restored.clips
-                playback.rebuildPlaylist(restored.clips)
-                // 空の保存を読み出したときだけここで0に戻す。中身があるときは
-                // select(0) が同じ代入をやり直すことになるので、そちらだけに任せる。
-                if (restored.clips.isNotEmpty()) playback.select(0)
-                else {
-                    playback.setSelectedIndex(0)
-                    playback.setPositionMs(0L)
-                }
-            }
-            refreshUnreliableShotTimes()
-
-            sendMessage(projectLoadedMessage(restored.dropped))
-        }
-    }
-
-    fun deleteProject(id: Long) {
-        viewModelScope.launch {
-            ClipStore.deleteProject(getApplication(), id)
-            _projects.value = ClipStore.listProjects(getApplication())
-        }
-    }
-
-    // --- もとに戻す / やり直す -----------------------------------------------------------
-
-    fun undo() {
-        history.undo(currentSnapshot())?.let(::applySnapshot)
-    }
-
-    fun redo() {
-        history.redo(currentSnapshot())?.let(::applySnapshot)
-    }
-
-    /**
-     * 変更を加える「直前」に呼ぶ。[tag]の意味は [EditHistory.record] を参照。
-     */
-    private fun recordHistory(tag: EditTag? = null) = history.record(currentSnapshot(), tag)
-
-    private fun currentSnapshot() = Snapshot(_clips.value, playback.selectedIndexValue)
-
-    /**
-     * 履歴の状態を画面へ戻す。
-     *
-     * 並び順や本数が変わっていないときはプレイリストを作り直さない。
-     * setMediaItems はバッファを捨ててしまうので、ひとことやトリミングを
-     * 戻しただけで再生が止まって見えるのを避けている。
-     */
-    private fun applySnapshot(snapshot: Snapshot) {
-        val playlistChanged =
-            snapshot.clips.map { it.uri } != _clips.value.map { it.uri }
-
-        _clips.value = snapshot.clips
-
-        if (playlistChanged) playback.rebuildPlaylist(snapshot.clips) else playback.pause()
-
-        val index = snapshot.selectedIndex
-            .coerceIn(0, snapshot.clips.lastIndex.coerceAtLeast(0))
-        playback.setSelectedIndex(index)
-        snapshot.clips.getOrNull(index)?.let { playback.seekWithoutPause(it.startMs) }
-    }
+    fun deleteProject(id: Long) = projectsController.delete(id)
 
     // --- 波形 ---------------------------------------------------------------------------
 
@@ -815,7 +380,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * ときにしか流れない。
      */
     val selectedWaveform: StateFlow<SelectedWaveform> =
-        combine(_clips, playback.selectedIndex, _waveforms) { clips, index, waveforms ->
+        combine(timeline.clips, playback.selectedIndex, _waveforms) { clips, index, waveforms ->
             val key = clips.getOrNull(index)?.uri?.toString()
                 ?: return@combine SelectedWaveform(waveform = null, isLoading = false)
             if (key in waveforms) SelectedWaveform(waveforms[key], isLoading = false)
@@ -847,20 +412,57 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *
      * 同じ動画を2回追加している場合はURIが重複するため、削除後もまだ他のクリップが
      * 同じURIを参照していれば消さない（そちらの表示に使われている波形を巻き添えにしない）。
-     * 呼び出し側は、_clips.valueを削除後の状態に更新してから呼ぶこと。
+     * 呼び出し側（[TimelineStore]）は、一覧を削除後の状態に更新してから呼ぶ。
      */
     private fun cancelWaveformJobIfUnused(uri: Uri) {
         val key = uri.toString()
-        if (_clips.value.none { it.uri.toString() == key }) {
+        if (timeline.current.none { it.uri.toString() == key }) {
             waveformJobs.remove(key)?.cancel()
             _waveforms.value = _waveforms.value - key
         }
     }
 
-    // --- 再生（実処理は PlaybackController） ----------------------------------------------
+    // --- 編集（実処理は TimelineStore） ---------------------------------------------------
     //
-    // 画面からはViewModelだけを見ていればよいよう、再生まわりも窓口はここに残す。
-    // 中身は playback/PlaybackController.kt にあり、ここは受け渡しだけを行う。
+    // 画面からはViewModelだけを見ていればよいよう、編集の窓口はここに残す。
+    // 中身は edit/TimelineStore.kt にあり、ここは受け渡しだけを行う。
+
+    val selectedClip: VlogClip? get() = timeline.selectedClip
+
+    fun select(index: Int) = timeline.select(index)
+
+    fun updateTrim(startMs: Long, endMs: Long, previewAtMs: Long = startMs) =
+        timeline.updateTrim(startMs, endMs, previewAtMs)
+
+    fun applyTrimPreset(lengthMs: Long) = timeline.applyTrimPreset(lengthMs)
+
+    fun moveTrim(targetStartMs: Long, previewAtMs: Long) =
+        timeline.moveTrim(targetStartMs, previewAtMs)
+
+    fun moveSplit(index: Int, newAtMs: Long) = timeline.moveSplit(index, newAtMs)
+
+    fun updateText(text: String) = timeline.updateText(text)
+
+    fun splitTextAtPlayhead() = timeline.splitTextAtPlayhead()
+
+    fun removeSplit(atMs: Long) = timeline.removeSplit(atMs)
+
+    fun toggleClipMute(clipId: Long) = timeline.toggleClipMute(clipId)
+
+    fun moveSelected(offset: Int) = timeline.moveSelected(offset)
+
+    fun removeSelected() = timeline.removeSelected()
+
+    fun removeAll() = timeline.removeAll()
+
+    fun undo() = timeline.undo()
+
+    fun redo() = timeline.redo()
+
+    // --- 再生（実処理は PlaybackController） ----------------------------------------------
+
+    /** 波形をタップしたときの頭出し。トリミング範囲の外へは飛ばさない */
+    fun seekWithinTrim(positionMs: Long) = playback.seekWithinTrim(positionMs)
 
     /**
      * 画面から[PLAYBACK_POLL_INTERVAL_MS]間隔で呼ばれる。
@@ -892,6 +494,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     fun togglePlayback() = playback.togglePlayback()
 
+    // --- 書き出し -----------------------------------------------------------------------
+
     /**
      * 書き出しは VlogExportService（フォアグラウンドサービス）に委ねる。
      * viewModelScopeで直接実行しないのは、バックグラウンドに回すとOSに
@@ -911,7 +515,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val target = _clips.value
+        val target = timeline.current
         when {
             target.isEmpty() -> {
                 sendMessage("動画を追加してください")
@@ -931,17 +535,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelExport() {
         VlogExportService.cancel(getApplication())
-    }
-
-    private fun updateSelected(transform: (VlogClip) -> VlogClip) {
-        val index = playback.selectedIndexValue
-        if (index !in _clips.value.indices) return
-        updateClips { this[index] = transform(this[index]) }
-    }
-
-    /** 一覧を書き換える。可変リストのコピーに対して変更し、新しいリストとして反映する */
-    private inline fun updateClips(edit: MutableList<VlogClip>.() -> Unit) {
-        _clips.value = _clips.value.toMutableList().apply(edit)
     }
 
     private fun sendMessage(text: String) {
