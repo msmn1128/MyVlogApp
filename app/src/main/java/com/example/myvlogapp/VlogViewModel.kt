@@ -101,6 +101,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     val canUndo: StateFlow<Boolean> get() = timeline.canUndo
     val canRedo: StateFlow<Boolean> get() = timeline.canRedo
 
+    /** タイムラインを丸ごと入れ替えた回数（[TimelineStore.replacementCount]） */
+    val timelineReplacementCount: StateFlow<Int> get() = timeline.replacementCount
+
     // 書き出しの実体は VlogExportService（Activity/ViewModelより長生きする）が持つ。
     // ここは ExportStatus を覗くだけ。
     val exportState: StateFlow<ExportState> = ExportStatus.state

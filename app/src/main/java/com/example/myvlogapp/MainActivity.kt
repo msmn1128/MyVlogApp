@@ -297,7 +297,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             canRedo = viewModel.canRedo,
             autoAdvance = viewModel.autoAdvance,
             timelineMuted = viewModel.timelineMuted,
-            selectedWaveform = viewModel.selectedWaveform
+            selectedWaveform = viewModel.selectedWaveform,
+            replacementCount = viewModel.timelineReplacementCount
         )
     }
     val timelineActions = remember(viewModel) {

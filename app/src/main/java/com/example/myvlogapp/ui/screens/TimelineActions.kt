@@ -28,7 +28,9 @@ class TimelineState(
     val canRedo: StateFlow<Boolean>,
     val autoAdvance: StateFlow<Boolean>,
     val timelineMuted: StateFlow<Boolean>,
-    val selectedWaveform: StateFlow<SelectedWaveform>
+    val selectedWaveform: StateFlow<SelectedWaveform>,
+    /** 値が変わったらタイル一覧を作り直す合図（理由は[com.example.myvlogapp.edit.TimelineStore.replacementCount]） */
+    val replacementCount: StateFlow<Int>
 )
 
 /**

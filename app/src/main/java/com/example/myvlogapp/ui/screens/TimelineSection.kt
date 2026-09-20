@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -130,6 +131,7 @@ private fun TimelinePane(
     val canRedo by state.canRedo.collectAsStateWithLifecycle()
     val autoAdvance by state.autoAdvance.collectAsStateWithLifecycle()
     val timelineMuted by state.timelineMuted.collectAsStateWithLifecycle()
+    val replacementCount by state.replacementCount.collectAsStateWithLifecycle()
     // 波形はここでは読まない。1本届くたびにこのPane全体が再コンポーズされてしまうので、
     // 実際に使う[TrimSection]の中でだけcollectする。取得を始めるのも
     // ViewModel側（選択の変化を見ている）に移してある。
@@ -173,22 +175,29 @@ private fun TimelinePane(
 
             // 全削除のときもタイルが瞬時に消えず1件ずつと同じようにフェードアウトするよう、
             // 空になってもLazyRow自体は消さない（条件で囲むと、最後の1件が消える
-            // アニメーションの途中でLazyRowごと引っ込んで打ち切られていた）
-            LazyRow(
-                state = clipListState,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
-                    ClipTile(
-                        clip = clip,
-                        isSelected = index == selectedIndex,
-                        onClick = { actions.select(index) },
-                        onLongClick = { actions.toggleClipMute(clip.id) },
-                        // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
-                        // 新しい位置へ滑らかにスライドするようにする
-                        modifier = Modifier.animateItem()
-                    )
+            // アニメーションの途中でLazyRowごと引っ込んで打ち切られていた）。
+            //
+            // 丸ごとの入れ替え（一時保存の読み出しとその取り消し）のときだけは、逆に
+            // LazyRowごと作り直す。全クリップのidが一斉に変わると、消えるタイルの
+            // アニメーションが取り残されて画面に残り続けるため（[TimelineState.replacementCount]）。
+            // スクロール位置はkeyの外で覚えているclipListStateが持つので、作り直しても飛ばない。
+            key(replacementCount) {
+                LazyRow(
+                    state = clipListState,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    itemsIndexed(clips, key = { _, clip -> clip.id }) { index, clip ->
+                        ClipTile(
+                            clip = clip,
+                            isSelected = index == selectedIndex,
+                            onClick = { actions.select(index) },
+                            onLongClick = { actions.toggleClipMute(clip.id) },
+                            // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
+                            // 新しい位置へ滑らかにスライドするようにする
+                            modifier = Modifier.animateItem()
+                        )
+                    }
                 }
             }
 

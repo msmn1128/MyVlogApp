@@ -74,6 +74,23 @@ internal class TimelineStore(
     val canRedo: StateFlow<Boolean> get() = history.canRedo
 
     /**
+     * タイムラインを丸ごと別の内容へ入れ替えた回数
+     * （一時保存の読み出しと、その「もとに戻す / やり直す」）。
+     *
+     * 画面はこれが変わったらタイル一覧（LazyRow）を作り直す。1件ずつの追加・削除と違い、
+     * 丸ごとの入れ替えでは全クリップのidが一斉に変わる。するとタイルが消えるアニメーション
+     * （`Modifier.animateItem`）が取り残され、**消えたはずのタイルが画面に残り続ける**
+     * （どこかに触れて再コンポーズが起きるまで消えない）。実機で踏んだのは
+     * 「一時保存を読み出す → もとに戻す」で、選択位置も一緒に動く場合。
+     * 一覧ごと作り直してしまえば、持ち越すアニメーション自体が無くなる。
+     *
+     * 中身が変わらない入れ替え（ひとことやトリミングだけのundo）では増やさない。
+     * そこまで作り直すと、1件ずつの編集でタイルがアニメーションしなくなる。
+     */
+    private val _replacementCount = MutableStateFlow(0)
+    val replacementCount: StateFlow<Int> = _replacementCount.asStateFlow()
+
+    /**
      * 一覧を非同期の下ごしらえを伴って書き換える操作（クリップ追加・一時保存の読み込みなど）を
      * 直列化するロック。
      *
@@ -101,6 +118,7 @@ internal class TimelineStore(
 
         if (record) recordHistory()
         _clips.value = clips
+        _replacementCount.value++
         playback.rebuildPlaylist(clips)
         // 空を読み出したときだけここで0に戻す。中身があるときは select(0) が
         // 同じ代入をやり直すことになるので、そちらだけに任せる。
@@ -442,7 +460,12 @@ internal class TimelineStore(
 
         _clips.value = snapshot.clips
 
-        if (playlistChanged) playback.rebuildPlaylist(snapshot.clips) else playback.pause()
+        if (playlistChanged) {
+            _replacementCount.value++
+            playback.rebuildPlaylist(snapshot.clips)
+        } else {
+            playback.pause()
+        }
 
         val index = snapshot.selectedIndex
             .coerceIn(0, snapshot.clips.lastIndex.coerceAtLeast(0))
