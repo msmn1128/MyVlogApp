@@ -73,6 +73,18 @@ data class Waveform(
 }
 
 /**
+ * 選択中クリップの波形の状態。画面はこれ1つを見れば描き分けられる。
+ *
+ * - [isLoading] が true : まだデコード中（「波形を読み込み中…」）
+ * - [waveform] が null  : 取得できなかった（「波形を取得できませんでした」）
+ * - `waveform.hasAudio` が false : 音声トラックが無い（「音声なし」）
+ */
+data class SelectedWaveform(
+    val waveform: Waveform? = null,
+    val isLoading: Boolean = true
+)
+
+/**
  * 動画の音声トラックをデコードして、区間ごとの音量（RMS）を取り出す。
  *
  * ffmpegに投げてPCMを吐かせる手もあるが、それだと数百MBの中間ファイルが要る。

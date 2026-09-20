@@ -39,8 +39,11 @@ import com.example.myvlogapp.ui.screens.EditSection
 import com.example.myvlogapp.ui.screens.GalleryPickerDialog
 import com.example.myvlogapp.ui.screens.PreviewSection
 import com.example.myvlogapp.ui.screens.SaveLoadDialog
+import com.example.myvlogapp.ui.screens.TimelineActions
+import com.example.myvlogapp.ui.screens.TimelineState
 import com.example.myvlogapp.ui.screens.TitleCreationDialog
 import com.example.myvlogapp.ui.theme.MyVlogAppTheme
+import com.example.myvlogapp.waveform.WaveformTrimmerCallbacks
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -284,6 +287,47 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 各所で「表示する文字列」「区切りの上か」などに派生させてから読む。
     val positionMs = viewModel.playbackPositionMs.collectAsStateWithLifecycle()
 
+    // 画面がViewModelを直接見なくて済むよう、状態（StateFlowのまま）と操作（メソッド参照）を
+    // それぞれ1つのホルダーにまとめて渡す。値まで上げないのは、undo可否や波形が変わるたびに
+    // 画面全体が再コンポーズされるのを避けるため（詳しくは TimelineActions.kt）。
+    // rememberで1度だけ作るのが肝心で、毎コンポーズで作り直すと@Stableにした意味が無くなる。
+    val timelineState = remember(viewModel) {
+        TimelineState(
+            canUndo = viewModel.canUndo,
+            canRedo = viewModel.canRedo,
+            autoAdvance = viewModel.autoAdvance,
+            timelineMuted = viewModel.timelineMuted,
+            selectedWaveform = viewModel.selectedWaveform
+        )
+    }
+    val timelineActions = remember(viewModel) {
+        TimelineActions(
+            select = viewModel::select,
+            removeSelected = viewModel::removeSelected,
+            removeAll = viewModel::removeAll,
+            moveSelected = viewModel::moveSelected,
+            toggleClipMute = viewModel::toggleClipMute,
+            setTimelineMuted = viewModel::setTimelineMuted,
+            setAutoAdvance = viewModel::setAutoAdvance,
+            undo = viewModel::undo,
+            redo = viewModel::redo,
+            applyTrimPreset = viewModel::applyTrimPreset,
+            splitTextAtPlayhead = viewModel::splitTextAtPlayhead,
+            removeSplit = viewModel::removeSplit,
+            updateText = viewModel::updateText,
+            trimmer = WaveformTrimmerCallbacks(
+                onTrimChange = viewModel::updateTrim,
+                onTrimMove = viewModel::moveTrim,
+                onSplitMove = viewModel::moveSplit,
+                onSeek = viewModel::seekWithinTrim,
+                onScrubStart = viewModel::beginScrub,
+                onScrubEnd = viewModel::endScrub,
+                onDragStart = viewModel::beginInteractiveSeek,
+                onDragEnd = viewModel::endInteractiveSeek
+            )
+        )
+    }
+
     // isWide(縦画面はColumn直下、横画面はRow>Columnの中)で親構造が変わっても
     // 中身（PreviewSection/EditSection）は完全に同じなので、呼び出し部分を
     // ローカルラムダに一本化する（縦横で引数リストを別々に持つと、片方だけ
@@ -291,7 +335,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val preview: @Composable ColumnScope.(previewWeight: Float) -> Unit = { weight ->
         PreviewSection(
             selectedClip = selectedClip,
-            viewModel = viewModel,
+            player = viewModel.player,
             hitokotoFontFamily = hitokotoFontFamily,
             timeFontFamily = timeFontFamily,
             positionMs = positionMs,
@@ -301,18 +345,21 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             // 読み込み中の動画がまだタイムラインに入っていないので、その間は書き出しを始めさせない
             canExport = clips.isNotEmpty() && !isAdding,
             previewWeight = weight,
+            onTogglePlayback = viewModel::togglePlayback,
             onAdd = openGallery,
             onOpenSaves = { showSaves = true },
-            onExport = onExport
+            onExport = onExport,
+            onCancelExport = viewModel::cancelExport
         )
     }
     val edit: @Composable ColumnScope.() -> Unit = {
         EditSection(
-            viewModel = viewModel,
             clips = clips,
             selectedIndex = selectedIndex,
             selectedClip = selectedClip,
             positionMs = positionMs,
+            state = timelineState,
+            actions = timelineActions,
             isExporting = isExporting,
             timelineWeight = timelineWeight,
             editorWeight = editorWeight

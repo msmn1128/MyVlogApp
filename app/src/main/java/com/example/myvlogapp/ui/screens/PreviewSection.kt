@@ -70,7 +70,6 @@ import com.example.myvlogapp.TIME_FONT_PT
 import com.example.myvlogapp.TIME_MARGIN_PT
 import com.example.myvlogapp.TOOLBAR_ICON_SIZE
 import com.example.myvlogapp.VlogClip
-import com.example.myvlogapp.VlogViewModel
 import com.example.myvlogapp.export.ExportState
 import com.example.myvlogapp.ui.components.VlogIcons
 
@@ -88,7 +87,7 @@ import com.example.myvlogapp.ui.components.VlogIcons
 @Composable
 internal fun ColumnScope.PreviewSection(
     selectedClip: VlogClip?,
-    viewModel: VlogViewModel,
+    player: ExoPlayer,
     hitokotoFontFamily: FontFamily,
     timeFontFamily: FontFamily,
     positionMs: State<Long>,
@@ -97,15 +96,17 @@ internal fun ColumnScope.PreviewSection(
     isAdding: Boolean,
     canExport: Boolean,
     previewWeight: Float,
+    onTogglePlayback: () -> Unit,
     onAdd: () -> Unit,
     onOpenSaves: () -> Unit,
-    onExport: (includeTitle: Boolean) -> Unit
+    onExport: (includeTitle: Boolean) -> Unit,
+    onCancelExport: () -> Unit
 ) {
     PreviewPane(
         selectedClip = selectedClip,
         positionMs = positionMs,
-        player = viewModel.player,
-        onTogglePlayback = viewModel::togglePlayback,
+        player = player,
+        onTogglePlayback = onTogglePlayback,
         hitokotoFontFamily = hitokotoFontFamily,
         timeFontFamily = timeFontFamily,
         modifier = Modifier.fillMaxWidth().weight(previewWeight)
@@ -118,7 +119,7 @@ internal fun ColumnScope.PreviewSection(
         onAdd = onAdd,
         onOpenSaves = onOpenSaves,
         onExport = onExport,
-        onCancel = viewModel::cancelExport
+        onCancel = onCancelExport
     )
     AddProgress(isAdding)
     ExportProgress(exportState)

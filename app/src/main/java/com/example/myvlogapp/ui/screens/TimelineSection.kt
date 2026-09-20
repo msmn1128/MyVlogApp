@@ -56,7 +56,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.myvlogapp.DEFAULT_HITOKOTO
 import com.example.myvlogapp.SECTION_GAP
 import com.example.myvlogapp.VlogClip
-import com.example.myvlogapp.VlogViewModel
 import com.example.myvlogapp.WAVEFORM_HEIGHT
 import com.example.myvlogapp.formatSeconds
 import com.example.myvlogapp.ui.components.CompactIconButton
@@ -67,9 +66,10 @@ import com.example.myvlogapp.ui.components.TrimPresetButton
 import com.example.myvlogapp.ui.components.VlogIcons
 import com.example.myvlogapp.ui.components.splitMarkerColor
 import com.example.myvlogapp.waveform.MIN_TRIM_MS
-import com.example.myvlogapp.waveform.Waveform
+import com.example.myvlogapp.waveform.SelectedWaveform
 import com.example.myvlogapp.waveform.WaveformTrimmer
 import com.example.myvlogapp.waveform.WaveformTrimmerCallbacks
+import kotlinx.coroutines.flow.StateFlow
 
 // =====================================================================================
 // MainActivity.kt から切り出した、タイムライン（クリップ一覧・波形トリマー・操作バー）と
@@ -79,20 +79,23 @@ import com.example.myvlogapp.waveform.WaveformTrimmerCallbacks
 /** タイムラインとひとこと入力のまとまり。分けない理由は [PreviewSection] と同じ */
 @Composable
 internal fun ColumnScope.EditSection(
-    viewModel: VlogViewModel,
     clips: List<VlogClip>,
     selectedIndex: Int,
     selectedClip: VlogClip?,
     positionMs: State<Long>,
+    state: TimelineState,
+    actions: TimelineActions,
     isExporting: Boolean,
     timelineWeight: Float,
     editorWeight: Float
 ) {
     TimelinePane(
-        viewModel = viewModel,
         clips = clips,
         selectedIndex = selectedIndex,
+        selectedClip = selectedClip,
         positionMs = positionMs,
+        state = state,
+        actions = actions,
         isExporting = isExporting,
         modifier = Modifier.fillMaxWidth().weight(timelineWeight)
     )
@@ -101,7 +104,7 @@ internal fun ColumnScope.EditSection(
         selectedClip = selectedClip,
         positionMs = positionMs,
         isExporting = isExporting,
-        onTextChange = viewModel::updateText,
+        onTextChange = actions.updateText,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
 }
@@ -114,25 +117,22 @@ internal fun ColumnScope.EditSection(
  */
 @Composable
 private fun TimelinePane(
-    viewModel: VlogViewModel,
     clips: List<VlogClip>,
     selectedIndex: Int,
+    selectedClip: VlogClip?,
     positionMs: State<Long>,
+    state: TimelineState,
+    actions: TimelineActions,
     isExporting: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val selectedClip = clips.getOrNull(selectedIndex)
-    val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
-    val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
-    val waveforms by viewModel.waveforms.collectAsStateWithLifecycle()
-    val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
-    val timelineMuted by viewModel.timelineMuted.collectAsStateWithLifecycle()
-
-    // 波形は選択中のクリップだけ用意する。全件を先読みするとデコードが渋滞して、
-    // 肝心の「いま触っているクリップ」の表示が後回しになる。
-    LaunchedEffect(selectedClip?.uri) {
-        selectedClip?.let { viewModel.requestWaveform(it) }
-    }
+    val canUndo by state.canUndo.collectAsStateWithLifecycle()
+    val canRedo by state.canRedo.collectAsStateWithLifecycle()
+    val autoAdvance by state.autoAdvance.collectAsStateWithLifecycle()
+    val timelineMuted by state.timelineMuted.collectAsStateWithLifecycle()
+    // 波形はここでは読まない。1本届くたびにこのPane全体が再コンポーズされてしまうので、
+    // 実際に使う[TrimSection]の中でだけcollectする。取得を始めるのも
+    // ViewModel側（選択の変化を見ている）に移してある。
 
     // 選択中のタイルが常に見えるようにする。連続再生の自動遷移や「ひとつ後ろへ移動」で
     // 選択が変わっても、本数が多いとタイルが画面外のままになり、いまどれを編集して
@@ -159,7 +159,6 @@ private fun TimelinePane(
             )
 
             TimelineToolbar(
-                viewModel = viewModel,
                 clips = clips,
                 selectedIndex = selectedIndex,
                 selectedClip = selectedClip,
@@ -168,7 +167,8 @@ private fun TimelinePane(
                 timelineMuted = timelineMuted,
                 canUndo = canUndo,
                 canRedo = canRedo,
-                isExporting = isExporting
+                isExporting = isExporting,
+                actions = actions
             )
 
             // 全削除のときもタイルが瞬時に消えず1件ずつと同じようにフェードアウトするよう、
@@ -183,8 +183,8 @@ private fun TimelinePane(
                     ClipTile(
                         clip = clip,
                         isSelected = index == selectedIndex,
-                        onClick = { viewModel.select(index) },
-                        onLongClick = { viewModel.toggleClipMute(clip.id) },
+                        onClick = { actions.select(index) },
+                        onLongClick = { actions.toggleClipMute(clip.id) },
                         // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
                         // 新しい位置へ滑らかにスライドするようにする
                         modifier = Modifier.animateItem()
@@ -195,14 +195,12 @@ private fun TimelinePane(
             selectedClip?.let { clip ->
                 Spacer(Modifier.height(10.dp))
 
-                val key = clip.uri.toString()
                 TrimSection(
                     clip = clip,
-                    waveform = waveforms[key],
-                    isWaveformLoading = !waveforms.containsKey(key),
+                    selectedWaveform = state.selectedWaveform,
                     positionMs = positionMs,
                     isExporting = isExporting,
-                    viewModel = viewModel
+                    trimmer = actions.trimmer
                 )
             }
         }
@@ -218,11 +216,10 @@ private fun TimelinePane(
 @Composable
 private fun TrimSection(
     clip: VlogClip,
-    waveform: Waveform?,
-    isWaveformLoading: Boolean,
+    selectedWaveform: StateFlow<SelectedWaveform>,
     positionMs: State<Long>,
     isExporting: Boolean,
-    viewModel: VlogViewModel
+    trimmer: WaveformTrimmerCallbacks
 ) {
     when {
         clip.durationMs >= MIN_TRIM_MS -> {
@@ -234,26 +231,21 @@ private fun TrimSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // 波形をcollectするのはここだけ。デコードが終わって届いたときに
+            // 再コンポーズされるのも、この下のWaveformTrimmerだけで済む。
+            val waveform by selectedWaveform.collectAsStateWithLifecycle()
+
             WaveformTrimmer(
                 clipId = clip.id,
-                waveform = waveform,
-                isLoading = isWaveformLoading,
+                waveform = waveform.waveform,
+                isLoading = waveform.isLoading,
                 texts = clip.texts,
                 durationMs = clip.durationMs,
                 startMs = clip.startMs,
                 endMs = clip.endMs,
                 positionMs = positionMs,
                 enabled = !isExporting,
-                callbacks = WaveformTrimmerCallbacks(
-                    onTrimChange = viewModel::updateTrim,
-                    onTrimMove = viewModel::moveTrim,
-                    onSplitMove = viewModel::moveSplit,
-                    onSeek = viewModel::seekWithinTrim,
-                    onScrubStart = viewModel::beginScrub,
-                    onScrubEnd = viewModel::endScrub,
-                    onDragStart = viewModel::beginInteractiveSeek,
-                    onDragEnd = viewModel::endInteractiveSeek
-                ),
+                callbacks = trimmer,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(WAVEFORM_HEIGHT)
@@ -286,7 +278,6 @@ private fun TrimSection(
  */
 @Composable
 private fun TimelineToolbar(
-    viewModel: VlogViewModel,
     clips: List<VlogClip>,
     selectedIndex: Int,
     selectedClip: VlogClip?,
@@ -295,7 +286,8 @@ private fun TimelineToolbar(
     timelineMuted: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
-    isExporting: Boolean
+    isExporting: Boolean,
+    actions: TimelineActions
 ) {
     Row(
         modifier = Modifier
@@ -319,8 +311,8 @@ private fun TimelineToolbar(
             icon = VlogIcons.Delete,
             contentDescription = "選択中のクリップを削除",
             enabled = enabled,
-            onClick = viewModel::removeSelected,
-            onLongClick = viewModel::removeAll,
+            onClick = actions.removeSelected,
+            onLongClick = actions.removeAll,
             onLongClickLabel = "すべて削除",
             tint = MaterialTheme.colorScheme.error
         )
@@ -331,13 +323,13 @@ private fun TimelineToolbar(
             icon = VlogIcons.MoveLeft,
             contentDescription = "ひとつ前へ移動",
             enabled = enabled && selectedIndex > 0,
-            onClick = { viewModel.moveSelected(-1) }
+            onClick = { actions.moveSelected(-1) }
         )
         CompactIconButton(
             icon = VlogIcons.MoveRight,
             contentDescription = "ひとつ後ろへ移動",
             enabled = enabled && selectedIndex < clips.lastIndex,
-            onClick = { viewModel.moveSelected(1) }
+            onClick = { actions.moveSelected(1) }
         )
 
         TimelineDivider()
@@ -352,7 +344,7 @@ private fun TimelineToolbar(
                 "タイムラインのミュート：オフ"
             },
             enabled = clips.isNotEmpty() && !isExporting,
-            onClick = { viewModel.setTimelineMuted(!timelineMuted) }
+            onClick = { actions.setTimelineMuted(!timelineMuted) }
         )
         TimelineToggleButton(
             icon = VlogIcons.Play,
@@ -363,7 +355,7 @@ private fun TimelineToolbar(
                 "連続再生：オフ（クリップの終わりで止まります）"
             },
             enabled = clips.isNotEmpty() && !isExporting,
-            onClick = { viewModel.setAutoAdvance(!autoAdvance) }
+            onClick = { actions.setAutoAdvance(!autoAdvance) }
         )
 
         TimelineDivider()
@@ -372,13 +364,13 @@ private fun TimelineToolbar(
             icon = VlogIcons.Undo,
             contentDescription = "もとに戻す",
             enabled = canUndo && !isExporting,
-            onClick = viewModel::undo
+            onClick = actions.undo
         )
         CompactIconButton(
             icon = VlogIcons.Redo,
             contentDescription = "やり直す",
             enabled = canRedo && !isExporting,
-            onClick = viewModel::redo
+            onClick = actions.redo
         )
 
         TimelineDivider()
@@ -387,13 +379,13 @@ private fun TimelineToolbar(
             label = "2s",
             contentDescription = "先頭から2秒を選択",
             enabled = trimPresetEnabled,
-            onClick = { viewModel.applyTrimPreset(2_000L) }
+            onClick = { actions.applyTrimPreset(2_000L) }
         )
         TrimPresetButton(
             label = "4s",
             contentDescription = "先頭から4秒を選択",
             enabled = trimPresetEnabled,
-            onClick = { viewModel.applyTrimPreset(4_000L) }
+            onClick = { actions.applyTrimPreset(4_000L) }
         )
 
         TimelineDivider()
@@ -415,8 +407,8 @@ private fun TimelineToolbar(
             enabled = enabled,
             onClick = {
                 val split = splitOnPlayhead
-                if (split == null) viewModel.splitTextAtPlayhead()
-                else viewModel.removeSplit(split)
+                if (split == null) actions.splitTextAtPlayhead()
+                else actions.removeSplit(split)
             },
             tint = splitMarkerColor()
         )

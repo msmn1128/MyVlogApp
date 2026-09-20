@@ -13,10 +13,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +37,7 @@ import com.example.myvlogapp.export.VlogEvent
 import com.example.myvlogapp.export.VlogExportService
 import com.example.myvlogapp.export.VlogExporter
 import com.example.myvlogapp.playback.PlaybackController
+import com.example.myvlogapp.waveform.SelectedWaveform
 import com.example.myvlogapp.waveform.Waveform
 import com.example.myvlogapp.waveform.extractWaveform
 
@@ -108,9 +113,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *
      * clip.id ではなくURIで持つのは、同じ動画を2回追加したときに
      * デコードをやり直さずに済ませるため。値がnullは「取得できなかった」。
+     *
+     * 画面へはこのMap自体は出さない（[selectedWaveform]だけを見せる）。Mapのまま渡すと、
+     * 波形が1本届くたびにMapが差し替わって、タイムライン全体が再コンポーズされてしまう。
      */
     private val _waveforms = MutableStateFlow<Map<String, Waveform?>>(emptyMap())
-    val waveforms: StateFlow<Map<String, Waveform?>> = _waveforms.asStateFlow()
 
     private val waveformJobs = mutableMapOf<String, Job>()
 
@@ -167,6 +174,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 // ClipStoreの他の経路もすべてIOで揃えてある。
                 withContext(Dispatchers.IO) { ClipStore.save(getApplication(), clips) }
             }
+        }
+
+        // 選択が変わったら、そのクリップの波形を用意する。以前は画面側の
+        // LaunchedEffect が担っていたが、画面に波形のMapを持たせないために
+        // こちらへ移した。同じURIを選び直しただけでは取り直さない。
+        viewModelScope.launch {
+            combine(_clips, playback.selectedIndex) { clips, index -> clips.getOrNull(index) }
+                .distinctUntilChangedBy { it?.uri }
+                .collect { clip -> clip?.let(::requestWaveform) }
         }
 
         // VlogExportService からの完了・失敗通知をUIのイベントとして中継する
@@ -791,10 +807,27 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     // --- 波形 ---------------------------------------------------------------------------
 
     /**
-     * 波形をバックグラウンドで用意する。取得済み・取得中のURIは何もしない。
-     * 画面側から選択中クリップぶんだけ呼べばよい（全件を先読みするとデコードが渋滞する）。
+     * 選択中クリップの波形。画面はこれだけを見る。
+     *
+     * 以前は画面側が波形のMap全体を collect し、`LaunchedEffect(selectedClip?.uri)` で
+     * 取得を頼んでいた。Mapは波形が1本届くたびに差し替わるため、タイムライン全体が
+     * そのたびに再コンポーズされていた。選択中の1本だけを流せば、実際に表示が変わる
+     * ときにしか流れない。
      */
-    fun requestWaveform(clip: VlogClip) {
+    val selectedWaveform: StateFlow<SelectedWaveform> =
+        combine(_clips, playback.selectedIndex, _waveforms) { clips, index, waveforms ->
+            val key = clips.getOrNull(index)?.uri?.toString()
+                ?: return@combine SelectedWaveform(waveform = null, isLoading = false)
+            if (key in waveforms) SelectedWaveform(waveforms[key], isLoading = false)
+            else SelectedWaveform(waveform = null, isLoading = true)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, SelectedWaveform())
+
+    /**
+     * 波形をバックグラウンドで用意する。取得済み・取得中のURIは何もしない。
+     * 選択中クリップぶんだけ呼ぶ（全件を先読みするとデコードが渋滞して、
+     * 肝心の「いま触っているクリップ」の表示が後回しになる）。
+     */
+    private fun requestWaveform(clip: VlogClip) {
         val key = clip.uri.toString()
         if (_waveforms.value.containsKey(key)) return
         if (waveformJobs[key]?.isActive == true) return
