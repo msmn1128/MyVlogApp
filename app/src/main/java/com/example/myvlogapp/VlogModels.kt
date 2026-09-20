@@ -280,6 +280,38 @@ internal fun mergeByShotAt(
 }
 
 /**
+ * 区間ごと移動（[com.example.myvlogapp.VlogViewModel.moveTrim]）で、実際にずらせる量。
+ *
+ * トリム範囲とひとことの区切りは「相対位置を保ったままひとかたまりで動く」のが狙いなので、
+ * 区切りだけを1つずつ範囲へ丸めてはいけない。以前は各区切りを `coerceIn(1L, durationMs)` で
+ * 丸めていたため、トリムより手前に残っている区切り（頭を落としたあとの分）を含むクリップを
+ * 大きく左へ動かすと、それらが先頭付近へ潰れて相対位置が失われ、「もとに戻す」以外で
+ * 復元できなくなっていた。代わりに、全部が同じ量で動けるところまで[requested]自体を詰める。
+ *
+ * 先頭の区間（`startMs == 0`）は動画そのものの頭なので動かさない。よって他の区切りの下限は
+ * [MIN_TEXT_SEGMENT_MS]、上限は動画の尺。すでにその範囲を外れている保存データを
+ * 動かせなくしてしまわないよう、許容範囲には必ず0（＝動かさない）を含める。
+ *
+ * @param requested トリム開始位置の移動量（動画の範囲へクランプ済み）
+ * @return 実際にずらす量。動かせる余地が無ければ [requested] のまま0に近い値になる
+ */
+internal fun clampTimelineShift(
+    texts: List<TextSegment>,
+    requested: Long,
+    durationMs: Long
+): Long {
+    // 移動の対象になるのは、先頭（絶対位置0）以外の区切りだけ
+    val moving = texts.filter { it.startMs != 0L }
+    if (moving.isEmpty()) return requested
+
+    val lowest = moving.minOf { it.startMs }
+    val highest = moving.maxOf { it.startMs }
+    val lo = minOf(MIN_TEXT_SEGMENT_MS - lowest, 0L)
+    val hi = maxOf(durationMs - highest, 0L)
+    return requested.coerceIn(lo, hi)
+}
+
+/**
  * [VlogClip.sortKeyMs] 用。[VideoMetadataReader.formatDate]/[formatTime] と同じ書式
  * （"yyyy/MM/dd" + "HH:mm"、Locale.US、端末ローカルタイムゾーン）の逆変換。
  * 壊れていれば最後尾へ送るため [Long.MAX_VALUE] を返す。

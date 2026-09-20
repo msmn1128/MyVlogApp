@@ -441,9 +441,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (span <= 0L) return
 
         val maxStart = (clip.durationMs - span).coerceAtLeast(0L)
-        val newStart = targetStartMs.coerceIn(0L, maxStart)
-        if (newStart == clip.startMs) return
-        val delta = newStart - clip.startMs
+        // トリム範囲と区切りは同じ量だけ動かす（相対位置を保つのがこの操作の目的）。
+        // 区切りが動画の範囲からはみ出すぶんは、区切りを丸めるのではなく移動そのものを
+        // 手前で止める（理由は[clampTimelineShift]）。
+        val delta = clampTimelineShift(
+            texts = clip.texts,
+            requested = targetStartMs.coerceIn(0L, maxStart) - clip.startMs,
+            durationMs = clip.durationMs
+        )
+        if (delta == 0L) return
+        val newStart = clip.startMs + delta
         val newEnd = newStart + span
 
         recordHistory(EditTag.TrimMove(playback.selectedIndexValue))
@@ -452,16 +459,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 startMs = newStart,
                 endMs = newEnd,
                 // 先頭の区間は常に絶対位置0（動画そのものの頭）なので動かさない。
-                // 区切りは下限を1msにクランプし、0へ丸めて先頭区間と衝突しないようにする
-                // （区切りだけが0になると「先頭は必ず0」の前提が崩れ、以後の判定が壊れる）。
-                // 上限にcoerceAtLeast(1L)を掛けるのは、durationMsが0の壊れたデータで
-                // coerceIn(1L, 0L)（min > max）が例外を投げるのを防ぐため。
+                // それ以外はすべて同じdeltaで動く。はみ出さない量まで詰めてあるので、
+                // ここで個別に丸める必要はない。
                 texts = current.texts.map { segment ->
                     if (segment.startMs == 0L) segment
-                    else segment.copy(
-                        startMs = (segment.startMs + delta)
-                            .coerceIn(1L, current.durationMs.coerceAtLeast(1L))
-                    )
+                    else segment.copy(startMs = segment.startMs + delta)
                 }
             )
         }
