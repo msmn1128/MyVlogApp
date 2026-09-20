@@ -411,6 +411,9 @@ internal class TimelineStore(
         playback.clearItems()
         onUrisReleased(removedUris)
     }
+
+    // --- もとに戻す / やり直す -----------------------------------------------------------
+
     fun undo() {
         history.undo(currentSnapshot())?.let(::applySnapshot)
     }
