@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkAll
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -97,5 +98,69 @@ class VlogClipJsonTest {
         val restored = VlogClip.fromJson(json, id = 1L)
         assertEquals("09:00", restored.timeText)
         assertEquals("2026/09/19", restored.dateText)
+    }
+
+    // --- ひとことの区間（texts）の正規化 -------------------------------------------------
+    //
+    // 「1件以上ある」「先頭のstartMsは0」「昇順」の3つは、区間の判定（textIndexAt /
+    // visibleTextSpans）が前提にしている。崩れたまま復元すると、ひとことを拾えない区間が
+    // できて書き出しから文字が消える。復元時に直していることをここで守る。
+
+    /** [segments] をそのまま texts に持つクリップのJSON（順序も値も手を加えずに入れる） */
+    private fun clipJsonWithTexts(vararg segments: Pair<Long, String>): JSONObject =
+        testClip(durationMs = 10_000L).toJson().put(
+            VlogClipKeys.TEXTS,
+            JSONArray().apply {
+                segments.forEach { (startMs, text) ->
+                    put(
+                        JSONObject()
+                            .put(VlogClipKeys.START_MS, startMs)
+                            .put(VlogClipKeys.TEXT, text)
+                    )
+                }
+            }
+        )
+
+    @Test
+    fun textSegmentsOutOfOrderAreSortedOnRestore() {
+        val json = clipJsonWithTexts(6_000L to "c", 0L to "a", 3_000L to "b")
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 3_000L, 6_000L), texts.map { it.startMs })
+        assertEquals(listOf("a", "b", "c"), texts.map { it.text })
+    }
+
+    @Test
+    fun aFirstSegmentThatDoesNotStartAtZeroIsPulledBackWithoutLosingText() {
+        // 直すのは1件目の位置だけ。全区間を白紙に差し替えると、1件目が壊れているだけで
+        // 残り全部のひとこと文言まで消えてしまう
+        val json = clipJsonWithTexts(500L to "a", 3_000L to "b")
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 3_000L), texts.map { it.startMs })
+        assertEquals(listOf("a", "b"), texts.map { it.text })
+    }
+
+    @Test
+    fun anEmptyTextsArrayStillYieldsOneSegmentAtZero() {
+        val texts = VlogClip.fromJson(clipJsonWithTexts(), id = 1L).texts
+
+        assertEquals(1, texts.size)
+        assertEquals(0L, texts.first().startMs)
+        assertEquals(DEFAULT_HITOKOTO, texts.first().text)
+    }
+
+    @Test
+    fun saveDataFromBeforeSegmentsExistedKeepsItsSingleText() {
+        // 区間を持たせる前のバージョンは userText しか持たない。
+        // その1件を先頭区間として読み直す（更新しても前回の続きが消えない）
+        val legacy = testClip().toJson()
+            .apply { remove(VlogClipKeys.TEXTS) }
+            .put(VlogClipKeys.LEGACY_USER_TEXT, "前のバージョンのひとこと")
+
+        val texts = VlogClip.fromJson(legacy, id = 1L).texts
+        assertEquals(1, texts.size)
+        assertEquals(0L, texts.first().startMs)
+        assertEquals("前のバージョンのひとこと", texts.first().text)
     }
 }

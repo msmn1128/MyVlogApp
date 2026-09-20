@@ -194,7 +194,7 @@ fun WaveformTrimmer(
             val pinnedRight = isPinnedAtRightEdgeState.value
             if (!pinnedLeft && !pinnedRight) continue
             val direction = if (pinnedLeft) -1L else 1L
-            val tickMs = edgeScrollTickMs(lockedViewportState, latestDuration)
+            val tickMs = edgeScrollTickMs(lockedViewportState.value, latestDuration)
             when {
                 activeHandle == TrimHandle.Start -> {
                     val newMs = clampHandleMs(

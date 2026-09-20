@@ -93,13 +93,27 @@ internal class TrackMetrics(
  */
 internal fun panViewportIfNeeded(ms: Long, durationMs: Long, lockedViewportState: MutableState<LongRange?>) {
     val locked = lockedViewportState.value ?: return
+    lockedViewportState.value = pannedViewport(locked, ms, durationMs)
+}
+
+/**
+ * [panViewportIfNeeded] の計算部分。MutableStateへの代入と分けてあるのは、
+ * Composeのstateを組み立てずにそのまま単体テストできるようにするため。
+ *
+ * @return 動かす必要が無ければ [locked] をそのまま返す
+ */
+internal fun pannedViewport(locked: LongRange, ms: Long, durationMs: Long): LongRange {
     val span = locked.last - locked.first
-    if (ms < locked.first) {
-        val newStart = ms.coerceAtLeast(0L)
-        lockedViewportState.value = newStart..(newStart + span)
-    } else if (ms > locked.last) {
-        val newEnd = ms.coerceAtMost(durationMs)
-        lockedViewportState.value = (newEnd - span)..newEnd
+    return when {
+        ms < locked.first -> {
+            val newStart = ms.coerceAtLeast(0L)
+            newStart..(newStart + span)
+        }
+        ms > locked.last -> {
+            val newEnd = ms.coerceAtMost(durationMs)
+            (newEnd - span)..newEnd
+        }
+        else -> locked
     }
 }
 
@@ -107,9 +121,12 @@ internal fun panViewportIfNeeded(ms: Long, durationMs: Long, lockedViewportState
  * 端に張り付いたまま指を動かさずにいるときの、1ティックあたりの移動量。
  * 今のビューポート幅の2%を、[dragTrimHandle]/[dragBodyOrMove]内のスクロール用
  * コルーチンが約16ms毎に呼ぶ（iOS版WaveformView.edgeScrollTickMsと同じ考え方）。
+ *
+ * @param viewport いま表示している範囲。ズームしていなければ null（クリップ全体が基準）
  */
-internal fun edgeScrollTickMs(lockedViewportState: MutableState<LongRange?>, durationMs: Long): Long {
-    val span = lockedViewportState.value?.let { it.last - it.first } ?: durationMs
+internal fun edgeScrollTickMs(viewport: LongRange?, durationMs: Long): Long {
+    val span = viewport?.let { it.last - it.first } ?: durationMs
+    // 2%が0msへ丸まると、端に張り付いても一切進まなくなる
     return (span * 0.02).toLong().coerceAtLeast(1L)
 }
 

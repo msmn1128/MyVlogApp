@@ -132,3 +132,58 @@ class WaveformBucketsTest {
         assertEquals(6_000, waveformBucketsFor(3_600_000L))
     }
 }
+
+/**
+ * つまみ／区間ごと移動が今の表示範囲からはみ出したときのパン。
+ * 表示幅（ズーム倍率）は変えず、窓だけを指の位置へずらす。
+ */
+class PannedViewportTest {
+
+    private val locked = 2_000L..6_000L
+
+    @Test
+    fun aPositionInsideTheViewportLeavesItAlone() {
+        assertEquals(locked, pannedViewport(locked, ms = 3_000L, durationMs = 20_000L))
+    }
+
+    @Test
+    fun goingPastTheLeftEdgeSlidesTheWindowKeepingItsWidth() {
+        assertEquals(1_000L..5_000L, pannedViewport(locked, ms = 1_000L, durationMs = 20_000L))
+    }
+
+    @Test
+    fun goingPastTheRightEdgeSlidesTheWindowKeepingItsWidth() {
+        assertEquals(4_000L..8_000L, pannedViewport(locked, ms = 8_000L, durationMs = 20_000L))
+    }
+
+    @Test
+    fun theWindowNeverStartsBeforeTheBeginningOfTheVideo() {
+        assertEquals(0L..4_000L, pannedViewport(locked, ms = -5_000L, durationMs = 20_000L))
+    }
+
+    @Test
+    fun theWindowNeverEndsAfterTheEndOfTheVideo() {
+        assertEquals(6_000L..10_000L, pannedViewport(locked, ms = 30_000L, durationMs = 10_000L))
+    }
+}
+
+/** 端に張り付いたまま指を止めているときの、1ティックあたりの進み */
+class EdgeScrollTickTest {
+
+    @Test
+    fun withoutZoomTheTickIsTwoPercentOfTheWholeClip() {
+        assertEquals(200L, edgeScrollTickMs(viewport = null, durationMs = 10_000L))
+    }
+
+    @Test
+    fun whileZoomedInTheTickFollowsTheVisibleSpanNotTheClipLength() {
+        // 表示中が3000msなら、尺が10分あってもその2%で進む
+        assertEquals(60L, edgeScrollTickMs(viewport = 1_000L..4_000L, durationMs = 600_000L))
+    }
+
+    @Test
+    fun theTickIsNeverZero() {
+        // 2%が0msへ丸まると、端に張り付いても一切進まなくなる
+        assertEquals(1L, edgeScrollTickMs(viewport = 0L..10L, durationMs = 10L))
+    }
+}
