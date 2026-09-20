@@ -930,7 +930,11 @@ object VlogExporter {
             completion.await()
         } finally {
             // キャンセルで抜ける場合もここを通る。呼び出し元（サービス）がcancel()を
-            // 呼んでいれば既に止まっているが、控えを残したままにしないよう必ず消す。
+            // 呼んでいれば既に止まっているが、それを呼ばない経路から打ち切られると、
+            // コルーチンだけが抜けてネイティブのエンコードは走り続ける（CPUと電池を
+            // 使い続け、作業ファイルの掃除も走らない）。中止の経路が増えても取りこぼさない
+            // よう、自分が起こしたセッションはここで自分で止めてから控えを消す。
+            if (!completion.isCompleted) FFmpegKit.cancel(started.sessionId)
             runningSessionId = null
         }
         when {
@@ -1099,18 +1103,22 @@ object VlogExporter {
         // バッファ単位でensureActive()を挟み、キャンセル時は挿入済みのMediaStore行を消す。
         // キャンセル以外の失敗（空き容量不足のIOExceptionなど）でも同様に消す。
         // 消さないとIS_PENDINGのまま残り、次回起動時の掃除まで壊れた項目が居座る。
+        //
+        // IS_PENDINGを0へ戻すところまでが「保存」。この更新も同じtryの中に入れる。
+        // 外に置いていた頃は、ここで失敗するとユーザーには「書き出しに失敗しました」と
+        // 出るのに、他アプリから見えない項目だけがギャラリーに残り続けていた。
         try {
             resolver.openOutputStream(uri)?.use { output ->
                 source.inputStream().use { input -> copyCancellably(input, output) }
             } ?: throw VlogExportException("ギャラリーへの書き込みに失敗しました")
+
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
         } catch (e: Throwable) {
             runCatching { resolver.delete(uri, null, null) }
             throw e
         }
-
-        values.clear()
-        values.put(MediaStore.Video.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
         return displayName
     }
 
