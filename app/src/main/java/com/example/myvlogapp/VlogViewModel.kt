@@ -166,8 +166,11 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // ひとことを1文字打つたびに書き込むのを避けている。
             _clips.collectLatest { clips ->
                 delay(AUTOSAVE_DEBOUNCE_MS)
-                // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない
-                withContext(Dispatchers.Default) { ClipStore.save(getApplication(), clips) }
+                // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない。
+                // DefaultではなくIOなのは、SharedPreferencesの初回アクセスがディスクの
+                // 読み込み待ちでブロックしうるため（CPU向けの有界プールを塞いでしまう）。
+                // ClipStoreの他の経路もすべてIOで揃えてある。
+                withContext(Dispatchers.IO) { ClipStore.save(getApplication(), clips) }
             }
         }
 
