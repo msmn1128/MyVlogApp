@@ -37,7 +37,7 @@ android {
         // 「書き出した動画が保存できない・サムネイルが出ない」状態になるため。
         minSdk = 29
         targetSdk = 37
-        versionCode = 4
+        versionCode = 1
         versionName = "1.0"
     }
 
