@@ -379,8 +379,11 @@ object ClipStore {
 
     private fun JSONObject.toSummary(): SavedProject {
         val clips = optJSONArray(ProjectKeys.CLIPS) ?: JSONArray()
+        // getJSONObjectではなくoptJSONObjectで読み、オブジェクトでない要素は尺0として飛ばす。
+        // ここで例外を投げると一覧の読み込みごと失敗し、一時保存を開くたびにアプリが落ちる
+        // （[readProjects]が壊れた1件を飛ばしているのと同じ理由）
         val totalMs = (0 until clips.length()).sumOf { index ->
-            val clip = clips.getJSONObject(index)
+            val clip = clips.optJSONObject(index) ?: return@sumOf 0L
             trimmedDurationMs(
                 clip.optLong(VlogClipKeys.START_MS),
                 clip.optLong(VlogClipKeys.END_MS)

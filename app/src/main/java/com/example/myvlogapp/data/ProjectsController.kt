@@ -120,6 +120,11 @@ internal class ProjectsController(
                 sendMessage(projectUnreadableMessage(restored.dropped))
                 return@launch
             }
+            // 入れ替える直前にもう一度確かめる。読み出しを押すと一覧はすぐ閉じ、上の
+            // 読み出し（保存内の動画を1本ずつ開いて確かめる）の間も「動画を追加」を押せる。
+            // その追加の読み込み中にここで入れ替えると、あとから読み込み終えた動画が
+            // 読み出した内容に混ざる。動画を開くのが遅いとき（クラウド上のファイルなど）に起きうる
+            if (refuseWhileAdding()) return@launch
 
             timeline.replaceAll(restored.clips, record = true)
             onLoaded()
