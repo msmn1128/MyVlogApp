@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -586,7 +588,8 @@ private fun EditorPane(
     // 閉じたあとも内部的にはフォーカスが残ったままで、空欄でもplaceholderが出ずカーソルだけ
     // 点滅し続ける（「動画追加時」の見た目と揃わない）。カーソル位置も先頭へ戻しておく。
     // 複数行入力した状態でキーボードを閉じると、閉じる直前のカーソル位置に内部スクロールが
-    // 追従したまま止まり、行の途中で切れた表示になって残るため。
+    // 追従したまま止まり、行の途中で切れた表示になって残るため
+    // （singleLineで1行に固定する対処も試したが、改行そのものが失われてしまうため採らない）。
     LaunchedEffect(isImeVisible) {
         if (!isImeVisible) {
             focusManager.clearFocus()
@@ -633,13 +636,16 @@ private fun EditorPane(
             val density = LocalDensity.current
             BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // OutlinedTextFieldの高さをweight(1f)のまま（＝親から渡された高さぴったり）にすると、
-                // IMEを閉じているときの取り分（editorWeight=0.18、実測で1.75行ぶん）が
-                // 行の高さの整数倍にならず、内部スクロールが行の途中で止まって上下が欠けて見える。
-                // 行高の整数倍に切り詰めた高さを明示することで、常に1行は丸ごと見せる。
+                // IMEを閉じているときの取り分が行の高さの整数倍にならず、内部スクロールが
+                // 行の途中で止まって上下が欠けて見える。行高の整数倍に切り詰めた高さを
+                // 明示することで、常に1行は丸ごと見せる（欠けた行はスクロールへ回す）。
                 val contentPadding = OutlinedTextFieldDefaults.contentPadding()
                 val verticalPadding =
                     contentPadding.calculateTopPadding() + contentPadding.calculateBottomPadding()
-                val lineHeight = with(density) { fieldTextStyle.lineHeight.toDp() }
+                // M3のOutlinedTextFieldは文字・placeholderの行に内部で最低MinTextLineHeight（24dp）を
+                // 要求する。bodyMediumのlineHeight（20sp≈20dp）をそのまま1行分として height() に渡すと
+                // 要求より4dp狭い箱を渡すことになり、グレーのplaceholder文字がわずかに上下で見切れる。
+                val lineHeight = maxOf(with(density) { fieldTextStyle.lineHeight.toDp() }, 24.dp)
                 val lines = maxOf(1, ((maxHeight - verticalPadding) / lineHeight).toInt())
                 OutlinedTextField(
                     value = field,
@@ -668,6 +674,13 @@ private fun EditorPane(
                     },
                     textStyle = fieldTextStyle,
                     interactionSource = interactionSource,
+                    // singleLineにはしない。改行そのものを許さないと、複数区間ぶんの長い
+                    // ひとことを改行で見やすく整えられなくなる。
+                    // imeActionを明示的にNoneにしておく。指定しないとDefaultになり、IME側の
+                    // 判断でエンターキーが「確定」扱いになって閉じてしまう環境がある
+                    // （改行として入らない）。書き出し側（ExportTextFiles）は"\n"で行を
+                    // 分けてdrawtextを積むので、改行はそのまま複数行として焼き込まれる。
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.None),
                     modifier = Modifier.fillMaxWidth().height(verticalPadding + lineHeight * lines)
                 )
             }

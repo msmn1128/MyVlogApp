@@ -147,9 +147,9 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
-    val previewWeight = lerp(0.42f, 0.25f, imeOpenFraction)
+    val previewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
     val timelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
-    val editorWeight = lerp(0.18f, 0.55f, imeOpenFraction)
+    val editorWeight = lerp(0.20f, 0.55f, imeOpenFraction)
 
     // プレビューにも書き出しと同じフォントを使う。
     // 既定フォントのままだと、サイズを合わせても書き出し結果と別物に見えてしまう。
