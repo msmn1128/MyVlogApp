@@ -11,8 +11,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -32,6 +35,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -88,7 +94,8 @@ internal fun ColumnScope.EditSection(
     actions: TimelineActions,
     isExporting: Boolean,
     timelineWeight: Float,
-    editorWeight: Float
+    editorWeight: Float,
+    isImeVisible: Boolean
 ) {
     TimelinePane(
         clips = clips,
@@ -105,6 +112,7 @@ internal fun ColumnScope.EditSection(
         selectedClip = selectedClip,
         positionMs = positionMs,
         isExporting = isExporting,
+        isImeVisible = isImeVisible,
         onTextChange = actions.updateText,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
@@ -544,6 +552,7 @@ private fun EditorPane(
     selectedClip: VlogClip?,
     positionMs: State<Long>,
     isExporting: Boolean,
+    isImeVisible: Boolean,
     onTextChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -569,6 +578,21 @@ private fun EditorPane(
     LaunchedEffect(selectedClip?.id, segmentNumber, hitokoto) {
         if (field.text != hitokoto) {
             field = TextFieldValue(hitokoto, TextRange(hitokoto.length))
+        }
+    }
+
+    val focusManager = LocalFocusManager.current
+    // キーボードを閉じたら、入力欄からフォーカスも外す。isFocusedだけで出し分けていると、
+    // 閉じたあとも内部的にはフォーカスが残ったままで、空欄でもplaceholderが出ずカーソルだけ
+    // 点滅し続ける（「動画追加時」の見た目と揃わない）。カーソル位置も先頭へ戻しておく。
+    // 複数行入力した状態でキーボードを閉じると、閉じる直前のカーソル位置に内部スクロールが
+    // 追従したまま止まり、行の途中で切れた表示になって残るため。
+    LaunchedEffect(isImeVisible) {
+        if (!isImeVisible) {
+            focusManager.clearFocus()
+            if (field.selection != TextRange.Zero) {
+                field = field.copy(selection = TextRange.Zero)
+            }
         }
     }
 
@@ -603,21 +627,50 @@ private fun EditorPane(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = field,
-                onValueChange = {
-                    field = it
-                    onTextChange(it.text)
-                },
-                enabled = selectedClip != null && !isExporting,
-                // 未入力のときだけ「ひとこと」をグレーで案内表示する。これは入力欄の見た目だけで、
-                // 実際の値は空文字のまま（プレビュー・書き出しには何も焼き込まれない）
-                placeholder = { Text(DEFAULT_HITOKOTO) },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    textAlign = TextAlign.Center
-                ),
-                modifier = Modifier.fillMaxWidth().weight(1f)
-            )
+            val interactionSource = remember { MutableInteractionSource() }
+            val isFocused by interactionSource.collectIsFocusedAsState()
+            val fieldTextStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.Center)
+            val density = LocalDensity.current
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                // OutlinedTextFieldの高さをweight(1f)のまま（＝親から渡された高さぴったり）にすると、
+                // IMEを閉じているときの取り分（editorWeight=0.18、実測で1.75行ぶん）が
+                // 行の高さの整数倍にならず、内部スクロールが行の途中で止まって上下が欠けて見える。
+                // 行高の整数倍に切り詰めた高さを明示することで、常に1行は丸ごと見せる。
+                val contentPadding = OutlinedTextFieldDefaults.contentPadding()
+                val verticalPadding =
+                    contentPadding.calculateTopPadding() + contentPadding.calculateBottomPadding()
+                val lineHeight = with(density) { fieldTextStyle.lineHeight.toDp() }
+                val lines = maxOf(1, ((maxHeight - verticalPadding) / lineHeight).toInt())
+                OutlinedTextField(
+                    value = field,
+                    onValueChange = {
+                        field = it
+                        onTextChange(it.text)
+                    },
+                    enabled = selectedClip != null && !isExporting,
+                    // 未入力かつ未フォーカスのときだけ「ひとこと」をグレーで案内表示する。
+                    // M3のplaceholderは中身の空文字判定しか見ずフォーカスを見ないので、
+                    // タップした瞬間（打ち始める前）に消したいならここで自分で出し分ける。
+                    // これは入力欄の見た目だけで、実際の値は空文字のまま
+                    // （プレビュー・書き出しには何も焼き込まれない）
+                    placeholder = if (isFocused) null else {
+                        {
+                            // M3のOutlinedTextFieldはplaceholderの文字サイズをtextStyle引数と関係なく
+                            // 常にbodyLargeで描く実装のため、ここでstyleを明示して入力文字と揃える。
+                            // fillMaxWidth()を付けないとtextAlign=Centerが文字幅の中でしか効かず
+                            // 見た目には左寄せのまま変わらない。
+                            Text(
+                                DEFAULT_HITOKOTO,
+                                style = fieldTextStyle,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    textStyle = fieldTextStyle,
+                    interactionSource = interactionSource,
+                    modifier = Modifier.fillMaxWidth().height(verticalPadding + lineHeight * lines)
+                )
+            }
         }
     }
 }

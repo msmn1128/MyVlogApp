@@ -140,6 +140,10 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     if (imeBottomPx > imeMaxBottomPx) imeMaxBottomPx = imeBottomPx
     val imeOpenFraction =
         if (imeMaxBottomPx > 0) (imeBottomPx.toFloat() / imeMaxBottomPx).coerceIn(0f, 1f) else 0f
+    // ひとこと入力欄が、キーボードの開閉に合わせて自分の表示（placeholderの出し分けや
+    // スクロール位置）を切り替えるための合図。isFocusedだけを見ると、キーボードを閉じても
+    // フォーカスは残ったままなことがあり、空欄でもカーソルだけ点滅し続けてしまう。
+    val isImeVisible = imeBottomPx > 0
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
@@ -363,7 +367,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             actions = timelineActions,
             isExporting = isExporting,
             timelineWeight = timelineWeight,
-            editorWeight = editorWeight
+            editorWeight = editorWeight,
+            isImeVisible = isImeVisible
         )
     }
 
