@@ -61,7 +61,6 @@ class FilterGraphTest {
     @Test
     fun clipChain_startsFromZeroAndTrimsByDurationOnly() {
         val graph = buildGraph()
-        println("FILTER_GRAPH_BEGIN\n$graph\nFILTER_GRAPH_END")
 
         // 入力0は効果音なので、クリップは1番から
         assertTrue(graph.contains("[1:v]setpts=PTS-STARTPTS,trim=end=5.000,scale="))

@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（143件）
+./gradlew testDebugUnitTest        # JVM単体テスト（144件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -224,7 +224,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、143件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
+JVM単体テスト（`src/test`）のみ、144件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
 
 | ファイル | 対象 |
 |---|---|

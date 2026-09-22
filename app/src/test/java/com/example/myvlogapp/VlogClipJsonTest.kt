@@ -151,6 +151,18 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun aSegmentWithoutTheTextKeyIsReadAsEmptyNotAsThePlaceholder() {
+        // 値が無いときの代わりに「ひとこと」を入れると、未入力のまま書き出したときに
+        // その文字が動画へ焼き込まれてしまう。「ひとこと」は入力欄の案内文字でしかない
+        val json = testClip().toJson().put(
+            VlogClipKeys.TEXTS,
+            JSONArray().put(JSONObject().put(VlogClipKeys.START_MS, 0L))
+        )
+
+        assertEquals("", VlogClip.fromJson(json, id = 1L).texts.single().text)
+    }
+
+    @Test
     fun saveDataFromBeforeSegmentsExistedKeepsItsSingleText() {
         // 区間を持たせる前のバージョンは userText しか持たない。
         // その1件を先頭区間として読み直す（更新しても前回の続きが消えない）

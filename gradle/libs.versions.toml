@@ -47,8 +47,10 @@ androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.re
 androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
 
 # --- FFmpeg（16KBページサイズ対応フォーク） ---
-# 使用可能なエンコーダはビルドによって異なるが、VlogExporterが実行時に
+# 使用可能なエンコーダはビルドによって異なるが、FFmpegCapabilities.kt が実行時に
 # 自動判定するため、この依存を差し替えてもコード修正は不要。
+# このビルドは --enable-gpl なので配布するAPKはGPLv3になる（READMEの「ライセンス」節）。
+# 差し替えたら、ライセンス表示（LicenseDialog.kt・README・Releasesのソースの控え）も見直すこと。
 ffmpeg-kit = { group = "com.moizhassan.ffmpeg", name = "ffmpeg-kit-16kb", version.ref = "ffmpegKit" }
 
 [plugins]
