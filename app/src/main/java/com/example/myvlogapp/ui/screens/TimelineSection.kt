@@ -396,15 +396,17 @@ private fun TimelineToolbar(
 
         TimelineDivider()
 
+        // 選択範囲の始まりを起点にする（先頭からではない。理由はTimelineStore.applyTrimPreset）。
+        // 読み上げのラベルも動作に合わせる
         TrimPresetButton(
             label = "2s",
-            contentDescription = "先頭から2秒を選択",
+            contentDescription = "選択範囲の始まりから2秒にする",
             enabled = trimPresetEnabled,
             onClick = { actions.applyTrimPreset(2_000L) }
         )
         TrimPresetButton(
             label = "4s",
-            contentDescription = "先頭から4秒を選択",
+            contentDescription = "選択範囲の始まりから4秒にする",
             enabled = trimPresetEnabled,
             onClick = { actions.applyTrimPreset(4_000L) }
         )

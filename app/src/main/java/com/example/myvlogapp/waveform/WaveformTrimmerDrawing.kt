@@ -69,7 +69,7 @@ internal fun DrawScope.drawWaveformTrimmer(
 
     // 動画は切っていないので、ひとことの切れ目は自分で描かないと分からない
     if (texts.size > 1) {
-        drawSegmentSplits(texts, track, startMs, startX, activeSplitIndex, textMeasurer, colors)
+        drawSegmentSplits(texts, track, startMs, endMs, startX, activeSplitIndex, textMeasurer, colors)
     }
 
     if (positionMs in viewport.first..viewport.last && positionMs in startMs..endMs) {
@@ -156,6 +156,7 @@ private fun DrawScope.drawSegmentSplits(
     texts: List<TextSegment>,
     track: TrackMetrics,
     startMs: Long,
+    endMs: Long,
     startX: Float,
     activeSplitIndex: Int?,
     textMeasurer: TextMeasurer,
@@ -175,11 +176,17 @@ private fun DrawScope.drawSegmentSplits(
                 strokeWidth = if (index == activeSplitIndex) 4.5.dp.toPx() else 2.5.dp.toPx()
             )
         }
-        // トリム範囲より手前の区切りは番号を出さない。表示されない文字だから。
+        // トリム範囲の外の区切りは番号を出さない。表示されない文字だから。
+        // 手前側だけでなく、トリムで終わりを縮めて範囲の後ろに残った区切りも同じ
         if (index < firstVisibleSegmentIndex) return@forEachIndexed
+        if (index > firstVisibleSegmentIndex && segment.startMs >= endMs) return@forEachIndexed
 
         // いま表示中の区間の番号は、実際の区切り位置ではなくトリム開始位置に
         // 追従させる。そうしないとトリムを動かしても左端に張り付いたままになる
+        val baseX = if (index == firstVisibleSegmentIndex) startX else splitX
+        // 拡大表示で表示範囲の外にある区切りは番号も出さない。下のdrawSegmentNumberは
+        // 番号を波形の中へ押し戻すので、出すと画面の端に、そこには無い区切りの番号が並ぶ
+        if (baseX < track.left || baseX > track.right) return@forEachIndexed
         val anchorX = if (index == firstVisibleSegmentIndex) startX else splitX + 3.dp.toPx()
         drawSegmentNumber(
             measurer = textMeasurer,

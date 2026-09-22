@@ -246,7 +246,12 @@ fun WaveformTrimmer(
             }
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .pointerInput(enabled) {
+            // clipIdもキーに入れる。lockedViewportStateと端への張り付きフラグは
+            // remember(clipId)でクリップごとに作り直されるのに、ここがenabledだけで
+            // 作り直されないと、別のクリップを選んだあとも最初のクリップの古い状態へ
+            // 書き込み続ける。画面と下のオートスクロールは新しい状態を見ているので、
+            // つまみを表示範囲の外へ引っ張っても波形が付いてこず、端に寄せても送られなかった
+            .pointerInput(enabled, clipId) {
                 if (!enabled) return@pointerInput
 
                 awaitEachGesture {
