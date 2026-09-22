@@ -72,6 +72,13 @@ internal fun SaveLoadDialog(
     val name = editedName ?: defaultSaveName(System.currentTimeMillis(), projects.map { it.name })
     var pendingDelete by remember { mutableStateOf<SavedProject?>(null) }
     var pendingOverwrite by remember { mutableStateOf<SavedProject?>(null) }
+    var showLicense by remember { mutableStateOf(false) }
+
+    // ライセンス表示の入口はここに置く。メイン画面のボタン列に足すと「動画を追加」と
+    // 「書き出し」の幅が削られるため、ふだん開く補助的なダイアログの下端に寄せた
+    if (showLicense) {
+        LicenseDialog(onDismiss = { showLicense = false })
+    }
 
     // 上書きも「もとに戻す」では戻せない（戻せるのはタイムラインの編集だけで、
     // 上書きされた保存の中身は失われる）。長押しでの誤操作を防ぐため確認を挟む
@@ -161,6 +168,9 @@ internal fun SaveLoadDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("閉じる") }
+        },
+        dismissButton = {
+            TextButton(onClick = { showLicense = true }) { Text("ライセンス") }
         }
     )
 }

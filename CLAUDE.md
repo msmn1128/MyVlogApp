@@ -275,6 +275,16 @@ JVMで動かないため実装を入れている。
 
 ---
 
+- **FFmpeg は GPLv3**：`com.moizhassan.ffmpeg:ffmpeg-kit-16kb`（16KBページ対応のフォーク）は、POM では
+  LGPLv3 と名乗っているが、中身は `--enable-gpl --enable-version3` でビルドされており、ライブラリ自身も
+  「GPL version 3 or later」と名乗る（libx264 は入っておらず、書き出しは `h264_mediacodec` で行われる）。
+  そのため**配布する APK は GPLv3**。アプリ内の表示は `ui/screens/LicenseDialog.kt`（保存ダイアログの
+  「ライセンス」から開く）、全文は `assets/licenses/GPL-3.0.txt`、説明は README の「ライセンス」節。
+  FFmpeg を差し替えたら、この3か所を合わせて見直すこと。
+- **書き出しサービスの種類**：Android 15 以降は `mediaProcessing`、それより前は `dataSync`
+  （`VlogExportService.foregroundServiceType()`）。マニフェストには両方の種類と権限を宣言してある。
+  `dataSync` はデータの転送・同期向けで、Play の申告で用途が合わないと判断されうるので、全端末 `dataSync` に戻さないこと。
+
 ## 採った設計（似た形に戻さないために）
 
 - **UI層へは値ではなく `StateFlow` を渡す。** `canUndo` や選択中の波形を「値」まで上げると、
