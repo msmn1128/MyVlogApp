@@ -77,7 +77,7 @@ data class VlogClip(
      * ここで添字アクセスが例外を投げると画面全体が落ちるため、防御的にgetOrNullで読む。
      */
     fun textAt(positionMs: Long): String =
-        texts.getOrNull(textIndexAt(positionMs))?.text ?: DEFAULT_HITOKOTO
+        texts.getOrNull(textIndexAt(positionMs))?.text ?: ""
 
     /**
      * 区切りのうち [positionMs] のすぐ近くにあるもの。無ければ null。
@@ -212,7 +212,7 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
  */
 private fun JSONObject.readTextSegments(): List<TextSegment> {
     val array = optJSONArray(VlogClipKeys.TEXTS)
-        ?: return listOf(TextSegment(0L, optString(VlogClipKeys.LEGACY_USER_TEXT, DEFAULT_HITOKOTO)))
+        ?: return listOf(TextSegment(0L, optString(VlogClipKeys.LEGACY_USER_TEXT, "")))
 
     // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
     // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
@@ -221,7 +221,7 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
         val item = array.getJSONObject(index)
         TextSegment(
             startMs = item.optLong(VlogClipKeys.START_MS),
-            text = item.optString(VlogClipKeys.TEXT, DEFAULT_HITOKOTO)
+            text = item.optString(VlogClipKeys.TEXT, "")
         )
     }.sortedBy { it.startMs }
 

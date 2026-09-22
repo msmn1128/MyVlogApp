@@ -302,7 +302,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             autoAdvance = viewModel.autoAdvance,
             timelineMuted = viewModel.timelineMuted,
             selectedWaveform = viewModel.selectedWaveform,
-            replacementCount = viewModel.timelineReplacementCount
+            replacementCount = viewModel.timelineReplacementCount,
+            isPlaying = viewModel.isPlaying
         )
     }
     val timelineActions = remember(viewModel) {
@@ -320,6 +321,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             splitTextAtPlayhead = viewModel::splitTextAtPlayhead,
             removeSplit = viewModel::removeSplit,
             updateText = viewModel::updateText,
+            pause = viewModel::pause,
             trimmer = WaveformTrimmerCallbacks(
                 onTrimChange = viewModel::updateTrim,
                 onTrimMove = viewModel::moveTrim,

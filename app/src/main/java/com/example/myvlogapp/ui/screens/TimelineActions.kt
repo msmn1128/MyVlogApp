@@ -30,7 +30,9 @@ class TimelineState(
     val timelineMuted: StateFlow<Boolean>,
     val selectedWaveform: StateFlow<SelectedWaveform>,
     /** 値が変わったらタイル一覧を作り直す合図（理由は[com.example.myvlogapp.edit.TimelineStore.replacementCount]） */
-    val replacementCount: StateFlow<Int>
+    val replacementCount: StateFlow<Int>,
+    /** ひとこと入力中は再生させないために、入力欄が見る */
+    val isPlaying: StateFlow<Boolean>
 )
 
 /**
@@ -55,6 +57,7 @@ class TimelineActions(
     val splitTextAtPlayhead: () -> Unit,
     val removeSplit: (atMs: Long) -> Unit,
     val updateText: (text: String) -> Unit,
+    val pause: () -> Unit,
     /** 波形トリマーのコールバック束。既存の[WaveformTrimmerCallbacks]をそのまま持つ */
     val trimmer: WaveformTrimmerCallbacks
 )

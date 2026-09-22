@@ -115,7 +115,9 @@ internal fun ColumnScope.EditSection(
         positionMs = positionMs,
         isExporting = isExporting,
         isImeVisible = isImeVisible,
+        isPlaying = state.isPlaying,
         onTextChange = actions.updateText,
+        onPause = actions.pause,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
 }
@@ -555,7 +557,9 @@ private fun EditorPane(
     positionMs: State<Long>,
     isExporting: Boolean,
     isImeVisible: Boolean,
+    isPlaying: StateFlow<Boolean>,
     onTextChange: (String) -> Unit,
+    onPause: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val segmentCount = selectedClip?.texts?.size ?: 1
@@ -632,6 +636,18 @@ private fun EditorPane(
             Spacer(Modifier.height(6.dp))
             val interactionSource = remember { MutableInteractionSource() }
             val isFocused by interactionSource.collectIsFocusedAsState()
+            val playing by isPlaying.collectAsStateWithLifecycle()
+            // 打っている間は再生させない。書き換える区間は再生位置で決まるので、再生中に打つと
+            // 区間が切り替わった瞬間のキー入力が隣の区間へ前の区間の文字ごと書き込まれ、
+            // 変換途中の文字も区間が変わるたびに外から差し替えられて勝手に確定してしまう。
+            // 入力欄に触れたら止め、逆にキーボードを出したままプレビューをタップして
+            // 再生を始めたら入力欄から抜ける（どちらか片方だけだと、もう片方の順で同じ状態に戻る）。
+            LaunchedEffect(isFocused) {
+                if (isFocused) onPause()
+            }
+            LaunchedEffect(playing) {
+                if (playing) focusManager.clearFocus()
+            }
             val fieldTextStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.Center)
             val density = LocalDensity.current
             BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
@@ -642,19 +658,22 @@ private fun EditorPane(
                 val contentPadding = OutlinedTextFieldDefaults.contentPadding()
                 val verticalPadding =
                     contentPadding.calculateTopPadding() + contentPadding.calculateBottomPadding()
-                // M3のOutlinedTextFieldは文字・placeholderの行に内部で最低MinTextLineHeight（24dp、
-                // material3 1.4.0のTextFieldImpl.ktにある非公開の定数）を要求する。bodyMediumの
-                // lineHeight（20sp≈20dp）をそのまま1行分としてheight()に渡すと要求より4dp狭い箱を
-                // 渡すことになり、グレーのplaceholder文字がわずかに上下で見切れる。非公開の値なので
+                val lineHeight = with(density) { fieldTextStyle.lineHeight.toDp() }
+                val lines = maxOf(1, ((maxHeight - verticalPadding) / lineHeight).toInt())
+                // M3のOutlinedTextFieldは文字・placeholderの領域に最低MinTextLineHeight（24dp、
+                // material3 1.4.0のTextFieldImpl.ktにある非公開の定数）を heightIn(min) で要求する。
+                // bodyMediumのlineHeight（20sp≈20dp）で1行ぶんの箱を作ると4dp足りず、グレーの
+                // placeholder文字がわずかに上下で見切れる。ただしこれは領域全体の下限であって
+                // 1行あたりの高さではない。行数に24dpを掛けると2行以上で1行4dpずつ余り、
+                // その余りで次の行が途中まで覗いて見切れが戻る。非公開の値なので
                 // material3のバージョンを上げたときはこの24dpがまだ合っているか確認すること。
-                val lineHeight = maxOf(with(density) { fieldTextStyle.lineHeight.toDp() }, 24.dp)
-                // 1行ぶん（verticalPadding + lineHeight）が親から渡されたmaxHeightより大きくなる
+                val textAreaHeight = maxOf(lineHeight * lines, 24.dp)
+                // 1行ぶん（verticalPadding + textAreaHeight）が親から渡されたmaxHeightより大きくなる
                 // ことがある（横向きやマルチウィンドウでeditorWeightの取り分が小さいとき）。
                 // その場合でもcoerceAtMostで実際の高さに収め、親のweight制約で暗黙に縮められて
                 // レイアウトが食い違うのを防ぐ（縮められた結果また見切れが起きるのは避けられないが、
                 // 高さの要求自体は矛盾しないようにしておく）。
-                val lines = maxOf(1, ((maxHeight - verticalPadding) / lineHeight).toInt())
-                val fieldHeight = (verticalPadding + lineHeight * lines).coerceAtMost(maxHeight)
+                val fieldHeight = (verticalPadding + textAreaHeight).coerceAtMost(maxHeight)
                 OutlinedTextField(
                     value = field,
                     onValueChange = {

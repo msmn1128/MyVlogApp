@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
@@ -237,9 +238,14 @@ private fun PreviewPane(
                 ),
                 fontFamily = hitokotoFontFamily,
                 textAlign = TextAlign.Center,
+                // 折り返さない。書き出しのdrawtextは「\n」の位置でしか改行しないので、
+                // プレビューだけ自動で折り返すと、長い1行が画面では収まって見えるのに
+                // 書き出した動画では左右が切れる。はみ出しも書き出しと同じく中央から
+                // 左右均等にさせる（unboundedにしないと左端から描かれて右だけが切れる）。
+                softWrap = false,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .padding(horizontal = 24.dp)
+                    .wrapContentWidth(unbounded = true)
             )
             Text(
                 text = selectedClip.timeText,
