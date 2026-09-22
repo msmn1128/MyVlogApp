@@ -91,7 +91,7 @@ private fun GplFullText() {
 
 private val NOTICE = """
 MyVlog.
-Copyright (c) 2026 Masamune
+Copyright (c) 2026 msmn1128
 
 このアプリは、書き出しに FFmpeg（ffmpeg-kit 6.1.1 に同梱のもの）を使っています。この FFmpeg は GPL を有効にしてビルドされているため、このアプリ（APK）全体は GNU General Public License バージョン3（またはそれ以降の版）の条件で配布しています。この条件に従って、再配布・改変ができます。アプリ自身のソースコードは MIT ライセンスで公開しています。
 
