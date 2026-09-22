@@ -36,7 +36,10 @@ internal fun writeSpanTextFiles(
     clip: VlogClip,
     textFiles: MutableList<File>
 ): List<SpanLines> = clip.visibleTextSpans().mapIndexed { spanIndex, span ->
-    val lineFiles = span.text.split("\n").mapIndexed { lineIndex, line ->
+    // split("\n")ではなくlines()で分ける（\r\n・\rでも区切る）。貼り付けた文字に\rが
+    // 残っていると、drawtextはそれも改行として扱うため、その行だけ2行ぶんの高さで
+    // 測られ、text_h基準の縦位置が半行ずれる。プレビュー（PreviewPane）も同じ区切り方
+    val lineFiles = span.text.lines().mapIndexed { lineIndex, line ->
         // 空行にdrawtextを掛けるとエラーになるので、位置だけ確保して描かない
         if (line.isBlank()) null
         else writeTextFile(
@@ -57,7 +60,7 @@ internal fun writeTitleTextFiles(
     id: Long,
     titleText: String,
     textFiles: MutableList<File>
-): List<File> = titleText.split("\n")
+): List<File> = titleText.lines() // \rの扱いは[writeSpanTextFiles]と同じ理由
     .filter { it.isNotBlank() }
     .mapIndexed { lineIndex, line ->
         writeTextFile(workDir, "title_${id}_$lineIndex.txt", line, textFiles)

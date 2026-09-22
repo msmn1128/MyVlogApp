@@ -169,7 +169,10 @@ private fun PreviewPane(
     // 毎回再コンポーズされてしまうため、表示する文字列だけを派生させておき、
     // ひとことが切り替わったときにだけ更新されるようにする。
     val hitokoto by remember(selectedClip) {
-        derivedStateOf { selectedClip.textAt(positionMs.value) }
+        // 改行は書き出し（writeSpanTextFiles）と同じくlines()で区切り直す。
+        // Composeは単独の\rを改行にしないが、drawtextは改行にするため、
+        // そのままだと貼り付けた文字の行の割れ方がプレビューと書き出しで食い違う
+        derivedStateOf { selectedClip.textAt(positionMs.value).lines().joinToString("\n") }
     }
 
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {

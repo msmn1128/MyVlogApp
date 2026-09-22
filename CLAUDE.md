@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（130件）
+./gradlew testDebugUnitTest        # JVM単体テスト（133件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -224,7 +224,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、130件。対象は純粋関数に限られる。
+JVM単体テスト（`src/test`）のみ、133件。対象は純粋関数に限られる。
 
 | ファイル | 対象 |
 |---|---|
@@ -236,6 +236,7 @@ JVM単体テスト（`src/test`）のみ、130件。対象は純粋関数に限�
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
+| `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 
