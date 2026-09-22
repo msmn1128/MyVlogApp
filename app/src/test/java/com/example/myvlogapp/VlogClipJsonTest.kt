@@ -147,7 +147,7 @@ class VlogClipJsonTest {
 
         assertEquals(1, texts.size)
         assertEquals(0L, texts.first().startMs)
-        assertEquals(DEFAULT_HITOKOTO, texts.first().text)
+        assertEquals("", texts.first().text)
     }
 
     @Test

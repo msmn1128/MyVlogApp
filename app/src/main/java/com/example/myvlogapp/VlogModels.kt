@@ -242,10 +242,15 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
  * カット点でつなぎ目が生まれず、書き出しも1本のままで済む。
  *
  * [startMs] は動画内の絶対位置（トリミング位置と同じ基準）。先頭は必ず 0。
+ *
+ * [text] の既定値は空文字。動画追加直後に触らなければプレビュー・書き出しの
+ * どちらにも何も焼き込まれない（空行はdrawtextを描かないので[ExportTextFiles.writeSpanTextFiles]側で
+ * 自然に何も出ない）。入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
+ * タイムラインのタイル表示（未入力時の目印）は[DEFAULT_HITOKOTO]へのifBlankフォールバックで補う。
  */
 data class TextSegment(
     val startMs: Long = 0L,
-    val text: String = DEFAULT_HITOKOTO
+    val text: String = ""
 )
 
 /** [VlogClip.visibleTextSpans] の結果。number は画面に出す 1,2,3… の通し番号 */

@@ -610,6 +610,9 @@ private fun EditorPane(
                     onTextChange(it.text)
                 },
                 enabled = selectedClip != null && !isExporting,
+                // 未入力のときだけ「ひとこと」をグレーで案内表示する。これは入力欄の見た目だけで、
+                // 実際の値は空文字のまま（プレビュー・書き出しには何も焼き込まれない）
+                placeholder = { Text(DEFAULT_HITOKOTO) },
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     textAlign = TextAlign.Center
                 ),

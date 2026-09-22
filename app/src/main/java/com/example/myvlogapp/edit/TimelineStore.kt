@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
-import com.example.myvlogapp.DEFAULT_HITOKOTO
 import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.MIN_TEXT_SEGMENT_MS
 import com.example.myvlogapp.TextSegment
@@ -321,8 +320,11 @@ internal class TimelineStore(
     /**
      * 再生ヘッドの位置でひとことを2つに割る。動画は切らない。
      *
-     * 後半には初期値の「ひとこと」を入れる。前半の文字をそのまま複製すると、
-     * 分割できたのかどうかがプレビューからは分からないため。
+     * 後半は空文字にする（動画追加時の初期区間と同じ扱い）。前半の文字をそのまま
+     * 複製すると、分割できたのかどうかが入力欄からは分からないため。空にしておけば
+     * 入力欄には「ひとこと」がplaceholderとしてグレー表示され、未入力なのが一目でわかる。
+     * 「N／M区間目」のバッジと波形の区切り線でも分割自体は分かるので、
+     * プレビュー映像に何も焼き込まない代わりにそちらで確認できる。
      */
     fun splitTextAtPlayhead() {
         val clip = selectedClip ?: return
@@ -340,7 +342,7 @@ internal class TimelineStore(
         }
 
         recordHistory()
-        val inserted = (clip.texts + TextSegment(at, DEFAULT_HITOKOTO)).sortedBy { it.startMs }
+        val inserted = (clip.texts + TextSegment(at)).sortedBy { it.startMs }
         updateSelected { it.copy(texts = inserted) }
 
         // 分割した後半の頭を出しておく。編集対象がそのまま新しい区間になるので、
