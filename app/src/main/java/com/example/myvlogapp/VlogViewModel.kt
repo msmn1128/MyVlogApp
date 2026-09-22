@@ -2,6 +2,7 @@ package com.example.myvlogapp
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -82,6 +83,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      */
     private val timeline: TimelineStore = TimelineStore(
         playback = playback,
+        // 壁時計ではなく端末の起動からの経過時間。時刻合わせで巻き戻ると、
+        // 履歴のまとめ判定が意図せず効いたり効かなかったりするため
+        elapsedMs = SystemClock::elapsedRealtime,
         sendMessage = ::sendMessage,
         // 一覧から外れた動画の波形は捨てる。一覧を更新したあとに呼ばれる
         onUrisReleased = { uris -> uris.forEach(::cancelWaveformJobIfUnused) }

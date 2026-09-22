@@ -20,7 +20,7 @@ class ExportTextFilesTest {
     }
 
     @Test
-    fun `ひとことは改行コードの種類によらず同じ行に分かれ、行に改行コードが残らない`() {
+    fun hitokotoSplitsOnEveryLineBreakKindWithoutLeavingCarriageReturns() {
         val clip = testClip(texts = listOf(TextSegment(0L, "一行目\r\n二行目\r三行目\n四行目")))
 
         val lines = writeSpanTextFiles(workDir, 1L, 0, clip, textFiles).single().lineFiles
@@ -29,7 +29,7 @@ class ExportTextFilesTest {
     }
 
     @Test
-    fun `ひとことの空行は位置だけ残して描かない`() {
+    fun blankHitokotoLinesKeepTheirSlotButAreNotDrawn() {
         val clip = testClip(texts = listOf(TextSegment(0L, "上\r\n\r\n下")))
 
         val lines = writeSpanTextFiles(workDir, 1L, 0, clip, textFiles).single().lineFiles
@@ -39,7 +39,7 @@ class ExportTextFilesTest {
     }
 
     @Test
-    fun `タイトルも改行コードの種類によらず行に分かれ、空行は詰める`() {
+    fun titleSplitsOnEveryLineBreakKindAndDropsBlankLines() {
         val files = writeTitleTextFiles(workDir, 1L, "2026/09/22\r\n\r\n旅行", textFiles)
 
         assertEquals(listOf("2026/09/22", "旅行"), files.map { it.readText() })

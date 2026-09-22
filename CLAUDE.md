@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（133件）
+./gradlew testDebugUnitTest        # JVM単体テスト（143件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -224,7 +224,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、133件。対象は純粋関数に限られる。
+JVM単体テスト（`src/test`）のみ、143件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
 
 | ファイル | 対象 |
 |---|---|
@@ -234,7 +234,8 @@ JVM単体テスト（`src/test`）のみ、133件。対象は純粋関数に限�
 | `AddClipsSpecTest` | 追加時のスキップ通知、選択順 |
 | `ProjectSpecTest` | 一時保存の読み出し可否、保存領域の移行 |
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
-| `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo |
+| `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
+| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
@@ -291,5 +292,8 @@ JVMで動かないため実装を入れている。
 ## 未解決 / 今後
 
 - instrumented テストと Compose UI テストが無いのは変わっていない（「テスト」節を参照）。
-  `TimelineStore` / `ProjectsController` / `VlogViewModel` は JVM 単体テストで
-  1件も守られていないので、触ったら実機で確認すること。
+  `ProjectsController` / `VlogViewModel` は JVM 単体テストで1件も守られていないので、
+  触ったら実機で確認すること。`TimelineStore` は再生側を `edit/TimelinePlayback`
+  （実装は `PlaybackController`）越しに受け取るようにしたので、偽物を渡してテストできる
+  （`TimelineStoreTest`）。ただし偽物はプレイリストの中身と自動遷移を持たないので、
+  並べ替え・削除・一時保存の読み出しとプレビューの同期は実機で確認すること。

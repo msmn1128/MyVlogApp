@@ -1,7 +1,6 @@
 package com.example.myvlogapp.edit
 
 import android.net.Uri
-import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +14,6 @@ import com.example.myvlogapp.VideoMeta
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.clampTimelineShift
 import com.example.myvlogapp.mergeByShotAt
-import com.example.myvlogapp.playback.PlaybackController
 
 // =====================================================================================
 // タイムライン（クリップ一覧）の持ち主。
@@ -40,13 +38,17 @@ internal class InsertResult(
 )
 
 /**
+ * @param playback 再生側。実機では PlaybackController、テストでは偽物を渡す（理由は[TimelinePlayback]）
+ * @param elapsedMs 履歴のまとめ判定に使う時計。実機では`SystemClock::elapsedRealtime`を渡す。
+ *   壁時計だと時刻合わせで巻き戻り、まとめ判定が意図せず効いたり効かなかったりするため
  * @param sendMessage 画面へのお知らせ（Toast）。編集が断られたときにだけ使う
  * @param onUrisReleased タイムラインから外れた動画のURI。波形のキャッシュとデコード中の
  *   ジョブを捨てるために、呼び出し元（VlogViewModel）へ知らせる。
  *   一覧を更新した「あと」に呼ぶこと（まだ他のクリップが同じURIを使っているかを見るため）
  */
 internal class TimelineStore(
-    private val playback: PlaybackController,
+    private val playback: TimelinePlayback,
+    elapsedMs: () -> Long,
     private val sendMessage: (String) -> Unit,
     private val onUrisReleased: (List<Uri>) -> Unit
 ) {
@@ -65,9 +67,7 @@ internal class TimelineStore(
     // 「スナップショットに何を含めるか」と「取り出した状態を画面へ戻す方法」の2つだけ。
     private data class Snapshot(val clips: List<VlogClip>, val selectedIndex: Int)
 
-    // 壁時計ではなく端末の起動からの経過時間を渡す。時刻合わせで巻き戻ると、
-    // まとめ判定が意図せず効いたり効かなかったりするため。
-    private val history = EditHistory<Snapshot>(elapsedMs = SystemClock::elapsedRealtime)
+    private val history = EditHistory<Snapshot>(elapsedMs = elapsedMs)
 
     val canUndo: StateFlow<Boolean> get() = history.canUndo
     val canRedo: StateFlow<Boolean> get() = history.canRedo
@@ -166,22 +166,30 @@ internal class TimelineStore(
      * 撮影時刻を取り直した結果を反映する。
      * 並び順は変えない（ユーザーが並べ替えた順序を壊さないため）。履歴にも積まない（編集ではない）。
      *
+     * 履歴に積んである過去の状態にも同じ結果を当てる。撮影時刻は動画ファイルから決まる値で、
+     * 編集の一部ではないため。当てないと、取り直し（起動直後に裏で1本ずつ読む）の最中に
+     * 編集してから「もとに戻す」を押したとき、時刻が取り直し前の値へ戻ってしまう
+     * （印も外れるので、次の起動でまた読み直すことにもなる）。
+     *
      * @param refreshed クリップidごとの取り直し結果。取り直しの対象でなかったクリップ
      *   （この間に追加されたものなど）は触らない
      */
     suspend fun applyRefreshedShotTimes(refreshed: Map<Long, VideoMeta>) = mutex.withLock {
-        _clips.value = _clips.value.map { clip ->
-            val meta = refreshed[clip.id] ?: return@map clip
-            // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
-            if (!meta.shotAtReliable) return@map clip.copy(shotAtRefreshed = true)
-            clip.copy(
-                timeText = meta.timeText,
-                dateText = meta.dateText,
-                shotAtMillis = meta.shotAtMillis,
-                shotAtReliable = true,
-                shotAtRefreshed = true
-            )
-        }
+        _clips.value = _clips.value.withRefreshedShotTimes(refreshed)
+        history.updateAll { it.copy(clips = it.clips.withRefreshedShotTimes(refreshed)) }
+    }
+
+    private fun List<VlogClip>.withRefreshedShotTimes(refreshed: Map<Long, VideoMeta>) = map { clip ->
+        val meta = refreshed[clip.id] ?: return@map clip
+        // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
+        if (!meta.shotAtReliable) return@map clip.copy(shotAtRefreshed = true)
+        clip.copy(
+            timeText = meta.timeText,
+            dateText = meta.dateText,
+            shotAtMillis = meta.shotAtMillis,
+            shotAtReliable = true,
+            shotAtRefreshed = true
+        )
     }
 
     /** 履歴を空にする。復元直後など「ここを起点にしたい」場面で呼ぶ */
@@ -275,10 +283,13 @@ internal class TimelineStore(
         val clip = selectedClip ?: return
         if (index !in clip.texts.indices || index == 0) return
 
-        val lowerBound = clip.texts[index - 1].startMs + MIN_TEXT_SEGMENT_MS
-        // 次の区切りが無い（＝最後の区間を動かす）場合の上限はクリップ全体の長さ(durationMs)
-        // ではなく、いまのトリム終端(endMs)にする。durationMsのままだと、トリムで
-        // 後半を切り落とした後も区切りをトリム範囲の外まで動かせてしまう。
+        // 下限・上限とも、動画全体ではなくいまのトリム範囲で止める。波形上のドラッグは
+        // 動画全体（0〜尺）を範囲にしているので、ここで止めないとトリムで切り落とした
+        // 部分まで区切りを動かせてしまい、そこへシークしたプレビューに書き出されない
+        // コマが出る。基準は区切りを入れるとき（splitTextAtPlayhead）の「端に寄りすぎ」と同じ。
+        // 手前側は、1つ前の区切りとトリム開始のうち後ろにある方から間隔を取る
+        // （1つ前が先頭区間＝絶対位置0だと、トリムで頭を落としていても0が基準になってしまう）。
+        val lowerBound = maxOf(clip.texts[index - 1].startMs, clip.startMs) + MIN_TEXT_SEGMENT_MS
         val upperBound =
             (clip.texts.getOrNull(index + 1)?.startMs ?: clip.endMs) - MIN_TEXT_SEGMENT_MS
         if (lowerBound > upperBound) return
@@ -287,13 +298,7 @@ internal class TimelineStore(
         if (clamped == clip.texts[index].startMs) return
 
         recordHistory(EditTag.SplitMove(playback.selectedIndexValue, index))
-        updateSelected { current ->
-            current.copy(
-                texts = current.texts.mapIndexed { i, segment ->
-                    if (i == index) segment.copy(startMs = clamped) else segment
-                }
-            )
-        }
+        updateSegment(index) { it.copy(startMs = clamped) }
 
         playback.seekAndPause(clamped)
     }
@@ -308,13 +313,7 @@ internal class TimelineStore(
         val clip = selectedClip ?: return
         val target = clip.textIndexAt(playback.positionMsValue)
         recordHistory(EditTag.Text(playback.selectedIndexValue, target))
-        updateSelected { current ->
-            current.copy(
-                texts = current.texts.mapIndexed { index, segment ->
-                    if (index == target) segment.copy(text = text) else segment
-                }
-            )
-        }
+        updateSegment(target) { it.copy(text = text) }
     }
 
     /**
@@ -455,6 +454,10 @@ internal class TimelineStore(
      * 並び順や本数が変わっていないときはプレイリストを作り直さない。
      * setMediaItems はバッファを捨ててしまうので、ひとことやトリミングを
      * 戻しただけで再生が止まって見えるのを避けている。
+     *
+     * 音量は最後に必ず合わせ直す。プレイリストを作り直さず選択クリップも変わらない
+     * とき（選択中クリップのミュートをundoした場合など）は、音量を合わせ直す経路を
+     * どこも通らず、表示はミュート解除に戻ったのに再生すると無音のまま、になる。
      */
     private fun applySnapshot(snapshot: Snapshot) {
         val playlistChanged =
@@ -473,9 +476,18 @@ internal class TimelineStore(
             .coerceIn(0, snapshot.clips.lastIndex.coerceAtLeast(0))
         playback.setSelectedIndex(index)
         snapshot.clips.getOrNull(index)?.let { playback.seekWithoutPause(it.startMs) }
+        playback.applyVolume()
     }
 
     // --- 一覧の書き換え -----------------------------------------------------------------
+
+    /** 選択中クリップの区間を1つだけ書き換える。範囲外の[index]なら何もしない */
+    private fun updateSegment(index: Int, transform: (TextSegment) -> TextSegment) {
+        updateSelected { clip ->
+            if (index !in clip.texts.indices) return@updateSelected clip
+            clip.copy(texts = clip.texts.toMutableList().apply { this[index] = transform(this[index]) })
+        }
+    }
 
     private fun updateSelected(transform: (VlogClip) -> VlogClip) {
         val index = playback.selectedIndexValue

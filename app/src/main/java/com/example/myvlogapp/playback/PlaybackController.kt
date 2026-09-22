@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.example.myvlogapp.PLAY_AT_END_TOLERANCE_MS
 import com.example.myvlogapp.PLAYBACK_POLL_INTERVAL_MS
 import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.edit.TimelinePlayback
 
 // =====================================================================================
 // プレビュー再生。
@@ -69,7 +70,10 @@ internal fun playFromWhere(
  *   （このクラスは一覧を保持せず、判断のたびに読みに行く）
  */
 @OptIn(UnstableApi::class)
-class PlaybackController(context: Context, private val clips: () -> List<VlogClip>) {
+class PlaybackController(
+    context: Context,
+    private val clips: () -> List<VlogClip>
+) : TimelinePlayback {
 
     /** タイムラインの動画は自動再生しない */
     val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
@@ -109,8 +113,8 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    val selectedIndexValue: Int get() = _selectedIndex.value
-    val positionMsValue: Long get() = _playbackPositionMs.value
+    override val selectedIndexValue: Int get() = _selectedIndex.value
+    override val positionMsValue: Long get() = _playbackPositionMs.value
     val isTimelineMuted: Boolean get() = _timelineMuted.value
 
     init {
@@ -158,13 +162,13 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     // 呼び出し側の重複（`seekAndSync(_selectedIndex.value, x)`のようなくり返し）を無くしている。
 
     /** シークして表示位置も合わせる。再生中でも止めない（自動遷移など再生を継続したい場面用） */
-    fun seekWithoutPause(positionMs: Long) {
+    override fun seekWithoutPause(positionMs: Long) {
         player.seekTo(_selectedIndex.value, positionMs)
         _playbackPositionMs.value = positionMs
     }
 
     /** 再生を止めてからシークする。ユーザーがトリミング等で位置を直接動かす操作用 */
-    fun seekAndPause(positionMs: Long) {
+    override fun seekAndPause(positionMs: Long) {
         player.playWhenReady = false
         seekWithoutPause(positionMs)
     }
@@ -186,7 +190,7 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     }
 
     /** プレイリストを丸ごと差し替える（一時保存の読み込み・復元・undo/redoでの入れ替え用） */
-    fun rebuildPlaylist(clips: List<VlogClip>) {
+    override fun rebuildPlaylist(clips: List<VlogClip>) {
         player.setMediaItems(clips.map { MediaItem.fromUri(it.uri) })
         preparePaused()
     }
@@ -196,7 +200,7 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
      * [insertions] は (挿入先のindex, クリップ) のペアを昇順（indexが小さい順）で渡す。
      * 昇順に1件ずつ入れていけば後続の挿入先indexは崩れない。
      */
-    fun insertIntoPlaylist(insertions: List<Pair<Int, VlogClip>>) {
+    override fun insertIntoPlaylist(insertions: List<Pair<Int, VlogClip>>) {
         insertions.forEach { (index, clip) ->
             player.addMediaItems(index, listOf(MediaItem.fromUri(clip.uri)))
         }
@@ -204,30 +208,30 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     }
 
     /** 並べ替え。プレビューと順番をずらさないよう、一覧の移動と対で呼ぶ */
-    fun moveItem(from: Int, to: Int) {
+    override fun moveItem(from: Int, to: Int) {
         player.moveMediaItem(from, to)
         _selectedIndex.value = to
     }
 
-    fun removeItem(index: Int) = player.removeMediaItem(index)
+    override fun removeItem(index: Int) = player.removeMediaItem(index)
 
-    fun clearItems() {
+    override fun clearItems() {
         player.clearMediaItems()
         _selectedIndex.value = 0
         _playbackPositionMs.value = 0L
     }
 
     /** 再生位置は動かさずに選択位置だけを置き直す（削除後の詰め直しなど） */
-    fun setSelectedIndex(index: Int) {
+    override fun setSelectedIndex(index: Int) {
         _selectedIndex.value = index
     }
 
     /** 表示上の再生位置だけを置き直す（クリップが1本も無くなったときなど） */
-    fun setPositionMs(positionMs: Long) {
+    override fun setPositionMs(positionMs: Long) {
         _playbackPositionMs.value = positionMs
     }
 
-    fun select(index: Int) {
+    override fun select(index: Int) {
         val target = clips().getOrNull(index) ?: return
         _selectedIndex.value = index
         applyVolume()
@@ -235,7 +239,7 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
     }
 
     /** 再生中の音量を、タイムライン全体のミュートと選択中クリップ個別のミュートから合わせ直す */
-    fun applyVolume() {
+    override fun applyVolume() {
         val clipMuted = clips().getOrNull(_selectedIndex.value)?.isMuted ?: false
         player.volume = if (_timelineMuted.value || clipMuted) 0f else 1f
     }
@@ -383,7 +387,7 @@ class PlaybackController(context: Context, private val clips: () -> List<VlogCli
 
     // --- 再生／一時停止 -------------------------------------------------------------------
 
-    fun pause() {
+    override fun pause() {
         player.playWhenReady = false
     }
 

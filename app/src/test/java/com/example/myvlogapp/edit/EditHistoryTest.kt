@@ -145,6 +145,22 @@ class EditHistoryTest {
     }
 
     @Test
+    fun updateAllRewritesBothDirectionsWithoutChangingTheirCount() {
+        val history = history()
+        history.record("a")
+        history.record("b")
+        // もとに戻す側に "a"、やり直す側に（戻す直前の状態の）"c" が残る
+        assertEquals("b", history.undo("c"))
+
+        history.updateAll { it.uppercase() }
+
+        assertEquals("C", history.redo("x"))
+        assertEquals("x", history.undo("y"))  // 書き換えた後に積んだものはそのまま
+        assertEquals("A", history.undo("z"))
+        assertNull(history.undo("w"))
+    }
+
+    @Test
     fun clearDropsBothDirections() {
         val history = history()
         history.record("A")
