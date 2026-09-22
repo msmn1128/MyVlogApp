@@ -23,11 +23,16 @@
       書き出し処理をフォアグラウンドサービス（VlogExportService）として
       実行するために必要。アプリがバックグラウンドに回ってもOSに
       プロセスごと回収されにくくし、書き出しを最後まで完了させる。
-      FOREGROUND_SERVICE_DATA_SYNCはAPI 34以降、サービスの
-      foregroundServiceType="dataSync" 宣言と対で必須。
+
+      種類は Android 15（API 35）以降は mediaProcessing（動画の変換用に用意された種類）、
+      それより前は dataSync を使う（mediaProcessing が無いため）。どちらを使うかは
+      VlogExportService が起動時に端末のバージョンで選ぶ。以前は全端末で dataSync だったが、
+      dataSync はデータの転送・同期向けで、Play の申告で用途が合わないと判断されうる。
+      FOREGROUND_SERVICE_* の権限は API 34 以降、サービスの foregroundServiceType 宣言と対で必須。
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
 
     <!--
       進捗を表示する通知を出すため（API 33以降は実行時の許可も別途必要）。
@@ -65,7 +70,7 @@
         <service
             android:name=".export.VlogExportService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|mediaProcessing" />
 
     </application>
 

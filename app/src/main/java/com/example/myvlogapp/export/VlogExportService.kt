@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -172,8 +173,8 @@ class VlogExportService : Service() {
     }
 
     /**
-     * Android 15以降、dataSync型のフォアグラウンドサービスには24時間あたり合計6時間の
-     * 上限があり、超えるとOSがこれを呼ぶ。数秒以内にstopSelf()しないとOSがアプリを
+     * Android 15以降、mediaProcessing型（と、Android 14以前で使うdataSync型）の
+     * フォアグラウンドサービスには24時間あたり合計6時間の上限があり、超えるとOSがこれを呼ぶ。数秒以内にstopSelf()しないとOSがアプリを
      * 異常終了させるため、書き出しを中止して即座に畳む（通常の書き出し時間では到達しない）。
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -231,12 +232,21 @@ class VlogExportService : Service() {
             .build()
 
     private fun startForegroundWithNotification(message: String) {
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification(message, progress = null),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        )
+        startForeground(NOTIFICATION_ID, buildNotification(message, progress = null), foregroundServiceType())
     }
+
+    /**
+     * 動画の変換には Android 15 で専用の mediaProcessing 型が用意された。それより前の端末には
+     * 無いので dataSync 型で代える（AndroidManifest.xml の宣言と権限は両方持っている）。
+     * dataSync はデータの転送・同期向けで、Play の申告で用途が合わないと判断されうるため、
+     * 使える端末では必ず mediaProcessing を使う。
+     */
+    private fun foregroundServiceType(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        }
 
     private fun updateNotification(message: String, progress: Float?) {
         val manager = getSystemService(NotificationManager::class.java)
