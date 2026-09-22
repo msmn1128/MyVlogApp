@@ -88,7 +88,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         elapsedMs = SystemClock::elapsedRealtime,
         sendMessage = ::sendMessage,
         // 一覧から外れた動画の波形は捨てる。一覧を更新したあとに呼ばれる
-        onUrisReleased = { uris -> uris.forEach(::cancelWaveformJobIfUnused) }
+        onUrisReleased = { pruneUnusedWaveforms() }
     )
 
     /** 一時保存（data/ProjectsController.kt） */
@@ -158,6 +158,20 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val waveformJobs = mutableMapOf<String, Job>()
 
+    /** 前回の続きの復元が済んだか。済む前に保存すると、復元前の空の一覧で上書きしてしまう */
+    private var restoreFinished = false
+
+    /**
+     * 復元で開けない動画を落としたので、編集されるまで自動保存しない状態か。
+     *
+     * 開けなかったのが一時的なこと（使っていないアプリの権限をAndroidが自動で取り消した、
+     * SDカードが外れていた、クラウド上のファイルがオフラインだった）はよくある。
+     * 開いただけで復元できた分を書き戻すと、落とした動画の編集内容が保存からも消え、
+     * 権限を許可し直したりSDカードを戻したりしても続きが戻らなくなる。
+     * 何か編集するまでは保存を元のまま残しておき、開き直せば全部戻るようにする。
+     */
+    private var keepStoredUntilEdited = false
+
     init {
         // 復元してから保存を始める。順番が逆だと、復元前の空リストを
         // 保存してしまい前回の内容が消える。
@@ -167,6 +181,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // 編集内容を自動保存する。collectLatestとdelayの組み合わせで、
             // ひとことを1文字打つたびに書き込むのを避けている。
             timeline.clips.collectLatest { clips ->
+                // 編集は必ず履歴に積まれる（撮影時刻の取り直しは積まれない）ので、
+                // 「もとに戻す」が押せる状態になったことを最初の編集の合図にする
+                if (keepStoredUntilEdited) {
+                    if (!timeline.canUndo.value) return@collectLatest
+                    keepStoredUntilEdited = false
+                }
                 delay(AUTOSAVE_DEBOUNCE_MS)
                 // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない。
                 // DefaultではなくIOなのは、SharedPreferencesの初回アクセスがディスクの
@@ -174,6 +194,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 // ClipStoreの他の経路もすべてIOで揃えてある。
                 withContext(Dispatchers.IO) { ClipStore.save(getApplication(), clips) }
             }
+        }
+
+        // タイムラインを丸ごと入れ替えたら（一時保存の読み出し・その「もとに戻す」など）、
+        // もう使わない動画の波形を捨てる。1本ずつの削除はonUrisReleasedが拾うが、
+        // 丸ごとの入れ替えはそこを通らず、前の動画の波形を持ち続けてしまう
+        viewModelScope.launch {
+            timeline.replacementCount.collect { pruneUnusedWaveforms() }
         }
 
         // 選択が変わったら、そのクリップの波形を用意する。以前は画面側の
@@ -212,9 +239,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 復元直後を「起点」にする。ここで履歴を消しておかないと、
         // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
         timeline.clearHistory()
+        keepStoredUntilEdited = restored.dropped > 0
+        restoreFinished = true
 
         refreshUnreliableShotTimes()
-        releaseUnusedPermissions()
+        // 開けない動画を落とした回は権限を解放しない。落とした動画はタイムラインに
+        // 無いので「使われていない」と判断され、一時的に開けなかっただけでも権限を
+        // 手放してしまう（keepStoredUntilEditedと同じ理由）。編集して保存から消えれば、
+        // 次の起動で解放される
+        if (restored.dropped == 0) releaseUnusedPermissions()
 
         if (restored.dropped > 0) {
             sendMessage(
@@ -412,21 +445,20 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * クリップが削除されたときに、対応する波形の取得ジョブとキャッシュを捨てる。
+     * タイムラインに無い動画の、波形の取得ジョブとキャッシュを捨てる。
      * ジョブをキャンセルしないと無駄なデコードが完了時まで走り続け、キャッシュを
      * 残したままだと、もう画面に出ないクリップの波形（長い動画だと1本あたり
      * 数万バイト）をアプリが終わるまで抱えたままになる。
      *
-     * 同じ動画を2回追加している場合はURIが重複するため、削除後もまだ他のクリップが
-     * 同じURIを参照していれば消さない（そちらの表示に使われている波形を巻き添えにしない）。
-     * 呼び出し側（[TimelineStore]）は、一覧を削除後の状態に更新してから呼ぶ。
+     * いまのタイムラインを見て判断するので、呼ぶのは一覧を更新した「あと」
+     * （クリップの削除時と、タイムラインを丸ごと入れ替えたとき）。
      */
-    private fun cancelWaveformJobIfUnused(uri: Uri) {
-        val key = uri.toString()
-        if (timeline.current.none { it.uri.toString() == key }) {
-            waveformJobs.remove(key)?.cancel()
-            _waveforms.value = _waveforms.value - key
-        }
+    private fun pruneUnusedWaveforms() {
+        val inUse = timeline.current.mapTo(HashSet()) { it.uri.toString() }
+        val unused = (_waveforms.value.keys + waveformJobs.keys).filterNotTo(HashSet()) { it in inUse }
+        if (unused.isEmpty()) return
+        unused.forEach { waveformJobs.remove(it)?.cancel() }
+        _waveforms.value = _waveforms.value - unused
     }
 
     // --- 編集（実処理は TimelineStore） ---------------------------------------------------
@@ -549,6 +581,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        // 自動保存の待ち（AUTOSAVE_DEBOUNCE_MS）はviewModelScopeごと取り消されるので、
+        // 最後の編集をここで書いておく。タイムラインが空だと戻るボタンでアプリが終わるため、
+        // 全削除してすぐ閉じると削除が保存されず、次の起動で全部戻ってきていた。
+        // apply()で書くのでメインスレッドは塞がない。
+        // canUndoも見るのは、編集した直後に閉じると、自動保存側がその合図を受け取って
+        // keepStoredUntilEditedを下ろす前にここへ来ることがあるため
+        if (restoreFinished && (!keepStoredUntilEdited || timeline.canUndo.value)) {
+            ClipStore.save(getApplication(), timeline.current)
+        }
         // 書き出し自体は VlogExportService で継続させる（ここではキャンセルしない）。
         // ユーザーが画面を閉じてもバックグラウンドで書き出しを終わらせるための挙動。
         playback.release()
