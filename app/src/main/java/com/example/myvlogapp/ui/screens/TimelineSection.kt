@@ -642,11 +642,19 @@ private fun EditorPane(
                 val contentPadding = OutlinedTextFieldDefaults.contentPadding()
                 val verticalPadding =
                     contentPadding.calculateTopPadding() + contentPadding.calculateBottomPadding()
-                // M3のOutlinedTextFieldは文字・placeholderの行に内部で最低MinTextLineHeight（24dp）を
-                // 要求する。bodyMediumのlineHeight（20sp≈20dp）をそのまま1行分として height() に渡すと
-                // 要求より4dp狭い箱を渡すことになり、グレーのplaceholder文字がわずかに上下で見切れる。
+                // M3のOutlinedTextFieldは文字・placeholderの行に内部で最低MinTextLineHeight（24dp、
+                // material3 1.4.0のTextFieldImpl.ktにある非公開の定数）を要求する。bodyMediumの
+                // lineHeight（20sp≈20dp）をそのまま1行分としてheight()に渡すと要求より4dp狭い箱を
+                // 渡すことになり、グレーのplaceholder文字がわずかに上下で見切れる。非公開の値なので
+                // material3のバージョンを上げたときはこの24dpがまだ合っているか確認すること。
                 val lineHeight = maxOf(with(density) { fieldTextStyle.lineHeight.toDp() }, 24.dp)
+                // 1行ぶん（verticalPadding + lineHeight）が親から渡されたmaxHeightより大きくなる
+                // ことがある（横向きやマルチウィンドウでeditorWeightの取り分が小さいとき）。
+                // その場合でもcoerceAtMostで実際の高さに収め、親のweight制約で暗黙に縮められて
+                // レイアウトが食い違うのを防ぐ（縮められた結果また見切れが起きるのは避けられないが、
+                // 高さの要求自体は矛盾しないようにしておく）。
                 val lines = maxOf(1, ((maxHeight - verticalPadding) / lineHeight).toInt())
+                val fieldHeight = (verticalPadding + lineHeight * lines).coerceAtMost(maxHeight)
                 OutlinedTextField(
                     value = field,
                     onValueChange = {
@@ -681,7 +689,7 @@ private fun EditorPane(
                     // （改行として入らない）。書き出し側（ExportTextFiles）は"\n"で行を
                     // 分けてdrawtextを積むので、改行はそのまま複数行として焼き込まれる。
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.None),
-                    modifier = Modifier.fillMaxWidth().height(verticalPadding + lineHeight * lines)
+                    modifier = Modifier.fillMaxWidth().height(fieldHeight)
                 )
             }
         }
