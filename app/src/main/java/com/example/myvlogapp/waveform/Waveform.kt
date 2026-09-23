@@ -7,6 +7,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -141,6 +142,10 @@ suspend fun extractWaveform(
         }
 
         Waveform(normalize(sums, counts), hasAudio = true)
+    } catch (e: CancellationException) {
+        // 取り消し（クリップを消した・選び直した）は失敗ではない。下で拾うと警告ログが出るうえ、
+        // 呼び出し元へ「取り消された」ことが伝わらない
+        throw e
     } catch (e: Exception) {
         Log.w(LOG_TAG, "波形の取得に失敗しました: $uri", e)
         null
