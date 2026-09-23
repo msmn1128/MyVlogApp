@@ -411,11 +411,6 @@ object ClipStore {
             totalMs = totalMs
         )
     }
-
-    /** いまこのURIを開けるか。権限切れ・移動・削除をまとめて判定できる */
-    private fun isReadable(context: Context, uri: Uri): Boolean = runCatching {
-        context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
-    }.getOrDefault(false)
 }
 
 /** 一時保存を新しい保存領域へ移すときの処理（[ClipStore]の移行で使う） */
