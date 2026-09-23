@@ -150,6 +150,18 @@ class VlogExportService : Service() {
         startForegroundWithNotification("準備中...")
         ExportStatus.setRunning("準備中...")
 
+        // 書き出しを終えたあとに届いた進捗を捨てるための印と、そのロック。
+        //
+        // 中止するとコルーチンはすぐ抜けて下のfinallyで「待機中」に戻すが、FFmpegのネイティブ側は
+        // 中止に気付くまで少しエンコードを続け、その間も進捗のコールバックを送ってくる。
+        // それをそのまま反映すると、サービスはもう止まっているのに状態が「書き出し中」へ
+        // 書き戻され、進行中の通知も出し直される。画面は「中止」ボタンのまま戻らず、
+        // アプリを再起動するまで書き出せなくなっていた。
+        // 印の確認と反映をまとめてロックで囲むのは、確認した直後にfinallyが割り込んで
+        // 「待機中」へ戻したあとに、反映だけが遅れて走るのを防ぐため。
+        val progressLock = Any()
+        var finished = false
+
         exportJob = serviceScope.launch {
             try {
                 val name = VlogExporter.export(
@@ -162,8 +174,12 @@ class VlogExportService : Service() {
                     // StateFlowへの代入もNotificationManager.notifyもスレッド安全なので、
                     // そのまま呼んでよい（以前はrunBlockingで呼び出し元へ戻していた）。
                     onProgress = { message, progress ->
-                        ExportStatus.setRunning(message, progress)
-                        updateNotification(message, progress)
+                        synchronized(progressLock) {
+                            if (!finished) {
+                                ExportStatus.setRunning(message, progress)
+                                updateNotification(message, progress)
+                            }
+                        }
                     }
                 )
                 val message = "ギャラリーに保存しました\n$name"
@@ -177,7 +193,10 @@ class VlogExportService : Service() {
                 ExportStatus.emit(VlogEvent.Message(message))
                 notifyResult("書き出しに失敗しました", message)
             } finally {
-                ExportStatus.setIdle()
+                synchronized(progressLock) {
+                    finished = true
+                    ExportStatus.setIdle()
+                }
                 // stopForeground(true)相当。onDestroyに任せず自分で止める
                 // （サービスが仕事を終えたのに通知が残り続けるのを防ぐ）
                 stopSelf(latestStartId)
