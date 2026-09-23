@@ -3,6 +3,7 @@ package com.example.myvlogapp
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +27,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -181,7 +184,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
-    // 端末の文字サイズが大きいと、この配分でも波形が欄から押し出されるので、
+    // 文字サイズや画面の比率によっては、この配分でも波形が欄から押し出されるので、
     // 足りないぶんをタイムラインへ上乗せする（下のisWideの後。TimelineFit.kt）
     val basePreviewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
     val baseTimelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
@@ -236,16 +239,37 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 扱うため、Foldの開閉などでisWideが反転した瞬間に、表示中の権限ダイアログの
     // 結果コールバックがActivityResultRegistryごと失われる。
     // VlogAppScreenはisWideの分岐より外側で1度しか呼ばれないので、ここに置けば消えない。
+    // 通知の許可を聞いている間、始める書き出しの内容を覚えておく。許可の画面は別の画面なので、
+    // 答えるまでに回転などで作り直されても消えないようrememberSaveableにする
+    var pendingExport by rememberSaveable { mutableStateOf(false) }
+    var pendingIncludeTitle by rememberSaveable { mutableStateOf(false) }
+    var pendingTitleText by rememberSaveable { mutableStateOf<String?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* 拒否されても書き出しは続行するので結果は無視してよい */ }
+    ) {
+        // 許可されてもされなくても書き出す（通知は進み具合を知らせるだけで、無くても書き出せる）。
+        // 答えを待ってから始めるのは、許可の画面の裏で書き出しが進み、短い書き出しだと
+        // 完了の知らせまで画面の裏で済んで、何が起きたか分からなかったため
+        if (pendingExport) {
+            pendingExport = false
+            viewModel.export(pendingIncludeTitle, pendingTitleText)
+        }
+    }
     // titleTextはincludeTitle=trueのとき（タイトル作成ダイアログで確定済み）だけ意味を持つ。
     // falseのときはタイトルカード自体を焼かないので渡さない。
     val startExport = { includeTitle: Boolean, titleText: String? ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val needsToAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        if (needsToAsk) {
+            // 2回断られるとシステムはもう画面を出さず、すぐに「拒否」で返ってくるので、その場合もすぐ始まる
+            pendingIncludeTitle = includeTitle
+            pendingTitleText = titleText
+            pendingExport = true
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            viewModel.export(includeTitle, titleText)
         }
-        viewModel.export(includeTitle, titleText)
     }
     // タイトルあり（タップ）のときだけ、文言選択ダイアログを挟む。
     // タイトルなし（長押し）はタイトルカード自体を焼かないので、そのまま書き出す。
