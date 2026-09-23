@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -242,17 +243,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 .filter { running -> !running }
                 .collect { refreshMissingClips() }
         }
-
-        // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
-        // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。
-        // 今まさに書き出し中（サービスが同一プロセスで生存中）なら、書き込み中のものを
-        // 消してしまうので触らない。
-        if (!ExportStatus.isRunning) {
-            viewModelScope.launch(Dispatchers.IO) {
-                VlogExporter.cleanupOrphanedPendingFiles(getApplication())
-                VlogExporter.cleanupOrphanedWorkFiles(getApplication())
-            }
-        }
     }
 
     /** 前回の続きを読み込む。いま実際に読めるものだけが対象 */
@@ -263,12 +253,27 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 待っている追加が動き出すのは、履歴を空にしたあと。先に動くと、追加の「もとに戻す」まで消える
         val restored = try {
             whileLoadingClips {
-                ClipStore.restore(getApplication()).also {
-                    timeline.replaceAll(it.clips, record = false)
-                    // 復元直後を「起点」にする。ここで履歴を消しておかないと、
-                    // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
-                    timeline.clearHistory()
-                    autosave.onRestored(droppedCount = it.dropped)
+                coroutineScope {
+                    // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
+                    // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。
+                    // 今まさに書き出し中（サービスが同一プロセスで生存中）なら、書き込み中のものを
+                    // 消してしまうので触らない。
+                    // 復元と並べて、読み込み中（書き出しを始められない間）に済ませる。別に走らせていた
+                    // 頃は書き出しの開始と待ち合わせておらず、理屈の上では始まったばかりの書き出しの
+                    // 作業ファイルを消しえた
+                    if (!ExportStatus.isRunning) {
+                        launch(Dispatchers.IO) {
+                            VlogExporter.cleanupOrphanedPendingFiles(getApplication())
+                            VlogExporter.cleanupOrphanedWorkFiles(getApplication())
+                        }
+                    }
+                    ClipStore.restore(getApplication()).also {
+                        timeline.replaceAll(it.clips, record = false)
+                        // 復元直後を「起点」にする。ここで履歴を消しておかないと、
+                        // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
+                        timeline.clearHistory()
+                        autosave.onRestored(droppedCount = it.dropped)
+                    }
                 }
             }
         } finally {
