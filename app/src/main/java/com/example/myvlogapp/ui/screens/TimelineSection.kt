@@ -342,7 +342,11 @@ private fun TimelineToolbar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 2.dp)
-            .horizontalScroll(rememberScrollState()),
+            // 収まりきらないときは、右端（よく使う2s/4sと分割）が見えた状態から始める。
+            // 既定の向きだと左端から始まり、押し間違えが怖い削除が見えていて、よく使う分割は
+            // 横にずらさないと出てこなかった（実機 SM-F971Q の開いた画面・閉じた画面の両方）。
+            // reverseScrollingは数える起点を右端にするだけで、指の動きと中身の動く向きは変わらない
+            .horizontalScroll(rememberScrollState(), reverseScrolling = true),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
