@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（205件）
+./gradlew testDebugUnitTest        # JVM単体テスト（209件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（18件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -75,7 +75,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
 | パッケージ | 役割 |
 |---|---|
 | ルート | `VlogModels`(純粋データ) / `VlogConstants`(書き出しと共有する数値) / `UiDimens`(画面だけで使う寸法と配分) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity`(画面構成) / `VlogAppDialogs`・`VlogAppSideEffects`・`ActivityLaunchers`(MainActivityから切り出したダイアログ・画面の外の処理・許可とファイル選択の入口。ViewModelを受け取るので`ui/screens/`には置かない) |
-| `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
+| `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) `MediaIdentity`(ギャラリーとファイル選択で形の違うURIが同じ動画かを見分ける) |
 | `playback/` | `PlaybackController` とその純粋関数 `playFromWhere` |
 | `edit/` | `TimelineStore`(クリップ一覧の持ち主) `EditHistory`（スナップショット型を問わない汎用の履歴） |
 | `export/` | 下記「書き出しパイプライン」参照 |
@@ -277,7 +277,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、205件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、209件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -295,7 +295,8 @@ JVM単体テスト（`src/test`）、205件。対象は純粋関数と、再生�
 | `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
 | `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
-| `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの） |
+| `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
+| `data/MediaIdentityTest` | 同じ動画かを見分ける鍵のうち、MediaStoreのURIから作る部分（ボリューム名の違いを吸収） |
 | `TextImagesLayoutTest` | ひとこと・タイトルの文言の行の分け方（改行コード・空行）と、帯の位置（ベースラインが drawtext の頃と同じ） |
 | `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
