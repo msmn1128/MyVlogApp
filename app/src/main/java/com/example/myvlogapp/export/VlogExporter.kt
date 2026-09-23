@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.coroutineContext
 import com.example.myvlogapp.HITOKOTO_FONT_PT
+import com.example.myvlogapp.TIME_FONT_PT
+import com.example.myvlogapp.TITLE_DATE_FONT_PT
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.mapParallel
@@ -137,10 +139,13 @@ object VlogExporter {
         try {
             requireDrawtext()
             val logoType = copyFontAsset(context, TITLE_FONT_ASSET)
+            val time = copyFontAsset(context, TIME_FONT_ASSET)
             val fonts = ExportFonts(
                 logoType = logoType,
-                time = copyFontAsset(context, TIME_FONT_ASSET),
-                hitokotoBaselineShiftPt = baselineShiftPt(logoType, HITOKOTO_FONT_PT)
+                time = time,
+                hitokotoBaselineShiftPt = baselineShiftPt(logoType, HITOKOTO_FONT_PT),
+                timeBaselineShiftPt = baselineShiftPt(time, TIME_FONT_PT),
+                titleBaselineShiftPt = baselineShiftPt(time, TITLE_DATE_FONT_PT)
             )
 
             // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ

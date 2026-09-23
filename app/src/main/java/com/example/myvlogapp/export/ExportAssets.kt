@@ -24,13 +24,19 @@ private const val SFX_ASSET_DIR = "sfx"
 /**
  * タイトルカード・各クリップ両方で使うフォント一式。
  *
- * @param hitokotoBaselineShiftPt ひとことの行の中心からベースラインまでの距離（[baselineShiftPt]）。
- *   drawtextはフォントの指標を式から読めないので、書き出しの前にAndroid側で測って渡す
+ * 各 *BaselineShiftPt は、その文字の行の中心からベースラインまでの距離（[baselineShiftPt]）。
+ * drawtextはフォントの指標を式から読めないので、書き出しの前にAndroid側で測って渡す。
+ *
+ * @param hitokotoBaselineShiftPt ひとこと（[logoType]、HITOKOTO_FONT_PT）
+ * @param timeBaselineShiftPt 撮影時刻（[time]、TIME_FONT_PT）
+ * @param titleBaselineShiftPt タイトルカードの文言（[time]、TITLE_DATE_FONT_PT）
  */
 internal data class ExportFonts(
     val logoType: File,
     val time: File,
-    val hitokotoBaselineShiftPt: Float
+    val hitokotoBaselineShiftPt: Float,
+    val timeBaselineShiftPt: Float,
+    val titleBaselineShiftPt: Float
 )
 
 /**

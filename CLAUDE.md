@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（146件）
+./gradlew testDebugUnitTest        # JVM単体テスト（147件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -149,7 +149,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
   複数行の中央揃えは「1行につき1つのdrawtext」で実現している。
 - **フィルタグラフは `-filter_complex_script` でファイル渡し。** 100本で約70KBになる。
 - **秒数は必ず `Locale.US` 固定**（`ffmpegSeconds`）。小数点にカンマを使うロケールで壊れる。
-- **ひとことの縦位置はベースラインで揃える**（`y=h/2±N-ascent`、`baselineY`）。`text_h` で中央を出すと
+- **ひとこと・撮影時刻・タイトルの文言の縦位置はベースラインで揃える**（`y=h/2±N-ascent`、`baselineY`）。`text_h` で中央を出すと
   文字の中身で高さが変わり、行ごと・区間ごとに上下へずれる。N はフォントの ascent/descent から
   Android の `Paint` で測って渡す（`baselineShiftPt`）。プレビュー（`LineHeightStyle.Center` + `Trim.Both`）と同じ並べ方。
 
@@ -227,7 +227,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、146件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
+JVM単体テスト（`src/test`）のみ、147件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
 
 | ファイル | 対象 |
 |---|---|

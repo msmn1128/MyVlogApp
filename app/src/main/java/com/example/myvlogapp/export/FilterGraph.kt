@@ -168,6 +168,9 @@ private fun trimFilter(durationSec: String, audio: Boolean): String {
  *   2行目以降になっても1行目のy座標（[TITLE_DATE_Y_OFFSET_PT]）は動かさず、
  *   下へ[TITLE_DATE_FONT_PT]+[TITLE_DATE_LINE_SPACING_PT]ずつ積む
  *   （中央揃えでブロックごと動かすと自由入力の行数次第で1行目の位置がずれてしまうため）。
+ *   縦位置はひとことと同じくベースラインで揃える（[baselineY]）。自由入力で行ごとに
+ *   文字の高さが違うと、text_h基準では行ごとに上下へずれるため。
+ *   「Vlog.」は文言が固定なので、text_h基準のままでも位置は変わらない。
  * - [FADE_START_FRAME]フレーム目からフェードアウト開始（nは0始まり）
  *
  * alpha式はシングルクォートで囲まれているため、内部のカンマを
@@ -193,7 +196,7 @@ private fun buildTitleFilter(titleLines: List<File>, fonts: ExportFonts): String
             fontfile = fonts.time,
             fontsizePt = TITLE_DATE_FONT_PT,
             x = centeredX(),
-            y = centeredY(TITLE_DATE_Y_OFFSET_PT + offsets[lineIndex]),
+            y = baselineY(TITLE_DATE_Y_OFFSET_PT + offsets[lineIndex] + fonts.titleBaselineShiftPt),
             textFile = file,
             alpha = alpha
         )
@@ -225,7 +228,9 @@ private fun lineOffsets(count: Int, lineHeight: Float, anchor: LineAnchor): List
  *   1行につき1つのdrawtextを積む（このFFmpegビルドにはtext_alignが無いため、
  *   1つのdrawtextに複数行を渡すと左揃えになってしまう）。
  *   縦位置は行ごとの文字の高さ（text_h）ではなくベースラインで揃える（[baselineY]）
- * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）
+ * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）。
+ *   縦位置はひとことと同じくベースラインで揃える。プレビューはフォントの行の箱で
+ *   上下中央に置いているので、text_h基準のままだとプレビューより数px上に出ていた
  *
  * @param spans ひとことの区間と、その各行のテキストファイル。
  *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
@@ -278,7 +283,7 @@ private fun buildClipFilter(
                 fontfile = fonts.time,
                 fontsizePt = TIME_FONT_PT,
                 x = "$CANVAS_WIDTH-text_w-${TIME_MARGIN_PT.toInt()}",
-                y = centeredY(0f),
+                y = baselineY(fonts.timeBaselineShiftPt),
                 textFile = timeFile
             )
         )

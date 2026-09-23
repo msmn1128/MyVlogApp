@@ -29,7 +29,8 @@ class FilterGraphTest {
         val workDir = Files.createTempDirectory("vlog_graph_test").toFile()
         return try {
             val fonts = ExportFonts(
-                File(workDir, "logo.otf"), File(workDir, "time.ttf"), hitokotoBaselineShiftPt = 20f
+                File(workDir, "logo.otf"), File(workDir, "time.ttf"),
+                hitokotoBaselineShiftPt = 20f, timeBaselineShiftPt = 15f, titleBaselineShiftPt = 12f
             )
             val audioPlan = AudioPlan(
                 needsTitleSfxInput = true,
@@ -108,6 +109,20 @@ class FilterGraphTest {
             assertTrue(layer, layer.contains(":y=h/2+20-ascent"))
             assertFalse(layer, layer.contains("text_h"))
         }
+    }
+
+    @Test
+    fun timeAndTitleLines_areAlsoAlignedByBaseline() {
+        val graph = buildGraph()
+
+        // 撮影時刻は中央から15pt下にベースライン
+        val timeLayer = graph.split(",drawtext=").first { "/time_" in it }
+        assertTrue(timeLayer, timeLayer.contains(":y=h/2+15-ascent"))
+        // タイトルの文言は、1行目の位置（中央から80pt下）にベースラインまでの12ptを足す
+        val titleLayer = graph.split(",drawtext=").first { "/title_" in it }
+        assertTrue(titleLayer, titleLayer.contains(":y=h/2+92-ascent"))
+        // 「Vlog.」は文言が固定なので text_h 基準のまま
+        assertTrue(graph.contains("text='Vlog.'"))
     }
 
     @Test
