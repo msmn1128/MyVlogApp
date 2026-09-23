@@ -9,9 +9,13 @@ import java.util.Locale
 // VlogModels.kt から分離。UI表示用の文字列整形だけをここに集める。
 // =====================================================================================
 
-/** 一時保存の日時表示 "M/d HH:mm"。一覧の見出しで使う */
+/**
+ * 一時保存の日時表示 "M/d HH:mm"。一覧の見出しで使う。
+ * Locale.USで組み立てるのは、ほかの数字の表示（[formatSeconds]など）と同じく、アラビア語ロケールなど
+ * 数字の字形が違う端末でも半角のアラビア数字にそろえるため
+ */
 fun formatSavedAt(millis: Long): String =
-    SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
+    SimpleDateFormat("M/d HH:mm", Locale.US).format(millis)
 
 /**
  * 動画を追加したあとに出す、スキップの通知文。いずれも0件ならnull（通知しない）。
@@ -60,9 +64,10 @@ fun projectUnreadableMessage(dropped: Int): String =
 
 /**
  * 保存名の既定値 "M/d"。同名がすでにあれば「M/d (1)」のように連番を付ける（[uniqueSaveName]）。
+ * Locale.USなのは[formatSavedAt]と同じ理由
  */
 fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
-    uniqueSaveName(SimpleDateFormat("M/d", Locale.getDefault()).format(millis), existingNames)
+    uniqueSaveName(SimpleDateFormat("M/d", Locale.US).format(millis), existingNames)
 
 /**
  * [base]と同じ名前が[existingNames]にすでにあれば、「base (1)」「base (2)」のように
