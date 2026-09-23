@@ -308,10 +308,15 @@ internal class TimelineStore(
      *
      * 入力欄の表示も同じ「再生ヘッドの位置の区間」を出しているので、
      * 見えている文字と書き換わる文字は必ず一致する。
+     *
+     * 文字が変わっていなければ何もしない。入力欄はカーソルを動かしただけでも通知してくるので、
+     * ここで弾かないと空振りの「もとに戻す」が積まれる。それを編集の合図と取り違えて、
+     * 開けなかった動画の編集内容を残すための自動保存の保留（VlogViewModel）まで外れてしまう。
      */
     fun updateText(text: String) {
         val clip = selectedClip ?: return
         val target = clip.textIndexAt(playback.positionMsValue)
+        if (clip.texts.getOrNull(target)?.text == text) return
         recordHistory(EditTag.Text(playback.selectedIndexValue, target))
         updateSegment(target) { it.copy(text = text) }
     }

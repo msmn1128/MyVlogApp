@@ -679,8 +679,10 @@ private fun EditorPane(
                 OutlinedTextField(
                     value = field,
                     onValueChange = {
+                        // カーソル移動や変換範囲の変化だけでも呼ばれる。文字が変わったときだけ流す
+                        val textChanged = it.text != field.text
                         field = it
-                        onTextChange(it.text)
+                        if (textChanged) onTextChange(it.text)
                     },
                     enabled = selectedClip != null && !isExporting,
                     // 未入力かつ未フォーカスのときだけ「ひとこと」をグレーで案内表示する。

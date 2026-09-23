@@ -162,6 +162,15 @@ class TimelineStoreTest {
     }
 
     @Test
+    fun sameTextDoesNotRecordHistory() {
+        val store = storeWith(testClip(id = 1, texts = listOf(TextSegment(0L, "a"))))
+
+        store.updateText("a")
+
+        assertFalse(store.canUndo.value)
+    }
+
+    @Test
     fun typingIsUndoneTogetherUnlessThereIsAPause() {
         val store = storeWith(testClip(id = 1))
 
