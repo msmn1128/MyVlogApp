@@ -346,7 +346,8 @@ class PlaybackController(
     private var resumeAfterScrub = false
 
     fun beginScrub() {
-        resumeAfterScrub = player.isPlaying
+        // バッファ待ちで止まっていても再生のつもりなら続きを流す（togglePlaybackと同じ理由）
+        resumeAfterScrub = player.playWhenReady
         // なぞっている間に映像が進むと指の位置とコマがずれるので、いったん止める
         player.playWhenReady = false
     }
@@ -398,7 +399,9 @@ class PlaybackController(
      * 「動かない」ように見えてしまうので、[playFromWhere]に従って頭出ししてから再生する。
      */
     fun togglePlayback() {
-        if (player.isPlaying) {
+        // isPlayingではなくplayWhenReadyで見る。バッファ待ち（シーク直後やクラウド上の動画）の
+        // 間はisPlayingがfalseなので、それで判断すると一時停止のつもりのタップが再生扱いになる
+        if (player.playWhenReady) {
             player.pause()
             return
         }
