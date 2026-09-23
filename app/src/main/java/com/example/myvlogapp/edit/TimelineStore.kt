@@ -1,11 +1,10 @@
 package com.example.myvlogapp.edit
 
 import android.net.Uri
+import androidx.annotation.MainThread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.MIN_TEXT_SEGMENT_MS
@@ -30,7 +29,7 @@ import com.example.myvlogapp.mergeByShotAt
 
 /** [TimelineStore.insertByShotAt] の結果。呼び出し元が追加結果の通知に使う */
 internal class InsertResult(
-    /** ロックの中で「すでにタイムラインにあった」と分かって除いた件数 */
+    /** 反映の直前に「すでにタイムラインにあった」と分かって除いた件数 */
     val alreadyPresent: Int,
     /** 上限（[MAX_CLIPS]）を超えるため入れなかった件数 */
     val overLimit: Int
@@ -44,7 +43,11 @@ internal class InsertResult(
  * @param onUrisReleased タイムラインから外れた動画のURI。波形のキャッシュとデコード中の
  *   ジョブを捨てるために、呼び出し元（VlogViewModel）へ知らせる。
  *   一覧を更新した「あと」に呼ぶこと（まだ他のクリップが同じURIを使っているかを見るため）
+ *
+ * すべての操作はメインスレッドから呼ぶこと。一覧を書き換える操作どうしの直列化は、
+ * これで成り立っている（下の「一覧をまとめて入れ替える」の説明を参照）。
  */
+@MainThread
 internal class TimelineStore(
     private val playback: TimelinePlayback,
     elapsedMs: () -> Long,
@@ -88,19 +91,17 @@ internal class TimelineStore(
     private val _replacementCount = MutableStateFlow(0)
     val replacementCount: StateFlow<Int> = _replacementCount.asStateFlow()
 
-    /**
-     * 一覧を非同期の下ごしらえを伴って書き換える操作（クリップ追加・一時保存の読み込みなど）を
-     * 直列化するロック。
-     *
-     * これらは「バックグラウンドでの下ごしらえ → 完了後に一覧へ反映」という形を取るため、
-     * 2つの操作が重なると片方の反映が失われることがある（例：動画追加のメタデータ取得中に
-     * 一時保存を読み込むと、その後の追加が古い一覧を基準に追記してしまい、読み出した内容を
-     * 巻き戻すか、逆に読み出しが追加の結果を消してしまう）。反映（コミット）部分だけを
-     * このロックで囲み、常に最新の一覧を基準にする。
-     */
-    private val mutex = Mutex()
-
     // --- 一覧をまとめて入れ替える -------------------------------------------------------
+    //
+    // クリップ追加・一時保存の読み込み・撮影時刻の取り直しは、どれも「バックグラウンドでの
+    // 下ごしらえ → 完了後に一覧へ反映」という形を取る。2つが重なっても片方の反映が
+    // 失われないよう、反映（ここの関数）は下ごしらえの結果だけを受け取り、その時点の最新の
+    // 一覧を基準に組み立て直す（例：動画追加のメタデータ取得中に一時保存を読み込んでも、
+    // 追加は読み出した後の一覧へ差し込まれる）。
+    //
+    // 反映どうしが割り込み合わないのは、メインスレッドだけで呼ばれ、途中で中断しない
+    // （suspendしない）ため。以前はMutexで囲んでいたが、中断点の無い処理をメインスレッド
+    // だけで回しているので、ロックは何も守っていなかった。
 
     /**
      * タイムラインを丸ごと差し替える（前回の続きの復元・一時保存の読み出し）。
@@ -109,10 +110,10 @@ internal class TimelineStore(
      *   開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう）。
      *   一時保存の読み出しは積む（読み出す前へ戻れるように）。
      */
-    suspend fun replaceAll(clips: List<VlogClip>, record: Boolean) = mutex.withLock {
+    fun replaceAll(clips: List<VlogClip>, record: Boolean) {
         // 空のまま空で置き換えるなら何もしない。起動直後（前回の続きが無い）に
         // プレイヤーを作り直さないため。
-        if (clips.isEmpty() && _clips.value.isEmpty()) return@withLock
+        if (clips.isEmpty() && _clips.value.isEmpty()) return
 
         if (record) recordHistory()
         _clips.value = clips
@@ -131,11 +132,11 @@ internal class TimelineStore(
     /**
      * 撮影/作成日時順になる位置へ差し込み、追加した中で最も古いものを選択する。
      *
-     * ロックの外で行った重複チェックは、メタデータの取得中に別の追加が同じ動画を先に
+     * 呼び出し元がメタデータ取得の前に行った重複チェックは、取得中に別の追加が同じ動画を先に
      * 入れてしまう競合には対応できない。ここでもう一度確かめて除外する。
      * 上限も、追加の直前の本数を基準にここで守る（並行した追加で超えないように）。
      */
-    suspend fun insertByShotAt(candidates: List<VlogClip>): InsertResult = mutex.withLock {
+    fun insertByShotAt(candidates: List<VlogClip>): InsertResult {
         val currentUris = _clips.value.map { it.uri }.toSet()
         val fresh = candidates.filter { it.uri !in currentUris }
         val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
@@ -144,7 +145,7 @@ internal class TimelineStore(
             alreadyPresent = candidates.size - fresh.size,
             overLimit = fresh.size - toMerge.size
         )
-        if (toMerge.isEmpty()) return@withLock result
+        if (toMerge.isEmpty()) return result
 
         val oldestAddedId = toMerge.minByOrNull { it.sortKeyMs }?.id
 
@@ -157,7 +158,7 @@ internal class TimelineStore(
             val index = merged.indexOfFirst { it.id == id }
             if (index >= 0) playback.select(index)
         }
-        result
+        return result
     }
 
     /**
@@ -172,7 +173,7 @@ internal class TimelineStore(
      * @param refreshed クリップidごとの取り直し結果。取り直しの対象でなかったクリップ
      *   （この間に追加されたものなど）は触らない
      */
-    suspend fun applyRefreshedShotTimes(refreshed: Map<Long, VideoMeta>) = mutex.withLock {
+    fun applyRefreshedShotTimes(refreshed: Map<Long, VideoMeta>) {
         _clips.value = _clips.value.withRefreshedShotTimes(refreshed)
         history.updateAll { it.copy(clips = it.clips.withRefreshedShotTimes(refreshed)) }
     }

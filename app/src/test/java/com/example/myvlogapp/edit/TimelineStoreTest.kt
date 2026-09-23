@@ -5,7 +5,6 @@ import com.example.myvlogapp.TextSegment
 import com.example.myvlogapp.VideoMeta
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.testClip
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -77,7 +76,7 @@ class TimelineStoreTest {
             sendMessage = { messages += it },
             onUrisReleased = {}
         )
-        runBlocking { store.replaceAll(clips.toList(), record = false) }
+        store.replaceAll(clips.toList(), record = false)
         store.clearHistory()
         return store
     }
@@ -221,11 +220,9 @@ class TimelineStoreTest {
         val store = storeWith(testClip(id = 1, timeText = "00:00", shotAtReliable = false))
         store.updateText("旅行")
 
-        runBlocking {
-            store.applyRefreshedShotTimes(
-                mapOf(1L to VideoMeta("12:34", "2026/09/01", 1L, shotAtReliable = true, durationMs = 10_000L))
-            )
-        }
+        store.applyRefreshedShotTimes(
+            mapOf(1L to VideoMeta("12:34", "2026/09/01", 1L, shotAtReliable = true, durationMs = 10_000L))
+        )
         store.undo()
 
         assertEquals("", selected.texts[0].text)
