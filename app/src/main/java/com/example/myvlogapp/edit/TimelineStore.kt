@@ -30,7 +30,6 @@ import com.example.myvlogapp.mergeByShotAt
 
 /** [TimelineStore.insertByShotAt] の結果。呼び出し元が追加結果の通知に使う */
 internal class InsertResult(
-    val inserted: List<VlogClip>,
     /** ロックの中で「すでにタイムラインにあった」と分かって除いた件数 */
     val alreadyPresent: Int,
     /** 上限（[MAX_CLIPS]）を超えるため入れなかった件数 */
@@ -142,7 +141,6 @@ internal class TimelineStore(
         val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
         val toMerge = fresh.take(room)
         val result = InsertResult(
-            inserted = toMerge,
             alreadyPresent = candidates.size - fresh.size,
             overLimit = fresh.size - toMerge.size
         )
