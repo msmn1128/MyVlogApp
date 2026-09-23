@@ -33,7 +33,7 @@ internal fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>)
     }
 
     // 戻るボタンでActivityが終了するとViewModelごと破棄され、読み込んだ動画が消える。
-    // クリップを読み込んでいる間は、ホームボタンと同じ「バックグラウンドへ回す」動きにして、
+    // タイムラインにクリップがある間は、ホームボタンと同じ「バックグラウンドへ回す」動きにして、
     // 戻ってきたときに作業を続けられるようにする。
     val activity = context as? Activity
     BackHandler(enabled = clips.isNotEmpty()) {

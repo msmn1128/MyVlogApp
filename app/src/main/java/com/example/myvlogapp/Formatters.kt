@@ -14,7 +14,7 @@ fun formatSavedAt(millis: Long): String =
     SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
 
 /**
- * 動画を追加したあとに出す、スキップの通知文。どちらも0件ならnull（通知しない）。
+ * 動画を追加したあとに出す、スキップの通知文。いずれも0件ならnull（通知しない）。
  *
  * @param alreadyAdded すでにタイムラインにあったため追加しなかった件数
  * @param unreadable 長さなどを読み取れなかったため追加しなかった件数（壊れたファイル、
@@ -73,7 +73,7 @@ fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
  * 同じwhileループを別々に持っていた。
  *
  * @param suffix 連番より後ろに付ける固定文字列。拡張子のように「連番の外側」に
- *   置きたいものを渡す（"Vlog_9-20 (1).mp4" であって "Vlog_9-20.mp4 (1)" ではない）。
+ *   置きたいものを渡す（"Vlog_2026-09-20 (1).mp4" であって "Vlog_2026-09-20.mp4 (1)" ではない）。
  *   既定は空で、一時保存の名前はこちらを使う。
  */
 fun uniqueSaveName(

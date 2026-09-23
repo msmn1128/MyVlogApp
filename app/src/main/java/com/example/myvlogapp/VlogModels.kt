@@ -10,7 +10,8 @@ import kotlin.math.abs
 // データモデル
 //
 // 定数は VlogConstants.kt、Android I/O依存のメタデータ取得は VideoMetadataReader.kt、
-// 表示整形は Formatters.kt にそれぞれ分離してある。このファイルは純粋データのみを持つ。
+// 表示整形は Formatters.kt にそれぞれ分離してある。このファイルが持つのはデータと、それに付く
+// 純粋な処理（JSONの読み書き・撮影日時順の差し込み・区間ごと移動の量・idの発行）だけ。
 // =====================================================================================
 
 /**
@@ -249,7 +250,8 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
  *
  * [text] の既定値は空文字。動画追加直後に触らなければプレビュー・書き出しの
  * どちらにも何も焼き込まれない（書き出しは空の区間の画像を作らないので
- * [com.example.myvlogapp.export.AndroidTextRenderer]側で自然に何も出ない）。入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
+ * [com.example.myvlogapp.export.AndroidTextRenderer]側で自然に何も出ない）。
+ * 入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
  * タイムラインのタイル表示（未入力時の目印）は[DEFAULT_HITOKOTO]へのifBlankフォールバックで補う。
  */
 data class TextSegment(
@@ -302,7 +304,7 @@ internal fun mergeByShotAt(
  * 動かせなくしてしまわないよう、許容範囲には必ず0（＝動かさない）を含める。
  *
  * @param requested トリム開始位置の移動量（動画の範囲へクランプ済み）
- * @return 実際にずらす量。動かせる余地が無ければ [requested] のまま0に近い値になる
+ * @return 実際にずらす量。区切りがはみ出す手前で止めた量で、その向きへ動かせる余地が無ければ0
  */
 internal fun clampTimelineShift(
     texts: List<TextSegment>,

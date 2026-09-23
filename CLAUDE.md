@@ -18,9 +18,9 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（209件）
+./gradlew testDebugUnitTest        # JVM単体テスト（213件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（18件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（19件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -206,6 +206,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
 中止・サービス破棄の経路は3つあり、**すべてが `VlogExporter.cancel()` を呼ぶ必要がある**
 （コルーチンを止めるだけではネイティブのエンコードが走り続ける）:
 `onStartCommand(ACTION_CANCEL)` / `onTimeout` / `onDestroy`。
+画面の「中止」ボタンと、書き出し中の通知の「中止」は、どちらも `ACTION_CANCEL` をサービスへ送る。
 
 ### 強制終了されたときの後始末
 
@@ -277,7 +278,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、209件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、213件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -288,7 +289,7 @@ JVM単体テスト（`src/test`）、209件。対象は純粋関数と、再生�
 | `ProjectSpecTest` | 一時保存の読み出し可否、保存領域の移行 |
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
-| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo、変わらないトリムは履歴に積まない、入れ替えのundoでタイル一覧を作り直す |
+| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo、変わらないトリムは履歴に積まない、2s/4sは動画の終わりでも指定の長さを確保する、入れ替えのundoでタイル一覧を作り直す |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て（区間ごとの画像の重ね方・タイトルのフェードを含む） |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
 | `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
@@ -306,15 +307,15 @@ JVM単体テスト（`src/test`）、209件。対象は純粋関数と、再生�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、18件）
+### 画面操作のテスト（`src/androidTest`、19件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
-組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
+組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）と実機（SM-F971Q、Android 17）で通してある。
 
 | ファイル | 対象 |
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
-| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／動画への許可が無いときの案内（許可し直す・設定を開く）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
 | `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
@@ -341,6 +342,10 @@ JVMで動かないため実装を入れている。
   「あれば使い回す」にすると、assetsを差し替えても古い実体が使われ続ける。
 - **ギャラリー画面は自前**。システムのフォトピッカーは返すURIがプロセス生存中しか
   有効でなく、アプリを閉じると編集の続きを復元できないため使っていない。
+- **動画への許可が無くても、ギャラリーの画面は開く**（`GalleryPicker.kt` の `NoMediaAccess`）。
+  ファイル選択（SAF）の入口はこの画面の右上の「ファイル」だけなので、許可されないと画面を開かなかった頃は、
+  許可しなかった人が動画を1本も追加できなかった。許可が無いときは一覧の代わりに、「ファイル」の案内と
+  「許可する」「設定を開く」を出す（2回断るとシステムは許可の画面を出さないため、設定の道が要る）。
 - **プレビューの PlayerView は TextureView で描く**（`res/layout/preview_player_view.xml` の `surface_type`。
   コードからは選べないので、このレイアウトから作る）。既定の SurfaceView だと、起動直後にプレビューの枠が
   縮んだとき（`TimelineFit` がタイムライン欄へ高さを回す）、一時停止中は新しいコマが来ないため

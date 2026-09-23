@@ -121,7 +121,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // スクロール位置）を切り替えるための合図。isFocusedだけを見ると、キーボードを閉じても
     // フォーカスは残ったままなことがあり、空欄でもカーソルだけ点滅し続けてしまう。
     val isImeVisible = imeBottomPx > 0
-    // 縦横の判定（isWide）には、キーボードでは縮まないウィンドウ全体の大きさを使う（理由は下）
+    // 縦横の判定（isWide）にはウィンドウ全体の大きさ（containerSize）を使う。
+    // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
+    // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
+    // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
+    // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
     val windowSize = LocalWindowInfo.current.containerSize
     val isWide = windowSize.width > windowSize.height
     // キーボードが出ている間は、次の2つの画面でタイムラインを畳み、ひとこと欄に高さを回す。
@@ -138,7 +142,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
     // 文字サイズや画面の比率によっては、この配分でも波形が欄から押し出されるので、
-    // 足りないぶんをタイムラインへ上乗せする（下のisWideの後。TimelineFit.kt）
+    // 足りないぶんをタイムラインへ上乗せする（下のtimelineExtraWeight。TimelineFit.kt）
     val basePreviewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
     val baseTimelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
     val baseEditorWeight = lerp(0.20f, 0.55f, imeOpenFraction)
@@ -249,13 +253,6 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     )
 
     VlogAppSideEffects(viewModel = viewModel, clips = clips)
-
-    // 縦横の判定（isWide、上で求めてある）にはウィンドウ全体の大きさ（containerSize）を使う。
-    // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
-    // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
-    // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
-    // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
-    // windowSize は上（キーボードまわりの判定）で読んである。
 
     // タイムラインへの上乗せは、縦1カラムではプレビューから、横2ペインでは同じ右ペインの
     // ひとこと欄から差し引く。どちらも削り切らない下限を残す。プレビューは動画を縮めて

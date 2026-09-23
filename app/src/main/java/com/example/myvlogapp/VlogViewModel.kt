@@ -76,7 +76,7 @@ private const val MISSING_CHECK_PARALLELISM = 8
  * 書き出しの窓口・Toastの中継）だけを持つ：
  * - [playback]   : ExoPlayerと再生位置（playback/PlaybackController.kt）
  * - [timeline]   : クリップ一覧・履歴・プレイリスト同期（edit/TimelineStore.kt）
- * - [projects]   : 一時保存（data/ProjectsController.kt）
+ * - [projectsController] : 一時保存（data/ProjectsController.kt）
  *
  * 画面（MainActivity）はこのクラスだけを見て、状態と操作を組み立てて下へ渡す。
  */
@@ -617,8 +617,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *
      * @param includeTitle 先頭のタイトルカード（黒背景＋日付＋効果音）を付けるかどうか。
      *   書き出しボタンのタップ（true）／長押し（false）で呼び分ける。
-     * @param customTitleText タイトルカードに焼き込む文言。null/空文字なら先頭クリップの
-     *   撮影日（[VlogClip.dateText]）を使う。タイトル作成ダイアログで自由入力を選んだときのみ渡る。
+     * @param customTitleText タイトルカードに焼き込む文言。タイトル作成ダイアログが、既定（先頭クリップの
+     *   撮影日）か自由入力のどちらかを毎回渡す。nullのときだけ書き出し側で撮影日（[VlogClip.dateText]）にする
      */
     fun export(includeTitle: Boolean = true, customTitleText: String? = null) {
         // 書き出し中に押し直したとき、何も起きないと「押せていない」のか
