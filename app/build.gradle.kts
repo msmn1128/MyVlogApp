@@ -37,8 +37,8 @@ android {
         // 「書き出した動画が保存できない・サムネイルが出ない」状態になるため。
         minSdk = 29
         targetSdk = 37
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
 
         // 画面操作のテスト（src/androidTest）。./gradlew connectedDebugAndroidTest で動かす
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
