@@ -226,12 +226,17 @@ internal class TimelineStore(
      * いまのトリム選択の左端から指定の長さだけを選び直す（操作バーの 2s / 4s プリセット）。
      * 常に先頭からだと押すたびにシークし直しになって面倒なため、
      * 選択済みの開始位置をそのまま起点にする。
+     *
+     * ただし動画の終わりに収まらないときは、始まりを手前へずらして指定の長さを確保する
+     * （動画がそれより短いときは動画全体）。終わりで切っていた頃は、終わり近くで押すと
+     * 「2s」なのに0.5秒になるなど、知らせもなく指定より短くなっていた。
      */
     fun applyTrimPreset(lengthMs: Long) {
         val clip = selectedClip ?: return
         if (clip.durationMs <= 0L) return
-        val startMs = clip.startMs.coerceIn(0L, clip.durationMs)
-        updateTrim(startMs = startMs, endMs = (startMs + lengthMs).coerceAtMost(clip.durationMs))
+        val length = lengthMs.coerceAtMost(clip.durationMs)
+        val startMs = clip.startMs.coerceIn(0L, clip.durationMs - length)
+        updateTrim(startMs = startMs, endMs = startMs + length)
     }
 
     /**

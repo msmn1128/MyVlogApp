@@ -182,6 +182,34 @@ class TimelineStoreTest {
         assertFalse(store.canUndo.value)
     }
 
+    @Test
+    fun trimPresetKeepsTheCurrentStartWhenItFits() {
+        val store = storeWith(testClip(id = 1, durationMs = 10_000L, startMs = 3_000L, endMs = 9_000L))
+
+        store.applyTrimPreset(2_000L)
+
+        assertEquals(3_000L to 5_000L, selected.startMs to selected.endMs)
+    }
+
+    @Test
+    fun trimPresetNearTheEndMovesTheStartBackInsteadOfGettingShorter() {
+        // 終わりで切っていた頃は、残り0.5秒のところで「2s」を押すと0.5秒になっていた
+        val store = storeWith(testClip(id = 1, durationMs = 10_000L, startMs = 9_500L, endMs = 10_000L))
+
+        store.applyTrimPreset(2_000L)
+
+        assertEquals(8_000L to 10_000L, selected.startMs to selected.endMs)
+    }
+
+    @Test
+    fun trimPresetLongerThanTheVideoSelectsTheWholeVideo() {
+        val store = storeWith(testClip(id = 1, durationMs = 1_500L, startMs = 500L, endMs = 1_500L))
+
+        store.applyTrimPreset(4_000L)
+
+        assertEquals(0L to 1_500L, selected.startMs to selected.endMs)
+    }
+
     // --- 一覧の入れ替え ---------------------------------------------------------------
 
     @Test
