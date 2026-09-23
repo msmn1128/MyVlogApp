@@ -166,6 +166,16 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun negativeSegmentPositionsAreClampedSoTheOrderStaysAscending() {
+        // 先頭の1件だけを0へ直していた頃は、負の位置が2件以上あると2件目以降が0より前に残った
+        val json = clipJsonWithTexts(-5L to "a", -3L to "b", 1_000L to "c")
+
+        val starts = VlogClip.fromJson(json, id = 1L).texts.map { it.startMs }
+        assertEquals(listOf(0L, 0L, 1_000L), starts)
+        assertEquals(starts.sorted(), starts)
+    }
+
+    @Test
     fun anEmptyTextsArrayStillYieldsOneSegmentAtZero() {
         val texts = VlogClip.fromJson(clipJsonWithTexts(), id = 1L).texts
 
