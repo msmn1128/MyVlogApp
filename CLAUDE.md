@@ -18,14 +18,19 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（181件）
+./gradlew testDebugUnitTest        # JVM単体テスト（186件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（12件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
+./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
 ```
+
+**変更のたびに通すのは `testDebugUnitTest lintDebug assembleDebugAndroidTest` の3つ。**
+単体テストとlintは画面操作のテスト（`src/androidTest`）をコンパイルしないので、部品の引数を
+変えてもテスト側の直し忘れに気付けない（v1.5で `EditSection` に引数を足したとき、実際にそうなった）。
 
 成果物と署名の確認:
 
@@ -110,6 +115,9 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
   起動時に、タイムラインにも一時保存にも使われていない権限を解放する。
 - 自動保存（`vlog_clips`）と一時保存（`vlog_projects`）は**別ファイル**。同居させると、
   ひとことを1文字打つたびの自動保存が、無関係な一時保存ごと（100本×20件で約1MB）書き直してしまう。
+- **起動時の復元が終わるまで、動画の追加は待たせる**（`VlogViewModel.restoreFinished`）。復元は前回の動画を
+  1本ずつ開いて確かめてからタイムラインを丸ごと入れ替えるので、その間に追加した動画は入れ替えで消える。
+  復元中は追加中と同じく「読み込み中」として数え（`whileLoadingClips`）、追加・書き出し・一時保存も止める。
 
 ---
 
@@ -254,7 +262,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、186件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -275,12 +283,13 @@ JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生�
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
+| `WaveformSamplesTest` | 復号した音声を、サンプルごとの時刻で波形の区間へ振り分ける（短い動画で区間が空かない） |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、10件）
+### 画面操作のテスト（`src/androidTest`、12件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
@@ -288,7 +297,7 @@ JVMで動かないため実装を入れている。
 | ファイル | 対象 |
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
-| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の削除は確認を挟む |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
   `InputManager.getInstance` を呼んで全テストが落ちる。

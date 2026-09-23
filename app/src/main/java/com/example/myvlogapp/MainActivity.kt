@@ -1,5 +1,6 @@
 package com.example.myvlogapp
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -123,7 +124,8 @@ private fun rememberAssetFontFamily(assetName: String): FontFamily {
  * 画面構成は縦横で切り替える。
  *
  * 縦長（通常のスマホ / Foldの外側画面）: 1カラム
- *   プレビュー 50% → ボタン → タイムライン 30% → ひとこと 20%
+ *   プレビュー 40% → ボタン → タイムライン 40% → ひとこと 20%
+ *   （キーボードを開くとひとことへ高さを回し、中身が収まらなければタイムラインを広げる）
  *
  * 横長（Foldの展開時 / タブレット / 横向き）: 2ペイン
  *   左にプレビューとボタン、右にタイムラインとひとこと。
@@ -230,47 +232,12 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
         else permissionLauncher.launch(mediaPermissions)
     }
 
-    // 書き出し中はフォアグラウンドサービスの通知を出す（VlogExportService）。
-    // Android 13以降は表示に実行時許可が要るため、書き出し開始前にリクエストする。
-    // 拒否されても書き出し自体は行われる（通知が出ないだけ）。
-    //
     // ここ（VlogAppScreen）で1つだけ持つ。PreviewSection内に置くと、縦画面（Column直下）と
     // 横画面（Row>Column>PreviewSection）で呼び出し位置が変わり、Composeが別インスタンスとして
     // 扱うため、Foldの開閉などでisWideが反転した瞬間に、表示中の権限ダイアログの
     // 結果コールバックがActivityResultRegistryごと失われる。
     // VlogAppScreenはisWideの分岐より外側で1度しか呼ばれないので、ここに置けば消えない。
-    // 通知の許可を聞いている間、始める書き出しの内容を覚えておく。許可の画面は別の画面なので、
-    // 答えるまでに回転などで作り直されても消えないようrememberSaveableにする
-    var pendingExport by rememberSaveable { mutableStateOf(false) }
-    var pendingIncludeTitle by rememberSaveable { mutableStateOf(false) }
-    var pendingTitleText by rememberSaveable { mutableStateOf<String?>(null) }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {
-        // 許可されてもされなくても書き出す（通知は進み具合を知らせるだけで、無くても書き出せる）。
-        // 答えを待ってから始めるのは、許可の画面の裏で書き出しが進み、短い書き出しだと
-        // 完了の知らせまで画面の裏で済んで、何が起きたか分からなかったため
-        if (pendingExport) {
-            pendingExport = false
-            viewModel.export(pendingIncludeTitle, pendingTitleText)
-        }
-    }
-    // titleTextはincludeTitle=trueのとき（タイトル作成ダイアログで確定済み）だけ意味を持つ。
-    // falseのときはタイトルカード自体を焼かないので渡さない。
-    val startExport = { includeTitle: Boolean, titleText: String? ->
-        val needsToAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-        if (needsToAsk) {
-            // 2回断られるとシステムはもう画面を出さず、すぐに「拒否」で返ってくるので、その場合もすぐ始まる
-            pendingIncludeTitle = includeTitle
-            pendingTitleText = titleText
-            pendingExport = true
-            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            viewModel.export(includeTitle, titleText)
-        }
-    }
+    val startExport = rememberExportStarter(onStart = viewModel::export)
     // タイトルあり（タップ）のときだけ、文言選択ダイアログを挟む。
     // タイトルなし（長押し）はタイトルカード自体を焼かないので、そのまま書き出す。
     val onExport = { includeTitle: Boolean ->
@@ -475,6 +442,51 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
                 Spacer(Modifier.height(SECTION_GAP))
                 edit()
             }
+        }
+    }
+}
+
+/**
+ * 書き出しを始める入口を作る。返す関数の引数は（タイトルを付けるか, タイトルの文言）。
+ * 文言はタイトルを付けるとき（タイトル作成ダイアログで確定済み）だけ意味を持つ。
+ *
+ * 書き出し中はフォアグラウンドサービスの通知を出す（VlogExportService）。Android 13以降は
+ * 表示に実行時の許可が要るので、まだ許可されていなければ先に聞き、答えが返ってから始める。
+ * 許可されてもされなくても書き出す（通知は進み具合を知らせるだけで、無くても書き出せる）。
+ * 聞くのと同時に始めていた頃は、許可の画面の裏で書き出しが進み、短い書き出しだと
+ * 完了の知らせまで画面の裏で済んで、何が起きたか分からなかった。
+ * 2回断られるとシステムはもう画面を出さず、すぐに「拒否」で返ってくるので、その場合もすぐ始まる。
+ *
+ * 呼ぶのは[VlogAppScreen]の、縦横の分岐より外側（理由は呼び出し側）。
+ */
+@Composable
+private fun rememberExportStarter(
+    onStart: (includeTitle: Boolean, titleText: String?) -> Unit
+): (includeTitle: Boolean, titleText: String?) -> Unit {
+    val context = LocalContext.current
+    // 許可を聞いている間、始める書き出しの内容を覚えておく。許可の画面は別のActivityで、
+    // 答えるまでの間にこの画面がメモリ不足で回収されることがある（回転では作り直さない設定。
+    // マニフェストのconfigChanges）。戻ったときに消えていないようrememberSaveableにする
+    var pending by rememberSaveable { mutableStateOf(false) }
+    var pendingIncludeTitle by rememberSaveable { mutableStateOf(false) }
+    var pendingTitleText by rememberSaveable { mutableStateOf<String?>(null) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (pending) {
+            pending = false
+            onStart(pendingIncludeTitle, pendingTitleText)
+        }
+    }
+    return { includeTitle, titleText ->
+        val needsToAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        if (needsToAsk) {
+            pendingIncludeTitle = includeTitle
+            pendingTitleText = titleText
+            pending = true
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            onStart(includeTitle, titleText)
         }
     }
 }

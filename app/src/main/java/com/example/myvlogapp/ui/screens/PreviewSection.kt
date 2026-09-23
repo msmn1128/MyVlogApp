@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -360,6 +361,8 @@ private fun ExportButton(
             .heightIn(min = ButtonDefaults.MinHeight)
             .combinedClickable(
                 enabled = enabled,
+                // 見た目だけ真似た部品なので、読み上げにボタンであることを自分で伝える
+                role = Role.Button,
                 onClickLabel = "書き出し（タイトルあり）",
                 onLongClickLabel = "タイトルなしで書き出し",
                 onLongClick = { onExport(false) },
@@ -375,7 +378,10 @@ private fun ExportButton(
     }
 }
 
-/** 動画を追加している間（メタデータを読んでいる間）の進捗。数秒かかることがあるため、何も出さないと固まって見える */
+/**
+ * 動画を読み込んでいる間（追加する動画のメタデータを読む間と、起動時に前回の続きを復元する間）の進捗。
+ * 数秒かかることがあるため、何も出さないと固まって見える
+ */
 @Composable
 private fun AddProgress(isAdding: Boolean) {
     AnimatedVisibility(
