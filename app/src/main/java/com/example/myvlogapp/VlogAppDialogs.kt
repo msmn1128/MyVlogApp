@@ -25,7 +25,7 @@ internal fun VlogAppDialogs(
     onDismissGallery: () -> Unit,
     onPickFromGallery: (List<Uri>) -> Unit,
     onUseFilePicker: () -> Unit,
-    onChangeSelection: () -> Unit,
+    onRequestAccess: () -> Unit,
     showSaves: Boolean,
     onDismissSaves: () -> Unit,
     canSaveProject: Boolean,
@@ -38,7 +38,7 @@ internal fun VlogAppDialogs(
             onDismiss = onDismissGallery,
             onPick = onPickFromGallery,
             onUseFilePicker = onUseFilePicker,
-            onChangeSelection = onChangeSelection
+            onRequestAccess = onRequestAccess
         )
     }
 

@@ -17,7 +17,7 @@ import org.junit.runner.RunWith
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.ui.theme.MyVlogAppTheme
 
-/** 書き出しのタイトル作成と、一時保存のダイアログの画面操作 */
+/** 書き出しのタイトル作成・動画を選ぶ画面（許可が無いとき）・一時保存のダイアログの画面操作 */
 @RunWith(AndroidJUnit4::class)
 class DialogsTest {
 
@@ -54,6 +54,30 @@ class DialogsTest {
         rule.onNode(hasSetTextAction()).performTextInput("夏の旅行")
         rule.onNodeWithText("書き出し").performClick()
         rule.runOnIdle { assertEquals("夏の旅行", confirmedTitle) }
+    }
+
+    // --- 動画を選ぶ（許可が無いとき） ---------------------------------------------------
+
+    @Test
+    fun withoutMediaAccessTheGalleryOffersToAskAgainOrOpenSettings() {
+        // 許可が無くてもギャラリーの画面は開き、許可し直す道を出す（以前は画面ごと開かず、
+        // その中にしかない「ファイル」まで辿り着けなかった）
+        var requested = 0
+        var openedSettings = 0
+        rule.setContent {
+            MyVlogAppTheme {
+                NoMediaAccess(onRequestAccess = { requested++ }, onOpenSettings = { openedSettings++ })
+            }
+        }
+
+        rule.onNodeWithText("動画へのアクセスが許可されていないため、一覧を出せません").assertExists()
+        rule.onNodeWithText("右上の「ファイル」から選んで追加することもできます").assertExists()
+        rule.onNodeWithText("許可する").performClick()
+        rule.onNodeWithText("設定を開く").performClick()
+        rule.runOnIdle {
+            assertEquals(1, requested)
+            assertEquals(1, openedSettings)
+        }
     }
 
     // --- 一時保存 ----------------------------------------------------------------------

@@ -1,8 +1,11 @@
 package com.example.myvlogapp.ui.screens
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.LruCache
+import android.provider.Settings
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,15 +29,19 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.example.myvlogapp.formatSeconds
 import com.example.myvlogapp.data.GalleryVideo
+import com.example.myvlogapp.data.hasMediaAccess
 import com.example.myvlogapp.data.hasPartialMediaAccess
 import com.example.myvlogapp.data.queryGalleryVideos
 import com.example.myvlogapp.ui.components.VlogIcons
@@ -93,7 +100,13 @@ private fun rememberThumbnail(uri: Uri, cache: ThumbnailCache): Bitmap? {
 }
 
 /**
- * @param reloadToken 値が変わると一覧を取り直す。許可する動画を選び直した直後に使う
+ * 動画へのアクセスが許可されていなくても開く。そのときは一覧の代わりに、許可し直す導線と
+ * 「ファイル」（システムのファイル選択）を案内する（[NoMediaAccess]）。以前は許可されないと
+ * この画面自体を開かず、ファイル選択の入口（右上の「ファイル」）まで辿り着けなかったので、
+ * 許可しなかった人は動画を1本も追加できなかった。
+ *
+ * @param reloadToken 値が変わると一覧を取り直す。許可を聞き直した直後に使う
+ * @param onRequestAccess 許可を聞き直す（「選択した項目のみ」の選び直しも、これで出る）
  */
 @Composable
 fun GalleryPickerDialog(
@@ -101,16 +114,27 @@ fun GalleryPickerDialog(
     onDismiss: () -> Unit,
     onPick: (List<Uri>) -> Unit,
     onUseFilePicker: () -> Unit,
-    onChangeSelection: () -> Unit
+    onRequestAccess: () -> Unit
 ) {
     val context = LocalContext.current
     var videos by remember { mutableStateOf<List<GalleryVideo>?>(null) }
     // 選択中のURI。追加後の並びは撮影日時順で、選んだ順とは無関係なので、順番は持たない
     val selected = remember { mutableStateSetOf<Uri>() }
-    val isPartial = remember(reloadToken) { hasPartialMediaAccess(context) }
+    // 設定アプリで許可を変えて戻ってきたとき、許可の状態を読み直すための合図。
+    // 2回断るとシステムは許可の画面をもう出さないので、設定から許可されることがある
+    var resumeCount by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumeCount++ }
+    val hasAccess = remember(reloadToken, resumeCount) { hasMediaAccess(context) }
+    val isPartial = remember(reloadToken, resumeCount) { hasPartialMediaAccess(context) }
     val thumbnails = remember { ThumbnailCache() }
 
-    LaunchedEffect(reloadToken) {
+    // 許可が変わったときも取り直す（設定から許可されて戻ってきたときなど）
+    LaunchedEffect(reloadToken, hasAccess) {
+        if (!hasAccess) {
+            videos = emptyList()
+            selected.clear()
+            return@LaunchedEffect
+        }
         videos = null
         val loaded = queryGalleryVideos(context)
         videos = loaded
@@ -135,15 +159,23 @@ fun GalleryPickerDialog(
 
                 // 一部の動画だけ許可している場合は、対象を選び直せるようにする
                 if (isPartial) {
-                    PartialAccessBanner(onChangeSelection = onChangeSelection)
+                    PartialAccessBanner(onChangeSelection = onRequestAccess)
                 }
 
-                VideoGrid(
-                    videos = videos,
-                    selected = selected,
-                    thumbnails = thumbnails,
-                    modifier = Modifier.fillMaxWidth().weight(1f)
-                )
+                if (hasAccess) {
+                    VideoGrid(
+                        videos = videos,
+                        selected = selected,
+                        thumbnails = thumbnails,
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    )
+                } else {
+                    NoMediaAccess(
+                        onRequestAccess = onRequestAccess,
+                        onOpenSettings = { openAppSettings(context) },
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    )
+                }
 
                 Spacer(Modifier.height(8.dp))
 
@@ -171,6 +203,57 @@ private fun GalleryPickerHeader(onUseFilePicker: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 8.dp)
         ) { Text("ファイル") }
     }
+}
+
+/**
+ * 動画へのアクセスが許可されていないときに、一覧の代わりに出す案内。
+ *
+ * 「許可する」は許可の画面をもう一度出す。ただし2回断るとシステムはもう画面を出さず、
+ * 押しても何も起きないので、設定を開く道も並べる。「ファイル」からなら許可が無くても選べる
+ * （選んだ動画にだけ、その場で読む権限がもらえる）ことも伝える。
+ */
+@Composable
+internal fun NoMediaAccess(
+    onRequestAccess: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "動画へのアクセスが許可されていないため、一覧を出せません",
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "右上の「ファイル」から選んで追加することもできます",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = onRequestAccess) { Text("許可する") }
+            OutlinedButton(onClick = onOpenSettings) { Text("設定を開く") }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "「許可する」で何も出ないときは、設定の「権限」から「写真と動画」を許可してください",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/** このアプリの設定画面（権限を変えられる）を開く */
+private fun openAppSettings(context: Context) {
+    context.startActivity(
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    )
 }
 
 @Composable

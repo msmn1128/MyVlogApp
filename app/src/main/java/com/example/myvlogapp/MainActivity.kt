@@ -161,21 +161,15 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 許可する動画を選び直したときに一覧を取り直すための合図
     var galleryReloadToken by remember { mutableIntStateOf(0) }
 
+    // 許可されてもされなくても、ギャラリーの画面は開く。許可されなかったときは、一覧の代わりに
+    // 許可し直す導線と「ファイル」（システムのファイル選択）を案内する（GalleryPicker.kt）。
+    // 以前は断られたらToastで知らせるだけで、ファイル選択の入口がギャラリーの画面の中にしか
+    // 無いため、許可しなかった人は動画を1本も追加できなかった
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        // Android 14の「選択した項目のみ許可」だと READ_MEDIA_VIDEO は拒否のまま
-        // 別の権限が許可されるので、どれか1つでも通れば一覧を開く
-        if (results.values.any { it }) {
-            showGallery = true
-            galleryReloadToken++
-        } else {
-            Toast.makeText(
-                context,
-                "動画へのアクセスが許可されていません。「ファイルから選ぶ」もご利用いただけます",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+    ) {
+        showGallery = true
+        galleryReloadToken++
     }
 
     val openGallery = {
@@ -242,8 +236,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             showGallery = false
             filePicker.launch(arrayOf("video/*"))
         },
-        // 権限を再リクエストすると、システムの「動画を選択」画面が再表示される
-        onChangeSelection = { permissionLauncher.launch(mediaPermissions) },
+        // 権限を再リクエストすると、システムの許可の画面（「選択した項目のみ」なら動画の選択画面）が出る
+        onRequestAccess = { permissionLauncher.launch(mediaPermissions) },
         showSaves = showSaves,
         onDismissSaves = { showSaves = false },
         canSaveProject = clips.isNotEmpty() && !isExporting && !isAdding,
