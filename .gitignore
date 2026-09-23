@@ -7,6 +7,11 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+# Android Studio が開発者ごとに書き換える設定（選んだ端末・端末の一覧・承認の状態）。
+# 共有する意味が無く、選んだ実機の識別子まで公開リポジトリに載っていた
+/.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
+/.idea/planningMode.xml
 .DS_Store
 # ルート直下だけでなくapp/buildなど、どの階層のbuildディレクトリも除外する
 build/
