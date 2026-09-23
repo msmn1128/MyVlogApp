@@ -18,6 +18,8 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
 ./gradlew testDebugUnitTest        # JVM単体テスト
+./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+                                   # 画面操作のテスト（起動中のエミュレータ・実機で動く）
 ./gradlew lintDebug                # lint
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -41,6 +43,6 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
   - 対応するソースコード：アプリはこのリポジトリ、FFmpeg はビルド用スクリプトを含めて上記フォークのタグ `6.1.1`、
     FFmpeg 本体は [arthenica/FFmpeg](https://github.com/arthenica/FFmpeg) のタグ `n6.0`
     （一緒にビルドされるライブラリの版と入手先は、フォークの `scripts/source.sh` に固定されている）。
-    フォークと FFmpeg 本体のソースの控えは、[Releases](https://github.com/msmn1128/MyVlogApp/releases) の v1.0 に添付してある。
+    フォークと FFmpeg 本体のソースの控えは、[Releases](https://github.com/msmn1128/MyVlogApp/releases) の各リリースに添付してある。
 - 同梱の素材（`app/src/main/assets/fonts/`・`sfx/`）はそれぞれの配布元のライセンスに従う。
 

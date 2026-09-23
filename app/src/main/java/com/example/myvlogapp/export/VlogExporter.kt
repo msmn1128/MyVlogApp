@@ -245,6 +245,9 @@ object VlogExporter {
                     // つなぐだけで数秒で終わるので、進捗率は出さない（区切りの進捗から0%へ戻って見える）
                     onProgress = { _, _ -> }
                 )
+                // つないだ時点で中間ファイルは要らない。finallyまで残すと、ギャラリーへのコピー中も
+                // 出来上がりと同じくらいの大きさ（100本で数百MB〜）を余計に抱えたままになる
+                segmentFiles.forEach { it.delete() }
             }
 
             onProgress("保存中...", null)

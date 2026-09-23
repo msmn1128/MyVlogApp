@@ -40,6 +40,7 @@ import com.example.myvlogapp.ui.screens.GalleryPickerDialog
 import com.example.myvlogapp.ui.screens.PreviewSection
 import com.example.myvlogapp.ui.screens.SaveLoadDialog
 import com.example.myvlogapp.ui.screens.TimelineActions
+import com.example.myvlogapp.ui.screens.TimelineFit
 import com.example.myvlogapp.ui.screens.TimelineState
 import com.example.myvlogapp.ui.screens.TitleCreationDialog
 import com.example.myvlogapp.ui.theme.MyVlogAppTheme
@@ -71,6 +72,11 @@ internal val SECTION_GAP = 12.dp
  * MaterialのウィンドウサイズクラスでcompactにあたるHeightの境目。
  */
 internal val COMPACT_HEIGHT = 480.dp
+
+// タイムラインの欄を広げるとき（TimelineFit.kt）に、削る側へ残す比率の下限。
+// 縦1カラムのプレビューは全体の2割、横2ペインのひとこと欄は右ペイン（タイムライン0.40＋ひとこと0.20）の2割
+private const val MIN_PREVIEW_WEIGHT = 0.20f
+private const val MIN_WIDE_EDITOR_WEIGHT = 0.12f
 
 /** 波形の高さ。つまみを指で掴める大きさが要るので、表示だけだった頃より厚くしてある */
 internal val WAVEFORM_HEIGHT = 76.dp
@@ -175,9 +181,12 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
-    val previewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
-    val timelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
-    val editorWeight = lerp(0.20f, 0.55f, imeOpenFraction)
+    // 端末の文字サイズが大きいと、この配分でも波形が欄から押し出されるので、
+    // 足りないぶんをタイムラインへ上乗せする（下のisWideの後。TimelineFit.kt）
+    val basePreviewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
+    val baseTimelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
+    val baseEditorWeight = lerp(0.20f, 0.55f, imeOpenFraction)
+    val timelineFit = remember { TimelineFit() }
 
     // プレビューにも書き出しと同じフォントを使う。
     // 既定フォントのままだと、サイズを合わせても書き出し結果と別物に見えてしまう。
@@ -313,6 +322,19 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // windowSize は上（キーボードまわりの判定）で読んである。
     val isWide = windowSize.width > windowSize.height
 
+    // タイムラインへの上乗せは、縦1カラムではプレビューから、横2ペインでは同じ右ペインの
+    // ひとこと欄から差し引く。どちらも削り切らない下限を残す。プレビューは動画を縮めて
+    // 見せるだけで済むが、ひとこと欄は1行ぶんを割ると打った文字が見えなくなるので下限を高めにする
+    // （右ペインの2割）。キーボードが開いている間は上乗せしない（ひとこと欄に高さを回す時間なので）
+    val timelineExtraWeight = timelineFit.extraWeight(
+        baseWeight = baseTimelineWeight,
+        maxExtra = if (isWide) baseEditorWeight - MIN_WIDE_EDITOR_WEIGHT
+        else basePreviewWeight - MIN_PREVIEW_WEIGHT
+    ) * (1f - imeOpenFraction)
+    val previewWeight = if (isWide) basePreviewWeight else basePreviewWeight - timelineExtraWeight
+    val timelineWeight = baseTimelineWeight + timelineExtraWeight
+    val editorWeight = if (isWide) baseEditorWeight - timelineExtraWeight else baseEditorWeight
+
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。
     // collectは1箇所にまとめて引数で渡す。値を読まずStateのまま渡しているのは、
     // ここで読むと再生位置が変わる（約80ms）たびにこの画面全体が再コンポーズされるため。
@@ -400,7 +422,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             timelineWeight = timelineWeight,
             editorWeight = editorWeight,
             showTimeline = showTimeline,
-            isImeVisible = isImeVisible
+            isImeVisible = isImeVisible,
+            timelineFit = timelineFit
         )
     }
 

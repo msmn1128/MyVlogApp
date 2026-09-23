@@ -45,7 +45,9 @@ class AddSkipMessageTest {
 
     @Test
     fun theLimitIs100() {
-        // 実測に基づく値（VlogConstants.MAX_CLIPS）。変えるときはメモリの実測をやり直すこと
+        // 以前はメモリの実測に基づく上限だったが、区切りごとの書き出し（export/Segments.kt）で
+        // メモリは本数によらず一定になった。いまは書き出し時間・中間ファイルの容量・操作性のための値
+        // （VlogConstants.MAX_CLIPS）。変えるときは、100本の書き出し時間と空き容量の見積もりを見直すこと
         assertEquals(100, MAX_CLIPS)
     }
 
