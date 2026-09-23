@@ -7,7 +7,7 @@ import java.util.Locale
 //
 // 書き出しは、作業フォルダ（cacheDir）に動画を作ってからギャラリーへコピーするので、
 // 出来上がりの大きさの2倍が一時的に要る。本数が多くて区切りごとに書き出すとき
-// （Segments.kt）は、さらに区切りの中間ファイル（映像＋無圧縮の音声）が加わって約3倍になる。
+// （Segments.kt）は、つなぐ間だけ区切りの中間ファイル（映像＋無圧縮の音声）も抱える。
 // 容量が足りないと、FFmpegの英語のエラー（No space left on device）のまま途中で失敗していた。
 // 書き出しの前に見積もって断り、それでも途中で尽きたときは日本語で知らせる。
 // =====================================================================================
@@ -29,15 +29,20 @@ internal fun estimatedOutputBytes(durationMs: Long): Long =
     durationMs * (MEDIACODEC_BITRATE_BPS + AUDIO_BITRATE_BPS) / 8 / 1000
 
 /**
- * 書き出しに要る空き容量（バイト）。
- * 1回で書き出すとき: 作業フォルダの動画＋ギャラリーへのコピー。
- * 区切りごとのとき: それに区切りの中間ファイル（映像＋無圧縮の音声）が加わる。
+ * 書き出しに要る空き容量（バイト）。いちばん多く抱える瞬間で見積もる。
+ * 1回で書き出すとき: ギャラリーへのコピー中（作業フォルダの動画＋コピー先）。
+ * 区切りごとのとき: つないでいる最中（区切りの中間ファイル＋つないだ動画）。中間ファイルは
+ * つなぎ終えたらすぐ消すので、ギャラリーへのコピー中とは重ならない。中間ファイルは
+ * 無圧縮の音声のぶん出来上がりより大きいので、コピー中の2倍より常にこちらが多い。
  */
 internal fun requiredFreeBytes(durationMs: Long, segmented: Boolean): Long {
     val output = estimatedOutputBytes(durationMs)
-    val intermediates =
-        if (segmented) durationMs * (MEDIACODEC_BITRATE_BPS + PCM_BITRATE_BPS) / 8 / 1000 else 0L
-    return output * 2 + intermediates + SPACE_MARGIN_BYTES
+    val peak = if (segmented) {
+        output + durationMs * (MEDIACODEC_BITRATE_BPS + PCM_BITRATE_BPS) / 8 / 1000
+    } else {
+        output * 2
+    }
+    return peak + SPACE_MARGIN_BYTES
 }
 
 /**
