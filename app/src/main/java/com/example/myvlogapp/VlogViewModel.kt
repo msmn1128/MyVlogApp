@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.myvlogapp.data.ClipStore
+import com.example.myvlogapp.data.ClipStoreProjects
 import com.example.myvlogapp.data.ProjectsController
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
@@ -108,7 +109,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 一時保存（data/ProjectsController.kt） */
     private val projectsController: ProjectsController = ProjectsController(
-        context = application,
+        repository = ClipStoreProjects(application),
         scope = viewModelScope,
         timeline = timeline,
         isAdding = { _isAdding.value },
