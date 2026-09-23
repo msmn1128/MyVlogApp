@@ -19,6 +19,9 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
 ./gradlew testDebugUnitTest        # JVM単体テスト（151件）
+./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+                                   # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
+                                   # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -265,8 +268,20 @@ JVM単体テスト（`src/test`）のみ、151件。対象は純粋関数と、�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-**instrumented テストと Compose UI テストは無い。** 再生・IME・書き出しの実挙動は
-テストで守られていないので、この3つを触ったら実機で確認すること。
+### 画面操作のテスト（`src/androidTest`、10件）
+
+部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
+組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
+
+| ファイル | 対象 |
+|---|---|
+| `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の削除は確認を挟む |
+
+- `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
+  `InputManager.getInstance` を呼んで全テストが落ちる。
+- 再生（ExoPlayer）・キーボード・書き出し（FFmpeg）の実挙動は、ここでも守られていない。
+  この3つを触ったら、エミュレータか実機で確認すること。
 
 ---
 
@@ -322,7 +337,7 @@ JVMで動かないため実装を入れている。
 
 ## 未解決 / 今後
 
-- instrumented テストと Compose UI テストが無いのは変わっていない（「テスト」節を参照）。
+- 画面操作のテストは部品単位だけで、画面全体（MainActivity＋ViewModel）を通したものは無い（「テスト」節を参照）。
   `ProjectsController` / `VlogViewModel` は JVM 単体テストで1件も守られていないので、
   触ったら実機で確認すること。`TimelineStore` は再生側を `edit/TimelinePlayback`
   （実装は `PlaybackController`）越しに受け取るようにしたので、偽物を渡してテストできる
