@@ -128,8 +128,8 @@ private fun disabledAlpha(enabled: Boolean, label: String): Float {
 @Composable
 private fun ToolbarButtonBox(
     background: Color,
+    modifier: Modifier,
     interaction: Modifier,
-    modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
