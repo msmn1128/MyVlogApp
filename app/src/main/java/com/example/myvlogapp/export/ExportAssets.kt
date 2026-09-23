@@ -1,6 +1,8 @@
 package com.example.myvlogapp.export
 
 import android.content.Context
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.util.Log
 import java.io.File
 import kotlin.math.roundToLong
@@ -19,8 +21,34 @@ import com.example.myvlogapp.TITLE_SFX_FRAME_NUMBER
 
 private const val SFX_ASSET_DIR = "sfx"
 
-/** タイトルカード・各クリップ両方で使うフォント一式 */
-internal data class ExportFonts(val logoType: File, val time: File)
+/**
+ * タイトルカード・各クリップ両方で使うフォント一式。
+ *
+ * @param hitokotoBaselineShiftPt ひとことの行の中心からベースラインまでの距離（[baselineShiftPt]）。
+ *   drawtextはフォントの指標を式から読めないので、書き出しの前にAndroid側で測って渡す
+ */
+internal data class ExportFonts(
+    val logoType: File,
+    val time: File,
+    val hitokotoBaselineShiftPt: Float
+)
+
+/**
+ * 行の中心から、ベースラインまで下へ何ptあるか（フォントのascent/descentから求める）。
+ *
+ * Composeのプレビューは、1行の箱の中でフォントのascent〜descentを上下中央に置く
+ * （LineHeightStyle.Alignment.Center）。書き出しでもその行の中心から同じ距離に
+ * ベースラインを置けば、文字の中身に関係なく同じ高さに並ぶ。
+ * FreeType（drawtext）もAndroidも、文字サイズをem＝[sizePt]pxとして扱うので値は揃う。
+ */
+internal fun baselineShiftPt(fontFile: File, sizePt: Float): Float {
+    val metrics = Paint().apply {
+        typeface = Typeface.createFromFile(fontFile)
+        textSize = sizePt
+    }.fontMetrics
+    // ascentは上向きが負の値。中心 = (ascent + descent) / 2 の位置なので、そこからベースラインまで
+    return -(metrics.ascent + metrics.descent) / 2f
+}
 
 /**
  * FFmpegはassetsを直接読めないため、素材を内部ストレージへ展開する。

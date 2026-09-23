@@ -28,7 +28,9 @@ class FilterGraphTest {
     private fun buildGraph(): String {
         val workDir = Files.createTempDirectory("vlog_graph_test").toFile()
         return try {
-            val fonts = ExportFonts(File(workDir, "logo.otf"), File(workDir, "time.ttf"))
+            val fonts = ExportFonts(
+                File(workDir, "logo.otf"), File(workDir, "time.ttf"), hitokotoBaselineShiftPt = 20f
+            )
             val audioPlan = AudioPlan(
                 needsTitleSfxInput = true,
                 clipHasRealAudio = listOf(true, false)
@@ -91,6 +93,21 @@ class FilterGraphTest {
         // 素材の絶対時刻のままの窓が残っていない
         assertFalse(graph.contains("between(t,4.000"))
         assertFalse(graph.contains("between(t,6.000"))
+    }
+
+    @Test
+    fun hitokotoLines_areAlignedByBaselineNotByTheirOwnHeight() {
+        val graph = buildGraph()
+        val splitChain = graph.substringAfter("[1:v]").substringBefore("[v0]")
+        val hitokotoLayers = splitChain.split(",drawtext=").filter { "/text_" in it }
+
+        // 1行だけの区間は、中央から（ascentとdescentの差の半分＝20pt）下にベースラインを置く。
+        // text_h（その行の文字の実際の高さ）で中央を出すと、文字の中身で縦位置が変わる
+        assertEquals(2, hitokotoLayers.size)
+        hitokotoLayers.forEach { layer ->
+            assertTrue(layer, layer.contains(":y=h/2+20-ascent"))
+            assertFalse(layer, layer.contains("text_h"))
+        }
     }
 
     @Test
