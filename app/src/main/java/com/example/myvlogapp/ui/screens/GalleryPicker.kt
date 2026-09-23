@@ -274,9 +274,6 @@ private fun VideoTile(
 ) {
     val thumbnail = rememberThumbnail(video.uri, thumbnails)
 
-    // 選択状態を、枠線・チェックマークだけでなくスクリーンリーダーにも伝える
-    val stateDescription = if (isSelected) "選択中" else "未選択"
-
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -289,9 +286,11 @@ private fun VideoTile(
                     Modifier
                 }
             )
+            // 選択状態はselectableが読み上げに伝える（「選択済み」など、端末の言語で読まれる）。
+            // 説明文にも「選択中」を足すと、同じ状態が2回続けて読まれる
             .selectable(selected = isSelected, onClick = onClick)
             .semantics(mergeDescendants = true) {
-                contentDescription = "${video.name}（$stateDescription）"
+                contentDescription = video.name
             }
     ) {
         if (thumbnail != null) {

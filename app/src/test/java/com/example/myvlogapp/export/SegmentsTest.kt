@@ -24,8 +24,8 @@ class SegmentsTest {
     @Test
     fun concatList_quotesPathsAndEscapesSingleQuotes() {
         assertEquals(
-            "ffconcat version 1.0\nfile '/a/seg_0.mkv'\nfile '/a/it'\\''s.mkv'\n",
-            concatListText(listOf("/a/seg_0.mkv", "/a/it's.mkv"))
+            "ffconcat version 1.0\nfile '/a/seg_0.mov'\nfile '/a/it'\\''s.mov'\n",
+            concatListText(listOf("/a/seg_0.mov", "/a/it's.mov"))
         )
     }
 

@@ -157,7 +157,11 @@ internal fun SaveLoadDialog(
                             SavedProjectRow(
                                 project = project,
                                 onLoad = { onLoad(project.id) },
-                                onOverwrite = { pendingOverwrite = project },
+                                // 上書きも保存の一種なので、保存できないとき（タイムラインが空など）は
+                                // 長押しも受け付けない。受け付けると、確認まで進んでから断ることになる
+                                onOverwrite = if (canSave) {
+                                    { pendingOverwrite = project }
+                                } else null,
                                 onDelete = { pendingDelete = project },
                                 modifier = Modifier.animateItem()
                             )
@@ -178,13 +182,15 @@ internal fun SaveLoadDialog(
 /**
  * 保存1件ぶんの行。タップで「読み出す」、長押しで「上書き保存」を兼ねる
  * （上書きは元に戻せないので、呼び出し側で確認ダイアログを挟む）。
+ *
+ * @param onOverwrite いま上書きできないときは null（長押しを受け付けず、読み上げにも出さない）
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SavedProjectRow(
     project: SavedProject,
     onLoad: () -> Unit,
-    onOverwrite: () -> Unit,
+    onOverwrite: (() -> Unit)?,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -195,7 +201,7 @@ private fun SavedProjectRow(
             .fillMaxWidth()
             .combinedClickable(
                 onClickLabel = "読み出す",
-                onLongClickLabel = "上書き保存",
+                onLongClickLabel = if (onOverwrite != null) "上書き保存" else null,
                 onLongClick = onOverwrite,
                 onClick = onLoad
             )

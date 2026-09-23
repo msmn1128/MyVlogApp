@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -132,12 +133,24 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     val events = _events.receiveAsFlow()
 
     /**
-     * 動画を追加中（メタデータを読んでいる間）か。画面に進捗を出し、追加ボタンの連打を止めるのに使う。
-     * 追加は並行して走りうるので、実行中の件数で数える（更新はメインスレッドだけ）。
+     * タイムラインへ動画を読み込んでいる最中か（動画の追加と、起動時の前回の続きの復元）。
+     * 画面に「動画を読み込み中…」を出し、追加・書き出し・一時保存の保存と読み出しを止めるのに使う。
+     * 読み込みは並行して走りうるので、実行中の件数で数える（更新はメインスレッドだけ。[whileLoadingClips]）。
      */
     private var addingCount = 0
     private val _isAdding = MutableStateFlow(false)
     val isAdding: StateFlow<Boolean> = _isAdding.asStateFlow()
+
+    /**
+     * 起動時の復元（[restoreClips]）が、タイムラインを入れ替え終えたか。
+     *
+     * 復元は前回の動画を1本ずつ開いて確かめてから、タイムラインを丸ごと入れ替える。
+     * 確かめている間（クラウド上の動画があると数秒かかる）に追加された動画は、あとから来た
+     * 入れ替えで消えていた（追加済みかの判定も、復元前の空のタイムラインで行われていた）。
+     * 追加はこれを待ってから始める。画面側のボタンも止めてあるが、ギャラリーをすでに
+     * 開いていた場合などは素通りするので、ここで確実に守る。
+     */
+    private val restoreFinished = CompletableDeferred<Unit>()
 
     /**
      * クリップの終わりまで来たら次へ進むか、そこで止まるか。
@@ -245,13 +258,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun restoreClips() {
         playback.setAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
 
-        val restored = ClipStore.restore(getApplication())
-        timeline.replaceAll(restored.clips, record = false)
-
-        // 復元直後を「起点」にする。ここで履歴を消しておかないと、
-        // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
-        timeline.clearHistory()
-        autosave.onRestored(droppedCount = restored.dropped)
+        // 読み込み中の扱いにして、入れ替え終えるまで追加・書き出し・一時保存を止める（[restoreFinished]）。
+        // 待っている追加が動き出すのは、履歴を空にしたあと。先に動くと、追加の「もとに戻す」まで消える
+        val restored = try {
+            whileLoadingClips {
+                ClipStore.restore(getApplication()).also {
+                    timeline.replaceAll(it.clips, record = false)
+                    // 復元直後を「起点」にする。ここで履歴を消しておかないと、
+                    // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
+                    timeline.clearHistory()
+                    autosave.onRestored(droppedCount = it.dropped)
+                }
+            }
+        } finally {
+            restoreFinished.complete(Unit)
+        }
 
         refreshUnreliableShotTimes()
         // 開けない動画を落とした回は権限を解放しない。落とした動画はタイムラインに
@@ -326,12 +347,21 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     fun addClips(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
-            _isAdding.value = ++addingCount > 0
-            try {
+            whileLoadingClips {
+                // 前回の続きを入れ替え終えてから追加する（理由は[restoreFinished]）
+                restoreFinished.await()
                 addClipsNow(uris)
-            } finally {
-                _isAdding.value = --addingCount > 0
             }
+        }
+    }
+
+    /** [block]の間、読み込み中として数える（[isAdding]） */
+    private suspend fun <T> whileLoadingClips(block: suspend () -> T): T {
+        _isAdding.value = ++addingCount > 0
+        try {
+            return block()
+        } finally {
+            _isAdding.value = --addingCount > 0
         }
     }
 

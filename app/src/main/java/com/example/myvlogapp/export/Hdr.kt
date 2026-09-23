@@ -1,11 +1,6 @@
 package com.example.myvlogapp.export
 
-import android.content.Context
-import android.media.MediaExtractor
 import android.media.MediaFormat
-import android.net.Uri
-import android.util.Log
-import com.example.myvlogapp.LOG_TAG
 
 // =====================================================================================
 // HDR（10ビット）で撮った動画を、書き出しでSDRへ変換する。
@@ -30,30 +25,15 @@ internal enum class HdrTransfer(val zscaleName: String) {
 }
 
 /**
- * 動画がHDRか（どの伝達特性か）を、映像トラックの情報から調べる。SDRや読めないときは null。
- * 書き出しの前に全クリップについて呼ぶ（呼び出し側で並列に）。
+ * 映像トラックの情報から、HDRか（どの伝達特性か）を読む。SDRや情報が無いときは null。
+ * 動画を開くのは呼び出し側（ClipProbe.kt。音声の有無と一緒に1回で読む）。
  */
-internal fun probeHdrTransfer(context: Context, uri: Uri): HdrTransfer? {
-    val extractor = MediaExtractor()
-    return try {
-        extractor.setDataSource(context, uri, null)
-        val video = (0 until extractor.trackCount)
-            .map { extractor.getTrackFormat(it) }
-            .firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
-            ?: return null
-        if (!video.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) return null
-        when (video.getInteger(MediaFormat.KEY_COLOR_TRANSFER)) {
-            MediaFormat.COLOR_TRANSFER_ST2084 -> HdrTransfer.PQ
-            MediaFormat.COLOR_TRANSFER_HLG -> HdrTransfer.HLG
-            else -> null
-        }
-    } catch (e: Exception) {
-        // 読めない動画は、書き出し前の確認（requireAllReadable）で先に断っている。ここで失敗したら
-        // SDRとして扱う（変換しないだけで、書き出し自体は止めない）
-        Log.w(LOG_TAG, "HDRかどうかを判定できませんでした（SDRとして扱います）: $uri", e)
-        null
-    } finally {
-        extractor.release()
+internal fun hdrTransferOf(videoFormat: MediaFormat): HdrTransfer? {
+    if (!videoFormat.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) return null
+    return when (videoFormat.getInteger(MediaFormat.KEY_COLOR_TRANSFER)) {
+        MediaFormat.COLOR_TRANSFER_ST2084 -> HdrTransfer.PQ
+        MediaFormat.COLOR_TRANSFER_HLG -> HdrTransfer.HLG
+        else -> null
     }
 }
 

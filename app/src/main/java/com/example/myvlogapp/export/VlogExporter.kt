@@ -3,8 +3,6 @@ package com.example.myvlogapp.export
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
-import android.media.MediaExtractor
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -30,12 +28,11 @@ import com.example.myvlogapp.TITLE_FONT_ASSET
 import com.example.myvlogapp.TITLE_SFX_ASSET
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.data.isReadable
-import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
 
-/** 書き出し前に、各クリップの音声トラックの有無を同時に調べる本数の上限（[AudioPlan.build]） */
-private const val AUDIO_PROBE_PARALLELISM = 4
+/** 書き出し前に、各クリップの動画の中身（[probeClip]）を同時に調べる本数の上限 */
+private const val CLIP_PROBE_PARALLELISM = 4
 
 /**
  * 区切りごとの書き出しで、行ごとのテキストなどのファイル名に入れる番号を区切りごとに変えるための倍率。
@@ -77,20 +74,18 @@ internal class AudioPlan(
 
     companion object {
         /**
-         * 音声トラックの有無はクリップごとに MediaExtractor で開いて調べるため、
-         * 直列に回すと「準備中...」が本数ぶん伸びる。動画追加時のメタデータ
-         * 取得（VlogViewModel.addClips）と同じく、呼び出し元のIOスレッドで並列に調べる。
-         * 本数が多いときに一斉に開かないよう、同時に開く数は[AUDIO_PROBE_PARALLELISM]に絞る。
+         * 書き出しの設定と、調べた各クリップの中身（[probes]、[clips]と同じ並び）から組み立てる。
+         * 実音声を使うのは、ミュートされておらず、音声トラックがあるクリップだけ。
          */
-        suspend fun build(
-            context: Context,
+        fun of(
             clips: List<VlogClip>,
+            probes: List<ClipProbe>,
             includeTitle: Boolean,
             muted: Boolean
         ): AudioPlan = AudioPlan(
             needsTitleSfxInput = includeTitle && !muted,
-            clipHasRealAudio = clips.mapParallel(AUDIO_PROBE_PARALLELISM) { _, clip ->
-                !clip.isSilentInExport(muted) && hasAudioTrack(context, clip.uri)
+            clipHasRealAudio = clips.zip(probes) { clip, probe ->
+                !clip.isSilentInExport(muted) && probe.hasAudioTrack
             }
         )
     }
@@ -172,13 +167,14 @@ object VlogExporter {
                 titleBaselineShiftPt = baselineShiftPt(time, TITLE_DATE_FONT_PT)
             )
 
+            // 各クリップの音声の有無とHDRかを、1本1回ずつ開いて調べる（ClipProbe.kt）。
+            // 直列に回すと「準備中...」が本数ぶん伸びるので並列に。一斉に開かないよう本数は絞る
+            val probes = clips.mapParallel(CLIP_PROBE_PARALLELISM) { _, clip -> probeClip(context, clip.uri) }
             // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ
             // まとめておく。以降はこのAudioPlanを読むだけで、下の処理は分岐を持たない。
-            val audioPlan = AudioPlan.build(context, clips, includeTitle, muted)
-            // HDRで撮ったクリップはSDRへ変換する（Hdr.kt）。音声の有無と同じく、1本ずつ開いて調べる
-            val hdrTransfers = clips.mapParallel(AUDIO_PROBE_PARALLELISM) { _, clip ->
-                probeHdrTransfer(context, clip.uri)
-            }
+            val audioPlan = AudioPlan.of(clips, probes, includeTitle, muted)
+            // HDRで撮ったクリップはSDRへ変換する（Hdr.kt）
+            val hdrTransfers = probes.map { it.hdrTransfer }
             if (hdrTransfers.any { it != null }) {
                 Log.i(LOG_TAG, "HDRのクリップ: ${hdrTransfers.withIndex().filter { it.value != null }.map { "${it.index + 1}本目=${it.value}" }}")
             }
@@ -481,19 +477,5 @@ object VlogExporter {
                 }
             }
         }
-    }
-}
-
-/** 動画に音声トラックが存在するか（[com.example.myvlogapp.waveform.Waveform]のhasAudioと同じ判定方法） */
-private fun hasAudioTrack(context: Context, uri: Uri): Boolean {
-    val extractor = MediaExtractor()
-    return try {
-        extractor.setDataSource(context, uri, null)
-        extractor.findAudioTrackIndex() != null
-    } catch (e: Exception) {
-        Log.w(LOG_TAG, "音声トラックの有無を判定できませんでした（無音として扱います）: $uri", e)
-        false
-    } finally {
-        extractor.release()
     }
 }

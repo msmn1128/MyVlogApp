@@ -18,14 +18,19 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（181件）
+./gradlew testDebugUnitTest        # JVM単体テスト（189件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（12件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
+./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
 ```
+
+**変更のたびに通すのは `testDebugUnitTest lintDebug assembleDebugAndroidTest` の3つ。**
+単体テストとlintは画面操作のテスト（`src/androidTest`）をコンパイルしないので、部品の引数を
+変えてもテスト側の直し忘れに気付けない（v1.5で `EditSection` に引数を足したとき、実際にそうなった）。
 
 成果物と署名の確認:
 
@@ -51,7 +56,7 @@ ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
 ## 全体像
 
 ```
-MainActivity            画面構成（縦1カラム / 横2ペイン）、権限、ダイアログ、ポーリング
+MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイアログ・ポーリング・許可の入口は別ファイル
   └ VlogViewModel       配線と窓口。画面はここだけを見る
       ├ TimelineStore       クリップ一覧・履歴・プレイリスト同期・編集操作の本体
       │    └ EditHistory       もとに戻す / やり直す
@@ -69,7 +74,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 
 | パッケージ | 役割 |
 |---|---|
-| ルート | `VlogModels`(純粋データ) / `VlogConstants`(定数) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity` |
+| ルート | `VlogModels`(純粋データ) / `VlogConstants`(書き出しと共有する数値) / `UiDimens`(画面だけで使う寸法と配分) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity`(画面構成) / `VlogAppDialogs`・`VlogAppSideEffects`・`ActivityLaunchers`(MainActivityから切り出したダイアログ・画面の外の処理・許可とファイル選択の入口。ViewModelを受け取るので`ui/screens/`には置かない) |
 | `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
 | `playback/` | `PlaybackController` とその純粋関数 `playFromWhere` |
 | `edit/` | `TimelineStore`(クリップ一覧の持ち主) `EditHistory`（スナップショット型を問わない汎用の履歴） |
@@ -110,6 +115,9 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
   起動時に、タイムラインにも一時保存にも使われていない権限を解放する。
 - 自動保存（`vlog_clips`）と一時保存（`vlog_projects`）は**別ファイル**。同居させると、
   ひとことを1文字打つたびの自動保存が、無関係な一時保存ごと（100本×20件で約1MB）書き直してしまう。
+- **起動時の復元が終わるまで、動画の追加は待たせる**（`VlogViewModel.restoreFinished`）。復元は前回の動画を
+  1本ずつ開いて確かめてからタイムラインを丸ごと入れ替えるので、その間に追加した動画は入れ替えで消える。
+  復元中は追加中と同じく「読み込み中」として数え（`whileLoadingClips`）、追加・書き出し・一時保存も止める。
 
 ---
 
@@ -137,6 +145,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 | `FilterGraph.kt` | `filter_complex` の組み立て。**下の地雷はほぼすべてここ** |
 | `ExportTextFiles.kt` | drawtextへ渡す行ごとのテキストファイル |
 | `ExportAssets.kt` | フォント・効果音のassetsからの展開 |
+| `ClipProbe.kt` | 書き出し前に、各動画を1回ずつ開いて音声トラックの有無とHDRかを読む |
 | `FFmpegCapabilities.kt` | 使えるエンコーダ・フィルタの判定と出力フォーマット |
 | `FFmpegRunner.kt` | 実行・進捗・中止（実行中セッションを控えるのはここだけ） |
 | `Segments.kt` | 本数が多いときの区切り方と、つなぐファイルの一覧 |
@@ -240,9 +249,11 @@ init から、**書き出しが走っていないときだけ**掃除する。
   特に、素直な実装を採らなかった箇所は理由を必ず残す。このリポジトリのコメントの大半は
   実機で踏んだ不具合の記録になっている。消す前に、その理由がまだ有効か確かめること。
 - **コミットメッセージも日本語で、「何が問題だったか」を書く。** 末尾に
-  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。
+  `Co-Authored-By: Claude <noreply@anthropic.com>`。モデルの版は書かない
+  （版を決まりに書くと、モデルが変わるたびに決まりと実際の表記がずれる）。
 - 数値は `VlogConstants.kt` に集約する。UI側とExporter側で同じ値を使う箇所が多く、
-  散らすと片方だけ変えて見た目が食い違う。
+  散らすと片方だけ変えて見た目が食い違う。ただし画面だけで使う寸法（dp）と画面の配分は
+  `UiDimens.kt` に置く（書き出し側からは使わないので、書き出しと共有する値と混ぜない）。
 - 画面に出す文字列はKotlin側にベタ書き。多言語化の予定が無いため。
   `strings.xml` にあるのはアプリ名（`app_name` = "MyVlog."）だけ。
 - Composeでは、80msごとに変わる再生位置を**コンポジション中で読まない**。
@@ -254,7 +265,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、189件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -268,6 +279,7 @@ JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生�
 | `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
+| `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
 | `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
 | `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
@@ -275,12 +287,13 @@ JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生�
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
+| `WaveformSamplesTest` | 復号した音声を、サンプルごとの時刻で波形の区間へ振り分ける（短い動画で区間が空かない） |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、10件）
+### 画面操作のテスト（`src/androidTest`、12件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
@@ -288,7 +301,7 @@ JVMで動かないため実装を入れている。
 | ファイル | 対象 |
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
-| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の削除は確認を挟む |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
   `InputManager.getInstance` を呼んで全テストが落ちる。

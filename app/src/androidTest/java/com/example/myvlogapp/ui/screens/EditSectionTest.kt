@@ -107,7 +107,8 @@ class EditSectionTest {
                         timelineWeight = 0.6f,
                         editorWeight = 0.4f,
                         isImeVisible = false,
-                        showTimeline = true
+                        showTimeline = true,
+                        timelineFit = TimelineFit()
                     )
                 }
             }

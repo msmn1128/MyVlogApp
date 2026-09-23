@@ -1,10 +1,12 @@
 package com.example.myvlogapp.ui.screens
 
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,22 +58,52 @@ class DialogsTest {
 
     // --- 一時保存 ----------------------------------------------------------------------
 
-    @Test
-    fun deletingASaveAsksForConfirmationFirst() {
-        val deleted = mutableListOf<Long>()
+    private val trip = SavedProject(id = 7L, name = "旅行", savedAt = 0L, clipCount = 3, totalMs = 9_000L)
+    private val overwritten = mutableListOf<Long>()
+    private val deleted = mutableListOf<Long>()
+
+    private fun showSaveLoadDialog(canSave: Boolean) {
         rule.setContent {
             MyVlogAppTheme {
                 SaveLoadDialog(
-                    projects = listOf(SavedProject(id = 7L, name = "旅行", savedAt = 0L, clipCount = 3, totalMs = 9_000L)),
-                    canSave = true,
+                    projects = listOf(trip),
+                    canSave = canSave,
                     onSave = {},
                     onLoad = {},
-                    onOverwrite = {},
+                    onOverwrite = { overwritten += it.id },
                     onDelete = { deleted += it },
                     onDismiss = {}
                 )
             }
         }
+    }
+
+    @Test
+    fun overwritingASaveByLongPressAsksForConfirmationFirst() {
+        showSaveLoadDialog(canSave = true)
+
+        // 上書きは「もとに戻す」で戻せないので、長押しだけでは上書きせずに確認を出す
+        rule.onNodeWithText("旅行").performTouchInput { longClick() }
+        rule.onNodeWithText("上書きしますか").assertExists()
+        rule.runOnIdle { assertEquals(emptyList<Long>(), overwritten) }
+
+        rule.onNodeWithText("上書き").performClick()
+        rule.runOnIdle { assertEquals(listOf(7L), overwritten) }
+    }
+
+    @Test
+    fun longPressDoesNotOfferOverwritingWhenNothingCanBeSaved() {
+        // タイムラインが空などで保存できないときは、上書き（保存の一種）の確認も出さない。
+        // 出すと、確認まで進んでから「保存できる編集内容がありません」と断ることになる
+        showSaveLoadDialog(canSave = false)
+
+        rule.onNodeWithText("旅行").performTouchInput { longClick() }
+        rule.onNodeWithText("上書きしますか").assertDoesNotExist()
+    }
+
+    @Test
+    fun deletingASaveAsksForConfirmationFirst() {
+        showSaveLoadDialog(canSave = true)
 
         // 取り消せないので、押しただけでは消さずに確認を出す
         rule.onNodeWithContentDescription("「旅行」を削除").performClick()
