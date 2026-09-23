@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.myvlogapp.data.ClipStore
+import com.example.myvlogapp.data.ClipStoreProjects
 import com.example.myvlogapp.data.ProjectsController
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
@@ -108,7 +109,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 一時保存（data/ProjectsController.kt） */
     private val projectsController: ProjectsController = ProjectsController(
-        context = application,
+        repository = ClipStoreProjects(application),
         scope = viewModelScope,
         timeline = timeline,
         isAdding = { _isAdding.value },
@@ -173,19 +174,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val waveformJobs = mutableMapOf<String, Job>()
 
-    /** 前回の続きの復元が済んだか。済む前に保存すると、復元前の空の一覧で上書きしてしまう */
-    private var restoreFinished = false
-
-    /**
-     * 復元で開けない動画を落としたので、編集されるまで自動保存しない状態か。
-     *
-     * 開けなかったのが一時的なこと（使っていないアプリの権限をAndroidが自動で取り消した、
-     * SDカードが外れていた、クラウド上のファイルがオフラインだった）はよくある。
-     * 開いただけで復元できた分を書き戻すと、落とした動画の編集内容が保存からも消え、
-     * 権限を許可し直したりSDカードを戻したりしても続きが戻らなくなる。
-     * 何か編集するまでは保存を元のまま残しておき、開き直せば全部戻るようにする。
-     */
-    private var keepStoredUntilEdited = false
+    /** 前回の続き（自動保存）を、いつ書き換えてよいか（AutosavePolicy.kt） */
+    private val autosave = AutosavePolicy()
 
     init {
         // 復元してから保存を始める。順番が逆だと、復元前の空リストを
@@ -196,12 +186,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // 編集内容を自動保存する。collectLatestとdelayの組み合わせで、
             // ひとことを1文字打つたびに書き込むのを避けている。
             timeline.clips.collectLatest { clips ->
-                // 編集は必ず履歴に積まれる（撮影時刻の取り直しは積まれない）ので、
-                // 「もとに戻す」が押せる状態になったことを最初の編集の合図にする
-                if (keepStoredUntilEdited) {
-                    if (!timeline.canUndo.value) return@collectLatest
-                    keepStoredUntilEdited = false
-                }
+                // 開けない動画を落として復元した回は、編集されるまで書き換えない（理由はAutosavePolicy）
+                if (!autosave.shouldSave(canUndo = timeline.canUndo.value)) return@collectLatest
                 delay(AUTOSAVE_DEBOUNCE_MS)
                 // JSONの組み立てとSharedPreferencesの初回読み込み待ちでメインスレッドを塞がない。
                 // DefaultではなくIOなのは、SharedPreferencesの初回アクセスがディスクの
@@ -265,13 +251,12 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 復元直後を「起点」にする。ここで履歴を消しておかないと、
         // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
         timeline.clearHistory()
-        keepStoredUntilEdited = restored.dropped > 0
-        restoreFinished = true
+        autosave.onRestored(droppedCount = restored.dropped)
 
         refreshUnreliableShotTimes()
         // 開けない動画を落とした回は権限を解放しない。落とした動画はタイムラインに
         // 無いので「使われていない」と判断され、一時的に開けなかっただけでも権限を
-        // 手放してしまう（keepStoredUntilEditedと同じ理由）。編集して保存から消えれば、
+        // 手放してしまう（自動保存を保留するのと同じ理由。AutosavePolicy）。編集して保存から消えれば、
         // 次の起動で解放される
         if (restored.dropped == 0) releaseUnusedPermissions()
 
@@ -353,39 +338,15 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun addClipsNow(uris: List<Uri>) {
         val context = getApplication<Application>()
 
-        // タイムラインに既にある動画は追加せずスキップする。
-        // distinct() は uris 自体に同じURIが重複して含まれるケース
-        // （呼び出し元が誤って同じ動画を2回渡した場合など）に対応するため。
-        //
-        // ファイル名+サイズなどの内容ベースでの同一性判定も検討したが、
-        // 偶然ファイル名とサイズが一致する別動画を誤って同一と判定して
-        // 無言でスキップしてしまうリスク（データ消失）があり、URI一致の
-        // 方が安全なためこちらを採用している。「アプリ内ギャラリーと
-        // ファイルピッカーの両方から同じ動画を選ぶと重複が検知できない」
-        // ケースは既知の制約として残す。
-        //
-        // 通知の件数は、引き算で辻褄を合わせるのではなく理由ごとに数える。
-        // uris.size から引いていた頃は、呼び出し元が同じURIを2回渡しただけで
-        // 「1件は追加済みのためスキップしました」と出ていた（タイムラインには無いのに）。
-        val requested = uris.distinct()
-        val existingUris = timeline.current.map { it.uri }.toSet()
-        val newUris = requested.filter { it !in existingUris }
-        val alreadyInTimeline = requested.size - newUris.size
-        if (newUris.isEmpty()) {
-            addSkipMessage(alreadyAdded = alreadyInTimeline, unreadable = 0)?.let(::sendMessage)
-            return
-        }
-        // 上限（MAX_CLIPS）に入りきらない分は、メタデータを読む前に断る。読んでから捨てていた
-        // 頃は、残り5本のところへ50本選ぶと、入らない45本ぶんまで読むのを待たされていた。
-        // 入れる分は選んだ順に先頭から取る（読んだあとで上限を守っていた頃と同じ選び方）。
-        // その中に読めない動画が混ざると入る本数が空きより少なくなるが、それは通知で伝わる。
-        // 並行した追加との兼ね合いは、反映の直前（insertByShotAt）でもう一度守っている
-        val room = (MAX_CLIPS - timeline.current.size).coerceAtLeast(0)
-        val toLoad = newUris.take(room)
-        val overLimitBeforeLoading = newUris.size - toLoad.size
-        if (toLoad.isEmpty()) {
+        // 追加済み・上限超え・読み込むものに振り分ける（決まりはClipAddition.kt）
+        val plan = planAddition(
+            requested = uris,
+            existing = timeline.current.mapTo(HashSet()) { it.uri },
+            currentCount = timeline.current.size
+        )
+        if (plan.toLoad.isEmpty()) {
             addSkipMessage(
-                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = overLimitBeforeLoading
+                alreadyAdded = plan.alreadyAdded, unreadable = 0, overLimit = plan.overLimit
             )?.let(::sendMessage)
             return
         }
@@ -398,7 +359,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 確実にずらした時刻を用意しておく。
         val fallbackBaseMillis = System.currentTimeMillis()
         val loaded = withContext(Dispatchers.IO) {
-            toLoad.mapParallel(METADATA_PARALLELISM) { offset, uri ->
+            plan.toLoad.mapParallel(METADATA_PARALLELISM) { offset, uri ->
                 val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                 VlogClip(
                     id = nextClipId(),
@@ -420,9 +381,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
         addSkipMessage(
             // alreadyPresent は、メタデータの取得中に別の追加が先に入れてしまった分
-            alreadyAdded = alreadyInTimeline + result.alreadyPresent,
+            alreadyAdded = plan.alreadyAdded + result.alreadyPresent,
             unreadable = unreadable.size,
-            overLimit = overLimitBeforeLoading + result.overLimit
+            overLimit = plan.overLimit + result.overLimit
         )?.let(::sendMessage)
     }
 
@@ -652,10 +613,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 自動保存の待ち（AUTOSAVE_DEBOUNCE_MS）はviewModelScopeごと取り消されるので、
         // 最後の編集をここで書いておく。タイムラインが空だと戻るボタンでアプリが終わるため、
         // 全削除してすぐ閉じると削除が保存されず、次の起動で全部戻ってきていた。
-        // apply()で書くのでメインスレッドは塞がない。
-        // canUndoも見るのは、編集した直後に閉じると、自動保存側がその合図を受け取って
-        // keepStoredUntilEditedを下ろす前にここへ来ることがあるため
-        if (restoreFinished && (!keepStoredUntilEdited || timeline.canUndo.value)) {
+        // apply()で書くのでメインスレッドは塞がない。書いてよいかの判断はAutosavePolicy
+        if (autosave.shouldSaveOnExit(canUndo = timeline.canUndo.value)) {
             ClipStore.save(getApplication(), timeline.current)
         }
         // 書き出し自体は VlogExportService で継続させる（ここではキャンセルしない）。

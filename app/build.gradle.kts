@@ -159,6 +159,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
     testImplementation(libs.org.json)
+    testImplementation(libs.kotlinx.coroutines.test)
 
     // --- 画面操作のテスト（src/androidTest）。部品（Composable）を偽物の状態・操作で組み立てて確かめる ---
     androidTestImplementation(platform(libs.androidx.compose.bom))

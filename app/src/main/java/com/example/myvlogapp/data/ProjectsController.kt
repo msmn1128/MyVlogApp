@@ -1,6 +1,5 @@
 package com.example.myvlogapp.data
 
-import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,13 +20,14 @@ import com.example.myvlogapp.projectUnreadableMessage
 // =====================================================================================
 
 /**
+ * @param repository 保存先。本番は[ClipStoreProjects]、テストでは偽物を渡す（理由は[ProjectRepository]）
  * @param scope 呼び出し元（VlogViewModel）のスコープ。画面が消えたら保存処理も止まる
  * @param isAdding 動画を読み込み中か。読み込み中のタイムラインは途中の状態なので、
  *   保存も読み出しもさせない（呼ぶたびに最新を返すこと）
  * @param sendMessage 画面へのお知らせ（Toast）
  */
 internal class ProjectsController(
-    private val context: Context,
+    private val repository: ProjectRepository,
     private val scope: CoroutineScope,
     private val timeline: TimelineStore,
     private val isAdding: () -> Boolean,
@@ -39,7 +39,7 @@ internal class ProjectsController(
 
     /** 保存一覧を開くたびに呼ぶ。ここでしか変わらないので常時監視はしない */
     fun refresh() {
-        scope.launch { _projects.value = ClipStore.listProjects(context) }
+        scope.launch { _projects.value = repository.list() }
     }
 
     /**
@@ -66,8 +66,8 @@ internal class ProjectsController(
         scope.launch {
             val label = name.trim().ifBlank { formatSavedAt(System.currentTimeMillis()) }
             // 同名があれば連番が付く。メッセージには実際に付いた名前を出す
-            val savedName = ClipStore.saveProject(context, label, clipsToSave)
-            _projects.value = ClipStore.listProjects(context)
+            val savedName = repository.save(label, clipsToSave)
+            _projects.value = repository.list()
             sendMessage(
                 if (savedName != null) "「$savedName」を保存しました"
                 else "保存は${ClipStore.MAX_PROJECTS}件までです。不要なものを削除してください"
@@ -89,8 +89,8 @@ internal class ProjectsController(
         }
 
         scope.launch {
-            val overwritten = ClipStore.overwriteProject(context, id, clipsToSave)
-            _projects.value = ClipStore.listProjects(context)
+            val overwritten = repository.overwrite(id, clipsToSave)
+            _projects.value = repository.list()
             sendMessage(
                 if (overwritten) "「$name」に上書きしました"
                 else "この保存は上書きできませんでした"
@@ -111,7 +111,7 @@ internal class ProjectsController(
     fun load(id: Long, onLoaded: () -> Unit) {
         if (refuseWhileAdding()) return
         scope.launch {
-            val restored = ClipStore.loadProject(context, id)
+            val restored = repository.load(id)
             if (restored == null) {
                 sendMessage("この保存は読み出せませんでした")
                 return@launch
@@ -135,8 +135,8 @@ internal class ProjectsController(
 
     fun delete(id: Long) {
         scope.launch {
-            ClipStore.deleteProject(context, id)
-            _projects.value = ClipStore.listProjects(context)
+            repository.delete(id)
+            _projects.value = repository.list()
         }
     }
 }
