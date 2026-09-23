@@ -42,7 +42,7 @@ internal fun probeClip(context: Context, uri: Uri): ClipProbe {
             hdrTransfer = video?.let(::hdrTransferOf)
         )
     } catch (e: Exception) {
-        Log.w(LOG_TAG, "動画の中身を調べられませんでした（音声なし・SDRとして扱います）: $uri", e)
+        Log.w(LOG_TAG, "動画の中身を調べられませんでした（音声なし・SDRとして扱います）", e)
         ClipProbe(hasAudioTrack = false, hdrTransfer = null)
     } finally {
         extractor.release()

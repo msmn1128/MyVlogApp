@@ -63,7 +63,8 @@ private fun readVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long):
             ?: guessShotAt(context, uri)
         val shotAtMillis = shotAt?.millis ?: fallbackMillis
         // 撮影時刻がどこから取れたか。「時刻がおかしい」という報告の原因を追うために残す。
-        Log.i(LOG_TAG, "撮影時刻の取得元: ${shotAt?.source ?: "なし（追加時刻で代用）"} / $uri")
+        // URIは出さない（ファイル選択のURIはファイルのパスを含み、端末のログに利用者のファイル名が残るため）
+        Log.i(LOG_TAG, "撮影時刻の取得元: ${shotAt?.source ?: "なし（追加時刻で代用）"}")
 
         VideoMeta(
             timeText = formatTime(shotAtMillis),
@@ -75,7 +76,7 @@ private fun readVideoMetadata(context: Context, uri: Uri, fallbackMillis: Long):
     } catch (e: Exception) {
         // メタデータが1件も取れない動画（壊れたファイル、非対応コーデックなど）。
         // 「取得できなかった」こと自体は空リストと違って原因を追いたいことが多いのでログに残す。
-        Log.w(LOG_TAG, "動画のメタデータを取得できませんでした: $uri", e)
+        Log.w(LOG_TAG, "動画のメタデータを取得できませんでした", e)
         VideoMeta(
             formatTime(fallbackMillis), formatDate(fallbackMillis), fallbackMillis,
             shotAtReliable = false, durationMs = 0L
