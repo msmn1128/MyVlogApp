@@ -39,6 +39,9 @@ android {
         targetSdk = 37
         versionCode = 3
         versionName = "1.2"
+
+        // 画面操作のテスト（src/androidTest）。./gradlew connectedDebugAndroidTest で動かす
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -156,4 +159,14 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
     testImplementation(libs.org.json)
+
+    // --- 画面操作のテスト（src/androidTest）。部品（Composable）を偽物の状態・操作で組み立てて確かめる ---
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    // ui-test-junit4 が引き込む古い版（3.5.0）は Android 17 で全テストが落ちるので、新しい版に上げる
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    // テスト用の空のActivity（ComponentActivity）をマニフェストへ足す。debugにしか入らない
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

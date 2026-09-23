@@ -136,4 +136,9 @@ object VlogIcons {
                 "21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"
         )
     }
+
+    /** 動画が見つからない（移動・削除された、権限が取り消された）クリップの目印 */
+    val Warning: ImageVector by lazy {
+        materialIcon("Warning", "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z")
+    }
 }

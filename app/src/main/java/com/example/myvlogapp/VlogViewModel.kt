@@ -18,7 +18,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,6 +31,7 @@ import com.example.myvlogapp.data.ClipStore
 import com.example.myvlogapp.data.ProjectsController
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
+import com.example.myvlogapp.data.isReadable
 import com.example.myvlogapp.edit.TimelineStore
 import com.example.myvlogapp.export.ExportState
 import com.example.myvlogapp.export.ExportStatus
@@ -52,6 +57,9 @@ private const val AUTOSAVE_DEBOUNCE_MS = 500L
  * ここで絞るのは、選んだ本数ぶんのスレッドがロック待ちで塞がってしまわないようにするため。
  */
 private const val METADATA_PARALLELISM = 4
+
+/** 動画が開けるかを確かめ直すとき（[VlogViewModel.refreshMissingClips]）に同時に開く本数 */
+private const val MISSING_CHECK_PARALLELISM = 8
 
 /**
  * 画面状態と書き出し処理の保持先。
@@ -80,6 +88,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         clips = { timeline.current },
         onPlaybackError = {
             sendMessage("この動画を再生できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
+            refreshMissingClips()
         }
     )
 
@@ -221,6 +230,17 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // VlogExportService からの完了・失敗通知をUIのイベントとして中継する
         viewModelScope.launch {
             ExportStatus.events.collect { _events.send(it) }
+        }
+
+        // 書き出しが終わったら、動画が開けるかを確かめ直す。開けない動画が混ざっていて
+        // 書き出しが断られたとき、どのタイルを外せばよいかを目印で示すため
+        viewModelScope.launch {
+            ExportStatus.state
+                .map { it is ExportState.Running }
+                .distinctUntilChanged()
+                .drop(1)
+                .filter { running -> !running }
+                .collect { refreshMissingClips() }
         }
 
         // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
@@ -404,6 +424,37 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             unreadable = unreadable.size,
             overLimit = overLimitBeforeLoading + result.overLimit
         )?.let(::sendMessage)
+    }
+
+    // --- 開けなくなった動画 ----------------------------------------------------------------
+
+    /**
+     * 動画を開けなくなったクリップのid（移動・削除された、権限が取り消されたなど）。
+     * タイムラインのタイルに目印を出すのに使う。起動時の復元では開けない動画は落とすが、
+     * 使っている間に消された動画はタイムラインに残ったままで、どれが消えたのか見分けられなかった。
+     */
+    private val _missingClipIds = MutableStateFlow<Set<Long>>(emptySet())
+    val missingClipIds: StateFlow<Set<Long>> = _missingClipIds.asStateFlow()
+
+    private var missingCheckJob: Job? = null
+
+    /**
+     * タイムラインの全クリップについて、動画が今も開けるかを確かめ直す。
+     * アプリが前面に戻ったとき・再生できなかったとき・書き出しが終わったときに呼ぶ。
+     * 1本ずつ実際に開くので、[MISSING_CHECK_PARALLELISM]本ずつ並列に行う。
+     */
+    fun refreshMissingClips() {
+        missingCheckJob?.cancel()
+        val context = getApplication<Application>()
+        val targets = timeline.current
+        missingCheckJob = viewModelScope.launch {
+            val readable = withContext(Dispatchers.IO) {
+                targets.mapParallel(MISSING_CHECK_PARALLELISM) { _, clip -> isReadable(context, clip.uri) }
+            }
+            _missingClipIds.value = targets.zip(readable)
+                .filterNot { (_, ok) -> ok }
+                .mapTo(HashSet()) { (clip, _) -> clip.id }
+        }
     }
 
     // --- 一時保存（実処理は ProjectsController） ------------------------------------------

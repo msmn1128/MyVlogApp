@@ -87,10 +87,22 @@ internal fun videoEncodeArgs(): Array<String> = capabilities.let { caps ->
     arrayOf(
         "-c:v", caps.videoEncoder,
         *caps.extraVideoArgs.toTypedArray(),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS", "-b:a", AUDIO_BITRATE
+        "-pix_fmt", "yuv420p"
     )
 }
+
+/** 仕上がりの音声（AAC）の引数 */
+internal fun aacAudioArgs(): Array<String> = arrayOf(
+    "-c:a", "aac", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS", "-b:a", AUDIO_BITRATE
+)
+
+/**
+ * 区切りごとの書き出し（Segments.kt）の中間ファイルの音声（無圧縮のPCM）の引数。
+ * AACにしないのは、つなぐと区切りごとにエンコーダの遅延ぶん音がずれていくため
+ */
+internal fun pcmAudioArgs(): Array<String> = arrayOf(
+    "-c:a", "pcm_s16le", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS"
+)
 
 internal fun requireDrawtext() {
     if (!capabilities.hasDrawtext) {

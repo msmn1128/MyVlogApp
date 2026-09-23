@@ -21,6 +21,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -246,6 +252,26 @@ fun WaveformTrimmer(
             }
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            // 読み上げでは波形全体を1つの項目にし、状態を説明文で伝え、動かす操作をアクションとして出す
+            // （理由はWaveformTrimmerAccessibility.kt）。中の注記（読み込み中など）も説明文に含める。
+            // 動かしたあとの状態を読み上げてもらうため、変化を知らせる領域（liveRegion）にする
+            .clearAndSetSemantics {
+                contentDescription = trimmerDescription(
+                    startMs, endMs, texts,
+                    note = when {
+                        isLoading -> "波形を読み込み中"
+                        waveform == null -> "波形を取得できませんでした"
+                        !waveform.hasAudio -> "音声なし"
+                        else -> null
+                    }
+                )
+                liveRegion = LiveRegionMode.Polite
+                if (enabled) {
+                    customActions = trimmerActions(startMs, endMs, durationMs, texts, callbacks)
+                } else {
+                    disabled()
+                }
+            }
             // clipIdもキーに入れる。lockedViewportStateと端への張り付きフラグは
             // remember(clipId)でクリップごとに作り直されるのに、ここがenabledだけで
             // 作り直されないと、別のクリップを選んだあとも最初のクリップの古い状態へ

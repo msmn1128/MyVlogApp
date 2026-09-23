@@ -18,7 +18,10 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（147件）
+./gradlew testDebugUnitTest        # JVM単体テスト（151件）
+./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+                                   # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
+                                   # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -94,8 +97,9 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
   撮影時刻の取り直し時の突き合わせに使う。時刻ベースにしないこと。
 - 解像度は持たない。書き出しは `scale`+`pad` で1920x1080に入れるだけで入力サイズが要らず、
   プレビューもPlayerViewが動画から直接読む。
-- タイムライン上限は `MAX_CLIPS = 100`。全クリップを1回のFFmpeg呼び出しに同時入力するため、
-  メモリが本数に比例する（実測: 4GBエミュレータ・1080p、100本で約2.3GB、デコード既定スレッドだと約5.1GBで強制終了）。
+- タイムライン上限は `MAX_CLIPS = 100`。以前はメモリが本数に比例するのが理由だったが、10本を超えると
+  区切りごとに書き出すようになり（下の「書き出しパイプライン」）、メモリは本数によらず一定になった。
+  上限は、書き出し時間・中間ファイルの容量・タイムラインの操作性のために据え置いている。
 
 ### 永続化
 
@@ -114,6 +118,17 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 タイトルカードと全クリップを**仮想タイムライン上に並べ、1回のFFmpeg呼び出しで結合・エンコード**する。
 クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため。
 
+ただし**10本（`SEGMENT_MAX_CLIPS`）を超えるときは、10本ずつの区切りに分けて書き出してからつなぐ**
+（`Segments.kt`）。全入力を同時に開くとメモリが本数に比例して増え続け、実測（4GBエミュレータ・4K）で
+100本は強制終了された。区切りごとなら4K 100本でもピーク約0.8GBで一定。
+- 区切りは `.mov` に、映像はH.264・音声は**PCM**で書く。最後に映像は `-c:v copy` でつなぎ（再圧縮しない）、
+  音声だけAACに1回変換する。区切りごとにAACにすると、区切りの頭にエンコーダ遅延ぶんの無音が入り、
+  つなぐたびに音がずれていく。
+- 区切りの入れ物に **`.mkv` は使えない**。Matroskaは冒頭に映像の設定情報（SPS/PPS）を書く必要があるが、
+  `h264_mediacodec` は最初のコマを圧縮するまでそれを出さず、書き始めで失敗する。
+- 区切りのつなぎ目で音と映像がずれないことは、エミュレータで「光る＋鳴る」テスト動画25本（3区切り）を
+  書き出して確かめてある（全クリップで元の動画と同じ差、+20ms）。
+
 `VlogExporter.export()` が持つのは手順だけで、各工程は同じパッケージの別ファイルにある。
 
 | ファイル | 役割 |
@@ -124,6 +139,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 | `ExportAssets.kt` | フォント・効果音のassetsからの展開 |
 | `FFmpegCapabilities.kt` | 使えるエンコーダ・フィルタの判定と出力フォーマット |
 | `FFmpegRunner.kt` | 実行・進捗・中止（実行中セッションを控えるのはここだけ） |
+| `Segments.kt` | 本数が多いときの区切り方と、つなぐファイルの一覧 |
 | `GalleryOutput.kt` | MediaStoreへの保存、ファイル名の連番 |
 | `VlogExportService.kt` / `ExportStatus.kt` | フォアグラウンドサービスと、プロセス共有の進行状態 |
 
@@ -231,7 +247,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、147件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
+JVM単体テスト（`src/test`）のみ、151件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
 
 | ファイル | 対象 |
 |---|---|
@@ -244,6 +260,7 @@ JVM単体テスト（`src/test`）のみ、147件。対象は純粋関数と、�
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
 | `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
+| `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
@@ -251,8 +268,20 @@ JVM単体テスト（`src/test`）のみ、147件。対象は純粋関数と、�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-**instrumented テストと Compose UI テストは無い。** 再生・IME・書き出しの実挙動は
-テストで守られていないので、この3つを触ったら実機で確認すること。
+### 画面操作のテスト（`src/androidTest`、10件）
+
+部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
+組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
+
+| ファイル | 対象 |
+|---|---|
+| `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の削除は確認を挟む |
+
+- `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
+  `InputManager.getInstance` を呼んで全テストが落ちる。
+- 再生（ExoPlayer）・キーボード・書き出し（FFmpeg）の実挙動は、ここでも守られていない。
+  この3つを触ったら、エミュレータか実機で確認すること。
 
 ---
 
@@ -308,7 +337,7 @@ JVMで動かないため実装を入れている。
 
 ## 未解決 / 今後
 
-- instrumented テストと Compose UI テストが無いのは変わっていない（「テスト」節を参照）。
+- 画面操作のテストは部品単位だけで、画面全体（MainActivity＋ViewModel）を通したものは無い（「テスト」節を参照）。
   `ProjectsController` / `VlogViewModel` は JVM 単体テストで1件も守られていないので、
   触ったら実機で確認すること。`TimelineStore` は再生側を `edit/TimelinePlayback`
   （実装は `PlaybackController`）越しに受け取るようにしたので、偽物を渡してテストできる

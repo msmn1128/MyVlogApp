@@ -32,7 +32,9 @@ class TimelineState(
     /** 値が変わったらタイル一覧を作り直す合図（理由は[com.example.myvlogapp.edit.TimelineStore.replacementCount]） */
     val replacementCount: StateFlow<Int>,
     /** ひとこと入力中は再生させないために、入力欄が見る */
-    val isPlaying: StateFlow<Boolean>
+    val isPlaying: StateFlow<Boolean>,
+    /** 動画を開けなくなったクリップのid。タイルに目印を出す（[com.example.myvlogapp.VlogViewModel.refreshMissingClips]） */
+    val missingClipIds: StateFlow<Set<Long>>
 )
 
 /**

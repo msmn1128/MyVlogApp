@@ -150,6 +150,7 @@ private fun TimelinePane(
     val autoAdvance by state.autoAdvance.collectAsStateWithLifecycle()
     val timelineMuted by state.timelineMuted.collectAsStateWithLifecycle()
     val replacementCount by state.replacementCount.collectAsStateWithLifecycle()
+    val missingClipIds by state.missingClipIds.collectAsStateWithLifecycle()
     // 波形はここでは読まない。1本届くたびにこのPane全体が再コンポーズされてしまうので、
     // 実際に使う[TrimSection]の中でだけcollectする。取得を始めるのも
     // ViewModel側（選択の変化を見ている）に移してある。
@@ -209,6 +210,7 @@ private fun TimelinePane(
                         ClipTile(
                             clip = clip,
                             isSelected = index == selectedIndex,
+                            isMissing = clip.id in missingClipIds,
                             onClick = { actions.select(index) },
                             onLongClick = { actions.toggleClipMute(clip.id) },
                             // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
@@ -440,12 +442,17 @@ private fun TimelineToolbar(
 /**
  * タイムラインのクリップ1件ぶんのタイル。[TimelinePane] から切り出したもの。
  * タップで選択、長押しでそのクリップのミュートを切り替える。
+ *
+ * @param isMissing 動画を開けなくなった（移動・削除された、権限が取り消された）か。
+ *   枠を赤くして警告の目印を出す。再生と書き出しでも知らせるが、タイルを見ただけで
+ *   どれを外せばよいか分かるようにするため
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClipTile(
+internal fun ClipTile(
     clip: VlogClip,
     isSelected: Boolean,
+    isMissing: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -457,8 +464,11 @@ private fun ClipTile(
         label = "clipTileContainerColor"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isSelected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.outlineVariant,
+        targetValue = when {
+            isMissing -> MaterialTheme.colorScheme.error
+            isSelected -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.outlineVariant
+        },
         label = "clipTileBorderColor"
     )
     Surface(
@@ -477,7 +487,7 @@ private fun ClipTile(
         color = containerColor,
         // 未選択にも枠を付ける。カードと明度が近く、無地だと
         // どこまでが1クリップなのか輪郭が見えないため
-        border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor)
+        border = BorderStroke(if (isSelected || isMissing) 2.dp else 1.dp, borderColor)
     ) {
         Column(
             modifier = Modifier.padding(6.dp),
@@ -537,6 +547,18 @@ private fun ClipTile(
                         VlogIcons.VolumeOff,
                         contentDescription = "ミュート中",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+                AnimatedVisibility(
+                    visible = isMissing,
+                    enter = fadeIn() + expandHorizontally(),
+                    exit = fadeOut() + shrinkHorizontally()
+                ) {
+                    Icon(
+                        VlogIcons.Warning,
+                        contentDescription = "動画が見つかりません（移動・削除されたか、アクセス権限が取り消されています）",
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(12.dp)
                     )
                 }

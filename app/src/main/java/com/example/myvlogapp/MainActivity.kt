@@ -331,7 +331,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             timelineMuted = viewModel.timelineMuted,
             selectedWaveform = viewModel.selectedWaveform,
             replacementCount = viewModel.timelineReplacementCount,
-            isPlaying = viewModel.isPlaying
+            isPlaying = viewModel.isPlaying,
+            missingClipIds = viewModel.missingClipIds
         )
     }
     val timelineActions = remember(viewModel) {
@@ -507,11 +508,16 @@ private fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>) 
         activity?.moveTaskToBack(true)
     }
 
-    // アプリが背面に回ったら再生を止める
+    // アプリが背面に回ったら再生を止める。前面に戻ったら、動画が開けるかを確かめ直す
+    // （背面にいる間にギャラリーなど別のアプリで動画を消された、権限を取り消された場合に気付くため）
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.pause()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.pause()
+                Lifecycle.Event.ON_START -> viewModel.refreshMissingClips()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
