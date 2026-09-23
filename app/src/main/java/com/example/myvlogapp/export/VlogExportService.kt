@@ -103,6 +103,19 @@ class VlogExportService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var exportJob: Job? = null
 
+    /**
+     * 最後に受け取った起動要求のID。書き出しを終えて畳むときに[stopSelf]へ渡す。
+     *
+     * 引数なしのstopSelf()は、その直後に届いた新しい書き出しの起動要求があっても
+     * サービスごと止めてしまい、始まったばかりの書き出しをonDestroyが中止してしまう。
+     * IDを渡せば、それより新しい要求が届いていたときは止まらない。
+     * 書き出し本体の「この書き出しのID」ではなく「最後に受け取ったID」なのは、
+     * 中止の要求（ACTION_CANCEL）もIDを進めるため。書き出しのIDで止めようとすると、
+     * 中止したあとに止まらず、進行中の通知が残り続ける。
+     */
+    @Volatile
+    private var latestStartId = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -111,6 +124,7 @@ class VlogExportService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         if (intent?.action == ACTION_CANCEL) {
             VlogExporter.cancel()
             // 実行中なら、中止されたジョブのfinallyがstopSelfまで面倒を見る。
@@ -166,7 +180,7 @@ class VlogExportService : Service() {
                 ExportStatus.setIdle()
                 // stopForeground(true)相当。onDestroyに任せず自分で止める
                 // （サービスが仕事を終えたのに通知が残り続けるのを防ぐ）
-                stopSelf()
+                stopSelf(latestStartId)
             }
         }
         return START_NOT_STICKY
