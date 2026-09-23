@@ -126,8 +126,13 @@ internal fun SaveLoadDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
+                // 保存したら閉じる。開いたままだと続けて押せてしまい、同じ内容が
+                // 「名前」「名前 (1)」の2件になる。保存できたかはToastで知らせる
                 FilledTonalButton(
-                    onClick = { onSave(name) },
+                    onClick = {
+                        onSave(name)
+                        onDismiss()
+                    },
                     enabled = canSave,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("この内容を保存") }

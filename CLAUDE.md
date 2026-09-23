@@ -18,9 +18,9 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（189件）
+./gradlew testDebugUnitTest        # JVM単体テスト（192件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（12件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（13件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -265,7 +265,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、189件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、192件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -276,7 +276,7 @@ JVM単体テスト（`src/test`）、189件。対象は純粋関数と、再生�
 | `ProjectSpecTest` | 一時保存の読み出し可否、保存領域の移行 |
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
-| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
+| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo、変わらないトリムは履歴に積まない、入れ替えのundoでタイル一覧を作り直す |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
 | `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
@@ -293,7 +293,7 @@ JVM単体テスト（`src/test`）、189件。対象は純粋関数と、再生�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、12件）
+### 画面操作のテスト（`src/androidTest`、13件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
@@ -301,7 +301,7 @@ JVMで動かないため実装を入れている。
 | ファイル | 対象 |
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
-| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない |
+| `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
   `InputManager.getInstance` を呼んで全テストが落ちる。

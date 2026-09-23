@@ -169,6 +169,46 @@ class TimelineStoreTest {
         assertFalse(store.canUndo.value)
     }
 
+    // --- トリミング -------------------------------------------------------------------
+
+    @Test
+    fun unchangedTrimDoesNotRecordHistory() {
+        val store = storeWith(testClip(id = 1, startMs = 1_000L, endMs = 3_000L))
+
+        // つまみを端の限界で止めたまま動かしたとき・同じ長さのプリセットを押したとき
+        store.updateTrim(1_000L, 3_000L)
+        store.applyTrimPreset(2_000L)
+
+        assertFalse(store.canUndo.value)
+    }
+
+    // --- 一覧の入れ替え ---------------------------------------------------------------
+
+    @Test
+    fun undoingALoadOfTheSameVideosStillRebuildsTheTiles() {
+        val clip = testClip(id = 1)
+        val store = storeWith(clip)
+        // 同じ動画だけの一時保存を読み出す（idは新しく振られる）
+        store.replaceAll(listOf(clip.copy(id = 2)), record = true)
+        val before = store.replacementCount.value
+
+        store.undo()
+
+        assertEquals(1L, selected.id)
+        assertEquals(before + 1, store.replacementCount.value)
+    }
+
+    @Test
+    fun undoingATextEditDoesNotRebuildTheTiles() {
+        val store = storeWith(testClip(id = 1))
+        store.updateText("旅行")
+        val before = store.replacementCount.value
+
+        store.undo()
+
+        assertEquals(before, store.replacementCount.value)
+    }
+
     // --- 撮影時刻の取り直し -----------------------------------------------------------
 
     @Test
