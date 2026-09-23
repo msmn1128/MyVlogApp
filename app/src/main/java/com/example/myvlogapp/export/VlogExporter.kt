@@ -35,6 +35,12 @@ class VlogExportException(message: String) : Exception(message)
 /** 書き出し前に、各クリップの音声トラックの有無を同時に調べる本数の上限（[AudioPlan.build]） */
 private const val AUDIO_PROBE_PARALLELISM = 4
 
+/**
+ * 区切りごとの書き出しで、行ごとのテキストなどのファイル名に入れる番号を区切りごとに変えるための倍率。
+ * 書き出しの番号（開始時刻のミリ秒）にこれを掛けて区切りの番号を足す（区切りは最大[MAX_CLIPS]個）
+ */
+private const val SEGMENT_ID_SCALE = 1000L
+
 /** 書き出し中の中間ファイル置き場（cacheDir以下） */
 private const val WORK_DIRECTORY = "vlog_work"
 
@@ -54,6 +60,18 @@ internal class AudioPlan(
     val clipInputOffset: Int get() = if (needsTitleSfxInput) 1 else 0
 
     fun hasRealAudio(clipIndex: Int): Boolean = clipHasRealAudio[clipIndex]
+
+    /**
+     * 区切りごとの書き出し（Segments.kt）で、[clipRange]のクリップだけを受け持つ計画。
+     * 区切りの中では添字が0から振り直されるので、各クリップの有無もその範囲だけに切り出す。
+     *
+     * @param includesTitle この区切りにタイトルカードが入るか（入るのは最初の区切りだけ）。
+     *   タイトル効果音の-iは、入る区切りでだけ足す
+     */
+    fun forSegment(clipRange: IntRange, includesTitle: Boolean) = AudioPlan(
+        needsTitleSfxInput = needsTitleSfxInput && includesTitle,
+        clipHasRealAudio = clipHasRealAudio.slice(clipRange)
+    )
 
     companion object {
         /**
@@ -136,7 +154,8 @@ object VlogExporter {
         // 書き出しを始めた現在時刻を、MP4のメタデータとギャラリーの撮影日時の両方へ入れる。
         val createdAtMillis = id
         val mergedFile = File(workDir, "merged_$id.mp4")
-        val textFiles = mutableListOf<File>()
+        // 行ごとのテキスト・フィルタグラフ・区切りの中間ファイルなど、終わったら消すもの
+        val workFiles = mutableListOf<File>()
 
         try {
             requireDrawtext()
@@ -164,67 +183,150 @@ object VlogExporter {
             // フォールバックはTitleCreationDialog側で解決済み）。ファイル名はこの文言とは無関係に、
             // 書き出しを始めた現在の日付から作る。
             val titleText = customTitleText ?: clips.first().dateText
+            val totalDurationMs = passDurationMs(clips, includeTitle)
+            val creationTime = arrayOf("-metadata", "creation_time=${creationTimeMetadata(createdAtMillis)}")
 
-            // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
-            // 1回のFFmpeg呼び出しで結合・エンコードする。
-            //
-            // クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため、
-            // 生の素材から直接1回だけエンコードする。30fps変換も結合後の連続した1本の
-            // 映像に対して1回で完結する。
-            val filterGraph = buildFilterGraph(
-                clips, fonts, titleText, titleSfxDelayMs(), workDir, id, textFiles,
-                includeTitle, audioPlan
-            )
-            // フィルタグラフは引数で渡さずファイルで渡す。本数が多いとグラフが数百KBに
-            // なりうる（1クリップ約0.7〜1.5KB。100本で約70KB）。ファイルなら
-            // 引数の長さに縛られず、コマンドのログも肥大しない。
-            val graphFile = File(workDir, "graph_$id.txt")
-                .apply { writeText(filterGraph, Charsets.UTF_8) }
-                .also { textFiles += it }
-            Log.d(
-                LOG_TAG,
-                "filter_complex (${filterGraph.length}文字): ${filterGraph.take(COMMAND_LOG_MAX_CHARS)}"
-            )
-            val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
-                    clips.sumOf { it.trimmedDurationMs }
-
-            // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
-            // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
-            // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
-            // 要求しない生成フィルタなので、追加の-iは不要。
-            //
-            // 組み立てるのはFFmpegを走らせる直前。getSafParameterForReadは呼んだ時点で
-            // 動画を開き、FFmpegが閉じるまで持ち続ける。フィルタグラフを組んでいる途中で
-            // 中止・失敗すると誰も閉じず、書き出しのたびに最大で本数ぶん開きっぱなしになる。
-            val inputs = buildList {
-                titleSfx?.let { addAll(listOf("-i", it.absolutePath)) }
-                clips.forEach { clip ->
-                    addAll(clipInputArgs(clip, FFmpegKitConfig.getSafParameterForRead(context, clip.uri)))
+            val segments = planSegments(clips.size)
+            if (segments.size == 1) {
+                // タイトルカード＋全クリップを、仮想タイムライン上に隙間なく並べて
+                // 1回のFFmpeg呼び出しで結合・エンコードする。
+                //
+                // クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため、
+                // 生の素材から直接1回だけエンコードする。30fps変換も結合後の連続した1本の
+                // 映像に対して1回で完結する。
+                encodePass(
+                    context, clips, fonts, titleText, includeTitle, audioPlan, titleSfx,
+                    workDir, passId = id, workFiles = workFiles, output = mergedFile,
+                    outputArgs = aacAudioArgs() + creationTime,
+                    progressOffsetMs = 0L, overallDurationMs = totalDurationMs, onProgress = onProgress
+                )
+            } else {
+                // 本数が多いときは区切りごとに書き出してからつなぐ（理由はSegments.kt）。
+                // 映像の圧縮はここでの1回だけで、つなぐときは再圧縮しない
+                var doneMs = 0L
+                val segmentFiles = segments.mapIndexed { index, range ->
+                    coroutineContext.ensureActive()
+                    val segmentClips = clips.slice(range)
+                    val withTitle = includeTitle && index == 0
+                    // 中間ファイルは.mov。Matroska（.mkv）はファイルの冒頭に映像の設定情報（SPS/PPS）を
+                    // 書く必要があるが、h264_mediacodecは最初のコマを圧縮するまでそれを出さないため、
+                    // 書き始めで失敗する（エミュレータで確認）。.movは目次を最後に書くので間に合い、PCMも入る
+                    val file = File(workDir, "segment_${id}_$index.mov").also { workFiles += it }
+                    encodePass(
+                        context, segmentClips, fonts, titleText, withTitle,
+                        audioPlan.forSegment(range, includesTitle = withTitle), titleSfx,
+                        workDir, passId = id * SEGMENT_ID_SCALE + index, workFiles = workFiles,
+                        output = file, outputArgs = pcmAudioArgs(),
+                        progressOffsetMs = doneMs, overallDurationMs = totalDurationMs,
+                        onProgress = onProgress
+                    )
+                    doneMs += passDurationMs(segmentClips, withTitle)
+                    file
                 }
-            }.toTypedArray()
 
-            runFFmpegWithProgress(
-                arrayOf(
-                    *inputs,
-                    "-filter_complex_script", graphFile.absolutePath,
-                    "-map", "[vout]", "-map", "[aout]",
-                    // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
-                    *videoEncodeArgs(),
-                    "-metadata", "creation_time=${creationTimeMetadata(createdAtMillis)}",
-                    "-y", mergedFile.absolutePath
-                ),
-                totalDurationMs,
-                onProgress
-            )
+                onProgress("仕上げ中...", null)
+                val listFile = File(workDir, "concat_$id.txt")
+                    .apply { writeText(concatListText(segmentFiles.map { it.absolutePath }), Charsets.UTF_8) }
+                    .also { workFiles += it }
+                runFFmpegWithProgress(
+                    arrayOf(
+                        "-f", "concat", "-safe", "0", "-i", listFile.absolutePath,
+                        "-map", "0:v", "-map", "0:a",
+                        // 映像は区切りで圧縮済みなので、そのままつなぐ（2回圧縮しない）
+                        "-c:v", "copy",
+                        *aacAudioArgs(),
+                        *creationTime,
+                        "-y", mergedFile.absolutePath
+                    ),
+                    totalDurationMs,
+                    // つなぐだけで数秒で終わるので、進捗率は出さない（区切りの進捗から0%へ戻って見える）
+                    onProgress = { _, _ -> }
+                )
+            }
 
             onProgress("保存中...", null)
             saveToGallery(context, mergedFile, createdAtMillis)
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
-            textFiles.forEach { it.delete() }
+            workFiles.forEach { it.delete() }
         }
     }
+
+    /**
+     * 1回分のFFmpeg呼び出し。1回で書き出すときは全クリップ、区切りごとに書き出すときは
+     * その区切りのクリップだけを受け持つ。
+     *
+     * @param passId 行ごとのテキスト・フィルタグラフのファイル名に入れる番号。区切りごとに変える
+     * @param outputArgs 映像の引数のあとに付ける引数（音声の形式・メタデータ）
+     */
+    private suspend fun encodePass(
+        context: Context,
+        clips: List<VlogClip>,
+        fonts: ExportFonts,
+        titleText: String,
+        includeTitle: Boolean,
+        audioPlan: AudioPlan,
+        titleSfx: File?,
+        workDir: File,
+        passId: Long,
+        workFiles: MutableList<File>,
+        output: File,
+        outputArgs: Array<String>,
+        progressOffsetMs: Long,
+        overallDurationMs: Long,
+        onProgress: (message: String, progress: Float?) -> Unit
+    ) {
+        val filterGraph = buildFilterGraph(
+            clips, fonts, titleText, titleSfxDelayMs(), workDir, passId, workFiles,
+            includeTitle, audioPlan
+        )
+        // フィルタグラフは引数で渡さずファイルで渡す。本数が多いとグラフが数百KBに
+        // なりうる（1クリップ約0.7〜1.5KB。100本で約70KB）。ファイルなら
+        // 引数の長さに縛られず、コマンドのログも肥大しない。
+        val graphFile = File(workDir, "graph_$passId.txt")
+            .apply { writeText(filterGraph, Charsets.UTF_8) }
+            .also { workFiles += it }
+        Log.d(
+            LOG_TAG,
+            "filter_complex (${filterGraph.length}文字): ${filterGraph.take(COMMAND_LOG_MAX_CHARS)}"
+        )
+
+        // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
+        // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
+        // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
+        // 要求しない生成フィルタなので、追加の-iは不要。
+        //
+        // 組み立てるのはFFmpegを走らせる直前。getSafParameterForReadは呼んだ時点で
+        // 動画を開き、FFmpegが閉じるまで持ち続ける。フィルタグラフを組んでいる途中で
+        // 中止・失敗すると誰も閉じず、書き出しのたびに最大で本数ぶん開きっぱなしになる。
+        val inputs = buildList {
+            if (audioPlan.needsTitleSfxInput) titleSfx?.let { addAll(listOf("-i", it.absolutePath)) }
+            clips.forEach { clip ->
+                addAll(clipInputArgs(clip, FFmpegKitConfig.getSafParameterForRead(context, clip.uri)))
+            }
+        }.toTypedArray()
+
+        runFFmpegWithProgress(
+            arrayOf(
+                *inputs,
+                "-filter_complex_script", graphFile.absolutePath,
+                "-map", "[vout]", "-map", "[aout]",
+                // fpsフィルタで既にCFR化済みなので、-rによる二重指定はしない
+                *videoEncodeArgs(),
+                *outputArgs,
+                "-y", output.absolutePath
+            ),
+            passDurationMs(clips, includeTitle),
+            onProgress,
+            progressOffsetMs,
+            overallDurationMs
+        )
+    }
+
+    /** 1回分の書き出しの長さ（タイトルカード＋各クリップのトリム後の長さ） */
+    private fun passDurationMs(clips: List<VlogClip>, includeTitle: Boolean): Long =
+        (if (includeTitle) TITLE_DURATION_MS else 0L) + clips.sumOf { it.trimmedDurationMs }
 
     /**
      * 全クリップの動画が今も開けるかを、書き出しを始める前に確かめる。

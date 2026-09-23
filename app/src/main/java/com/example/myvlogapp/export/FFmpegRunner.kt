@@ -75,11 +75,17 @@ internal fun cancelRunningFFmpeg() {
  *
  * セッションは[runningSessionId]に控えておき、[cancelRunningFFmpeg]がこのセッションだけを
  * 狙って止められるようにする。
+ *
+ * @param progressOffsetMs 区切りごとの書き出し（Segments.kt）で、この呼び出しより前の区切りが
+ *   受け持った長さ。進捗を書き出し全体に対する割合で出すため（区切りごとに0%からやり直さない）
+ * @param overallDurationMs 書き出し全体の長さ。1回で書き出すときは[totalDurationMs]と同じ
  */
 internal suspend fun runFFmpegWithProgress(
     args: Array<String>,
     totalDurationMs: Long,
-    onProgress: (message: String, progress: Float?) -> Unit
+    onProgress: (message: String, progress: Float?) -> Unit,
+    progressOffsetMs: Long = 0L,
+    overallDurationMs: Long = totalDurationMs
 ) {
     Log.d(LOG_TAG, "ffmpeg ${args.joinToString(" ").take(COMMAND_LOG_MAX_CHARS)}")
     val completion = CompletableDeferred<FFmpegSession>()
@@ -90,8 +96,9 @@ internal suspend fun runFFmpegWithProgress(
         { session -> completion.complete(session) },
         { /* ログはセッション完了後にまとめて参照するのでここでは何もしない */ },
         { statistics ->
-            if (totalDurationMs > 0) {
-                val ratio = (statistics.time / totalDurationMs.toDouble()).coerceIn(0.0, 1.0)
+            if (overallDurationMs > 0) {
+                val elapsed = progressOffsetMs + statistics.time.coerceAtMost(totalDurationMs.toDouble())
+                val ratio = (elapsed / overallDurationMs.toDouble()).coerceIn(0.0, 1.0)
                 val percent = (ratio * 100).toInt()
                 if (percent != lastPercent) {
                     lastPercent = percent
