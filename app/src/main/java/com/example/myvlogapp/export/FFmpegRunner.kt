@@ -131,6 +131,8 @@ internal suspend fun runFFmpegWithProgress(
         else -> {
             val log = session.allLogsAsString.orEmpty()
             logFfmpegOutput("書き出しに失敗しました", "${session.returnCode}", log)
+            // 容量不足は、FFmpegの英語のエラーのまま見せず、どうすればよいかまで日本語で伝える
+            if (isNoSpaceError(log)) throw VlogExportException(RAN_OUT_OF_SPACE_MESSAGE)
             throw VlogExportException("書き出しに失敗しました\n${extractReason(log)}")
         }
     }

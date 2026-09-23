@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.MediaStore
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKitConfig
@@ -15,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import kotlin.coroutines.coroutineContext
 import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.TIME_FONT_PT
@@ -146,6 +148,7 @@ object VlogExporter {
             )
         }
         requireAllReadable(context, clips)
+        requireFreeSpace(context, clips, includeTitle)
 
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
         val workDir = workDir(context).apply { mkdirs() }
@@ -245,7 +248,13 @@ object VlogExporter {
             }
 
             onProgress("保存中...", null)
-            saveToGallery(context, mergedFile, createdAtMillis)
+            try {
+                saveToGallery(context, mergedFile, createdAtMillis)
+            } catch (e: IOException) {
+                // ギャラリーへのコピーの途中で容量が尽きると「write failed: ENOSPC」のような文言になる
+                if (isNoSpaceError(e.message)) throw VlogExportException(RAN_OUT_OF_SPACE_MESSAGE)
+                throw e
+            }
         } finally {
             // 成功・失敗・キャンセルいずれでも作業ファイルを掃除する
             mergedFile.delete()
@@ -327,6 +336,26 @@ object VlogExporter {
     /** 1回分の書き出しの長さ（タイトルカード＋各クリップのトリム後の長さ） */
     private fun passDurationMs(clips: List<VlogClip>, includeTitle: Boolean): Long =
         (if (includeTitle) TITLE_DURATION_MS else 0L) + clips.sumOf { it.trimmedDurationMs }
+
+    /**
+     * 書き出しに要る空き容量があるかを、始める前に確かめる（見積もりはExportSpace.kt）。
+     * 作業フォルダ（cacheDir）とギャラリーの保存先は、ふつう同じ領域にあるので、作業フォルダ側の
+     * 空きで判断する。
+     *
+     * 空きは getAllocatableBytes で読む。usableSpace は、システムが必要に応じて消せる
+     * 他のアプリのキャッシュを空きに数えないので、実際には書き出せるのに断ってしまうことがある。
+     */
+    private fun requireFreeSpace(context: Context, clips: List<VlogClip>, includeTitle: Boolean) {
+        val required = requiredFreeBytes(
+            durationMs = passDurationMs(clips, includeTitle),
+            segmented = planSegments(clips.size).size > 1
+        )
+        val storage = context.getSystemService(StorageManager::class.java)
+        val available = runCatching {
+            storage.getAllocatableBytes(storage.getUuidForPath(context.cacheDir))
+        }.getOrElse { context.cacheDir.usableSpace }
+        if (available < required) throw VlogExportException(notEnoughSpaceMessage(required, available))
+    }
 
     /**
      * 全クリップの動画が今も開けるかを、書き出しを始める前に確かめる。

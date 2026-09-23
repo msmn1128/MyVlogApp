@@ -20,10 +20,14 @@ import com.example.myvlogapp.LOG_TAG
 internal const val AUDIO_SAMPLE_RATE = 44100
 internal const val AUDIO_CHANNEL_LAYOUT = "stereo" // anullsrcの cl= 用
 internal const val AUDIO_CHANNELS = 2              // -ac 用
-internal const val AUDIO_BITRATE = "128k"
+// ビットレートは数値で持つ。書き出し前の空き容量の見積もり（ExportSpace.kt）でも同じ値を使い、
+// 実際の設定と見積もりが食い違わないようにするため
+internal const val AUDIO_BITRATE_BPS = 128_000L
+internal const val AUDIO_BITRATE = "$AUDIO_BITRATE_BPS"
 
 /** h264_mediacodec（ハードウェアエンコーダ）使用時のビットレート */
-private const val MEDIACODEC_BITRATE = "12M"
+internal const val MEDIACODEC_BITRATE_BPS = 12_000_000L
+private const val MEDIACODEC_BITRATE = "$MEDIACODEC_BITRATE_BPS"
 
 private data class Capabilities(
     val videoEncoder: String,
