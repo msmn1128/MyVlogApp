@@ -2,6 +2,7 @@ package com.example.myvlogapp.ui.screens
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.LruCache
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -59,20 +60,35 @@ private val TILE_MIN_SIZE = 104.dp
 /** タイル・選択枠に共通で使う角丸 */
 private val TILE_SHAPE = RoundedCornerShape(6.dp)
 
+/** サムネイルのキャッシュの上限（バイト）。320x320のARGBが約400KBなので、約40枚ぶん */
+private const val THUMBNAIL_CACHE_BYTES = 16 * 1024 * 1024
+
+/**
+ * 読み込んだサムネイルを、ギャラリー画面を開いている間だけ覚えておく。
+ *
+ * グリッドは画面外へ出たタイルを捨てるので、覚えておかないとスクロールして戻るたびに
+ * 読み直しになり、しばらく無地のタイルが並ぶ。画面を閉じたら丸ごと捨てる
+ * （[GalleryPickerDialog]の中でrememberしている）。
+ */
+private class ThumbnailCache : LruCache<Uri, Bitmap>(THUMBNAIL_CACHE_BYTES) {
+    override fun sizeOf(key: Uri, value: Bitmap): Int = value.byteCount
+}
+
 /**
  * サムネイル。1件ずつ非同期に読み込む。
  * 取得できなかった動画（生成待ち・非対応コーデックなど）は無地のタイルに
  * ファイル名だけを出す。
  */
 @Composable
-private fun rememberThumbnail(uri: Uri): Bitmap? {
+private fun rememberThumbnail(uri: Uri, cache: ThumbnailCache): Bitmap? {
     val context = LocalContext.current
-    return produceState<Bitmap?>(initialValue = null, uri) {
+    return produceState(initialValue = cache.get(uri), uri) {
+        if (value != null) return@produceState
         value = withContext(Dispatchers.IO) {
             runCatching {
                 context.contentResolver.loadThumbnail(uri, THUMBNAIL_SIZE, null)
             }.getOrNull()
-        }
+        }?.also { cache.put(uri, it) }
     }.value
 }
 
@@ -92,6 +108,7 @@ fun GalleryPickerDialog(
     // 選択中のURI。追加後の並びは撮影日時順で、選んだ順とは無関係なので、順番は持たない
     val selected = remember { mutableStateSetOf<Uri>() }
     val isPartial = remember(reloadToken) { hasPartialMediaAccess(context) }
+    val thumbnails = remember { ThumbnailCache() }
 
     LaunchedEffect(reloadToken) {
         videos = null
@@ -124,6 +141,7 @@ fun GalleryPickerDialog(
                 VideoGrid(
                     videos = videos,
                     selected = selected,
+                    thumbnails = thumbnails,
                     modifier = Modifier.fillMaxWidth().weight(1f)
                 )
 
@@ -178,6 +196,7 @@ private fun PartialAccessBanner(onChangeSelection: () -> Unit) {
 private fun VideoGrid(
     videos: List<GalleryVideo>?,
     selected: SnapshotStateSet<Uri>,
+    thumbnails: ThumbnailCache,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -197,6 +216,7 @@ private fun VideoGrid(
                 items(videos, key = { it.uri.toString() }) { video ->
                     VideoTile(
                         video = video,
+                        thumbnails = thumbnails,
                         isSelected = video.uri in selected,
                         onClick = { toggleSelection(selected, video.uri) }
                     )
@@ -248,10 +268,11 @@ private fun GalleryPickerFooter(
 @Composable
 private fun VideoTile(
     video: GalleryVideo,
+    thumbnails: ThumbnailCache,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val thumbnail = rememberThumbnail(video.uri)
+    val thumbnail = rememberThumbnail(video.uri, thumbnails)
 
     // 選択状態を、枠線・チェックマークだけでなくスクリーンリーダーにも伝える
     val stateDescription = if (isSelected) "選択中" else "未選択"
