@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -113,23 +114,22 @@ private fun disabledAlpha(enabled: Boolean, label: String): Float {
 }
 
 /**
- * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
- * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
+ * 操作バーのボタンの土台。円形の形・大きさ・背景色だけを担い、押したときの動き
+ * （[interaction]）と中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
+ * 押したときの動きを外から受け取るのは、1回押すボタン（clickable）とオン/オフを持つボタン
+ * （toggleable）とで、TalkBackに伝える意味が違うため。
  *
  * 押したときの説明（onClickLabel）は付けない。ボタンの名前は中のIconのcontentDescriptionが
  * そのまま読まれるので、同じ文言を渡すと「もとに戻す、ダブルタップしてもとに戻す」のように
  * 読み上げが重複する。
+ *
+ * @param interaction 押したときの動き。背景を塗ったあとに付けるので、押したときの波紋も円に収まる
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ToolbarButtonBox(
     background: Color,
-    role: Role,
-    enabled: Boolean,
-    onClick: () -> Unit,
+    interaction: Modifier,
     modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null,
-    onLongClickLabel: String? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
@@ -137,13 +137,7 @@ private fun ToolbarButtonBox(
             .size(TOOLBAR_BUTTON_SIZE)
             .clip(CircleShape)
             .background(background)
-            .combinedClickable(
-                enabled = enabled,
-                role = role,
-                onLongClickLabel = onLongClickLabel,
-                onLongClick = onLongClick,
-                onClick = onClick
-            ),
+            .then(interaction),
         contentAlignment = Alignment.Center,
         content = content
     )
@@ -154,6 +148,7 @@ private fun ToolbarButtonBox(
  *
  * IconButtonは48dp固定で、並べると横幅の狭い端末で見出しごと押し出されてしまう。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun CompactIconButton(
     icon: ImageVector,
@@ -183,11 +178,13 @@ internal fun CompactIconButton(
     }
     ToolbarButtonBox(
         background = Color.Transparent,
-        role = Role.Button,
-        enabled = enabled,
-        onClick = onClick,
-        onLongClick = wrappedOnLongClick,
-        onLongClickLabel = onLongClickLabel,
+        interaction = Modifier.combinedClickable(
+            enabled = enabled,
+            role = Role.Button,
+            onLongClickLabel = onLongClickLabel,
+            onLongClick = wrappedOnLongClick,
+            onClick = onClick
+        ),
         modifier = modifier
     ) {
         Icon(
@@ -244,6 +241,12 @@ internal fun TrimPresetButton(
  *
  * 他がすべて「押したら1回起きる」動作なので、状態を持つこれだけは
  * オンのとき下地を塗って区別する（M3のicon toggle buttonと同じ見せ方）。
+ *
+ * TalkBackにもスイッチとして状態を伝える（toggleable）。以前は1回押すボタンとして作り、
+ * 説明文の中に「オン」「オフ」を書き込んで伝えていたため、TalkBackには状態を持つ部品だと
+ * 伝わらず、切り替えても「オンになりました」のような標準の読み上げが無かった。
+ *
+ * @param contentDescription 何のスイッチか。オン/オフはTalkBackが読むので含めない
  */
 @Composable
 internal fun TimelineToggleButton(
@@ -251,7 +254,7 @@ internal fun TimelineToggleButton(
     checked: Boolean,
     contentDescription: String,
     enabled: Boolean,
-    onClick: () -> Unit,
+    onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // 背景・アイコン色・アイコンそのもの（ミュート⇔ミュート解除など）の
@@ -272,9 +275,12 @@ internal fun TimelineToggleButton(
     )
     ToolbarButtonBox(
         background = background,
-        role = Role.Switch,
-        enabled = enabled,
-        onClick = onClick,
+        interaction = Modifier.toggleable(
+            value = checked,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = onCheckedChange
+        ),
         modifier = modifier
     ) {
         AnimatedContent(

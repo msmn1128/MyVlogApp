@@ -365,24 +365,17 @@ private fun TimelineToolbar(
         TimelineToggleButton(
             icon = if (timelineMuted) VlogIcons.VolumeOff else VlogIcons.VolumeUp,
             checked = timelineMuted,
-            contentDescription = if (timelineMuted) {
-                "タイムラインのミュート：オン（プレビューと書き出しの音を消します）"
-            } else {
-                "タイムラインのミュート：オフ"
-            },
+            // オン/オフはTalkBackがスイッチの状態として読むので、ここには書かない
+            contentDescription = "タイムラインのミュート（プレビューと書き出しの音を消します）",
             enabled = clips.isNotEmpty() && !isExporting,
-            onClick = { actions.setTimelineMuted(!timelineMuted) }
+            onCheckedChange = actions.setTimelineMuted
         )
         TimelineToggleButton(
             icon = VlogIcons.Play,
             checked = autoAdvance,
-            contentDescription = if (autoAdvance) {
-                "連続再生：オン（終わったら次のクリップへ進みます）"
-            } else {
-                "連続再生：オフ（クリップの終わりで止まります）"
-            },
+            contentDescription = "連続再生（オンなら終わったら次のクリップへ、オフならクリップの終わりで止まります）",
             enabled = clips.isNotEmpty() && !isExporting,
-            onClick = { actions.setAutoAdvance(!autoAdvance) }
+            onCheckedChange = actions.setAutoAdvance
         )
 
         TimelineDivider()
