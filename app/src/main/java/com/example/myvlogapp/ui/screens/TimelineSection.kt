@@ -101,10 +101,11 @@ internal fun ColumnScope.EditSection(
     editorWeight: Float,
     isImeVisible: Boolean,
     showTimeline: Boolean,
+    showEditorHeader: Boolean,
     timelineFit: TimelineFit
 ) {
-    // 縦に短い画面でキーボードを出している間は、タイムラインを畳んでひとこと欄だけにする
-    // （理由は呼び出し元のVlogAppScreen）。ひとこと欄の見出しも同じときに畳む
+    // キーボードを出している間は、画面によってタイムラインやひとこと欄の見出しを畳む
+    // （どの画面で何を畳むかと、その理由は呼び出し元のVlogAppScreen）
     if (showTimeline) {
         TimelinePane(
             clips = clips,
@@ -129,7 +130,7 @@ internal fun ColumnScope.EditSection(
         isPlaying = state.isPlaying,
         onTextChange = actions.updateText,
         onPause = actions.pause,
-        showHeader = showTimeline,
+        showHeader = showEditorHeader,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
 }
