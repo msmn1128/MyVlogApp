@@ -219,7 +219,8 @@ private fun PreviewPane(
                     // 親を渡さない（null）のは、大きさをComposeのAndroidViewが決めるため（XMLの
                     // layout_width/heightは使われない）。lintのInflateParamsはこの前提を知らない
                     @SuppressLint("InflateParams")
-                    val view = LayoutInflater.from(context).inflate(R.layout.preview_player_view, null) as PlayerView
+                    val view = LayoutInflater.from(context)
+                        .inflate(R.layout.preview_player_view, null) as PlayerView
                     view.apply { this.player = player }
                 },
                 // ExoPlayerはViewModelが持ち続けるので、外れたPlayerViewが
@@ -227,9 +228,13 @@ private fun PreviewPane(
                 onRelease = { it.player = null },
                 modifier = Modifier
                     .fillMaxSize()
+                    // 読み上げ（TalkBack）にも、ボタンであることと押すと何が起きるかを伝える。
+                    // 付けていなかった頃は、プレビューを押すと再生できることが読み上げでは分からなかった
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
+                        indication = null,
+                        onClickLabel = "再生／一時停止",
+                        role = Role.Button
                     ) {
                         onTogglePlayback()
                     }
