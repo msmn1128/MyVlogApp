@@ -75,7 +75,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * プレビュー再生の受け持ち。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
      * トリミング終端での停止はすべてこちら（playback/PlaybackController.kt）にある。
      */
-    private val playback = PlaybackController(application) { timeline.current }
+    private val playback = PlaybackController(
+        context = application,
+        clips = { timeline.current },
+        onPlaybackError = {
+            sendMessage("この動画を再生できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
+        }
+    )
 
     /**
      * クリップ一覧・履歴・プレイリスト同期の持ち主（edit/TimelineStore.kt）。
