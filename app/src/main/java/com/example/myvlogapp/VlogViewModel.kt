@@ -349,10 +349,17 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             addSkipMessage(alreadyAdded = alreadyInTimeline, unreadable = 0)?.let(::sendMessage)
             return
         }
-        // すでに上限いっぱいなら、読み込むまでもなく断る
-        if (timeline.current.size >= MAX_CLIPS) {
+        // 上限（MAX_CLIPS）に入りきらない分は、メタデータを読む前に断る。読んでから捨てていた
+        // 頃は、残り5本のところへ50本選ぶと、入らない45本ぶんまで読むのを待たされていた。
+        // 入れる分は選んだ順に先頭から取る（読んだあとで上限を守っていた頃と同じ選び方）。
+        // その中に読めない動画が混ざると入る本数が空きより少なくなるが、それは通知で伝わる。
+        // 並行した追加との兼ね合いは、反映の直前（insertByShotAt）でもう一度守っている
+        val room = (MAX_CLIPS - timeline.current.size).coerceAtLeast(0)
+        val toLoad = newUris.take(room)
+        val overLimitBeforeLoading = newUris.size - toLoad.size
+        if (toLoad.isEmpty()) {
             addSkipMessage(
-                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = newUris.size
+                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = overLimitBeforeLoading
             )?.let(::sendMessage)
             return
         }
@@ -365,7 +372,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 確実にずらした時刻を用意しておく。
         val fallbackBaseMillis = System.currentTimeMillis()
         val loaded = withContext(Dispatchers.IO) {
-            newUris.mapParallel(METADATA_PARALLELISM) { offset, uri ->
+            toLoad.mapParallel(METADATA_PARALLELISM) { offset, uri ->
                 val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                 VlogClip(
                     id = nextClipId(),
@@ -389,7 +396,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // alreadyPresent は、メタデータの取得中に別の追加が先に入れてしまった分
             alreadyAdded = alreadyInTimeline + result.alreadyPresent,
             unreadable = unreadable.size,
-            overLimit = result.overLimit
+            overLimit = overLimitBeforeLoading + result.overLimit
         )?.let(::sendMessage)
     }
 
