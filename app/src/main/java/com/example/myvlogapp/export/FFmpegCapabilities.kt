@@ -91,7 +91,10 @@ internal fun videoEncodeArgs(): Array<String> = capabilities.let { caps ->
     arrayOf(
         "-c:v", caps.videoEncoder,
         *caps.extraVideoArgs.toTypedArray(),
-        "-pix_fmt", "yuv420p"
+        "-pix_fmt", "yuv420p",
+        // 出力はSDRのBT.709（HDRの素材もここまでに変換してある）。付けないと再生する側が
+        // 色の変換式を推測することになり、BT.601と取られると赤などの色がずれて見える
+        "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"
     )
 }
 
