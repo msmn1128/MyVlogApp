@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -166,9 +167,22 @@ private fun TimelinePane(
     // 選択中のタイルが常に見えるようにする。連続再生の自動遷移や「ひとつ後ろへ移動」で
     // 選択が変わっても、本数が多いとタイルが画面外のままになり、いまどれを編集して
     // いるのかタイムラインから読み取れなくなるため。
+    //
+    // すでに全部見えているタイルは動かさない。以前は毎回そのタイルを左端まで送っていたので、
+    // 見えているタイルを押しただけで並びが横に動き、続けて押そうとした指の下のタイルが入れ替わって
+    // いた（長押しのミュートが別のクリップに効く）。はみ出しているときは、はみ出したぶんだけずらす。
     val clipListState = rememberLazyListState()
     LaunchedEffect(selectedIndex, clips.size) {
-        if (selectedIndex in clips.indices) clipListState.animateScrollToItem(selectedIndex)
+        if (selectedIndex !in clips.indices) return@LaunchedEffect
+        val layout = clipListState.layoutInfo
+        val item = layout.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        when {
+            item == null -> clipListState.animateScrollToItem(selectedIndex)
+            item.offset < layout.viewportStartOffset ->
+                clipListState.animateScrollBy((item.offset - layout.viewportStartOffset).toFloat())
+            item.offset + item.size > layout.viewportEndOffset ->
+                clipListState.animateScrollBy((item.offset + item.size - layout.viewportEndOffset).toFloat())
+        }
     }
 
     // 欄の実際の高さと、中身が収まる高さを測って渡す（足りなければ欄を広げてもらう。TimelineFit.kt）。
