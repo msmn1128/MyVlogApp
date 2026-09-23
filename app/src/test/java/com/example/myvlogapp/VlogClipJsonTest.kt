@@ -45,6 +45,30 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun refreshedMarkAndMuteSurviveSaveAndRestore() {
+        // shotAtRefreshed が消えると、撮影時刻を取り直せなかった動画を起動のたびに読み直してしまう
+        val saved = testClip(isMuted = true, shotAtReliable = false).copy(shotAtRefreshed = true).toJson()
+
+        val restored = VlogClip.fromJson(saved, id = 1L)
+        assertTrue(restored.shotAtRefreshed)
+        assertTrue(restored.isMuted)
+    }
+
+    @Test
+    fun saveDataWithoutTheNewerKeysFallsBackToTheirDefaults() {
+        // ミュートや「取り直し済み」の印を持たせる前の保存データ。ミュートは外れたまま、
+        // 取り直しは一度だけ試させる（印をfalseに）
+        val legacy = testClip(isMuted = true).copy(shotAtRefreshed = true).toJson().apply {
+            remove(VlogClipKeys.IS_MUTED)
+            remove(VlogClipKeys.SHOT_AT_REFRESHED)
+        }
+
+        val restored = VlogClip.fromJson(legacy, id = 1L)
+        assertFalse(restored.isMuted)
+        assertFalse(restored.shotAtRefreshed)
+    }
+
+    @Test
     fun saveDataFromWhenResolutionWasStoredStillRestores() {
         // 解像度(width/height)を持っていた頃の保存データ。もう読まないキーが
         // 余分に入っていても、復元は素通りできること
