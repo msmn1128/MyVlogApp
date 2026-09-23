@@ -68,6 +68,7 @@ import com.example.myvlogapp.SECTION_GAP
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.WAVEFORM_HEIGHT
 import com.example.myvlogapp.formatSeconds
+import com.example.myvlogapp.roundedTrimMs
 import com.example.myvlogapp.ui.components.CompactIconButton
 import com.example.myvlogapp.ui.components.SegmentBadge
 import com.example.myvlogapp.ui.components.TimelineDivider
@@ -275,7 +276,7 @@ private fun TrimSection(
             Text(
                 text = "${clip.timeText}：" +
                         "${formatSeconds(clip.startMs)} 〜 ${formatSeconds(clip.endMs)}" +
-                        "（${formatSeconds(clip.trimmedDurationMs)}）",
+                        "（${formatSeconds(roundedTrimMs(clip.startMs, clip.endMs))}）",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -537,9 +538,10 @@ internal fun ClipTile(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // 時刻を見出しに上げたぶん、ここは尺の表示に使う
+                // 時刻を見出しに上げたぶん、ここは尺の表示に使う。
+                // 波形の上の範囲の表示（「0:03 〜 0:15（0:12）」）と同じ値にそろえる
                 Text(
-                    formatSeconds(clip.trimmedDurationMs),
+                    formatSeconds(roundedTrimMs(clip.startMs, clip.endMs)),
                     fontSize = 10.sp
                 )
                 // ひとことを分割してあるクリップは、区間の数を出す。

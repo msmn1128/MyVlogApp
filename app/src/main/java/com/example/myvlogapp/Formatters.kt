@@ -95,10 +95,27 @@ fun uniqueSaveName(
 /**
  * 尺の表示 "m:ss"。タイムラインとギャラリーで表記を揃えるためここに1本だけ置く。
  *
+ * 秒は四捨五入する。切り捨てだと、トリミングの範囲の表示が「0:03 〜 0:15（0:11）」
+ * （実際は3.2〜15.1秒、11.9秒）のように、引き算と合わなく見えていた。長さの側は
+ * [roundedTrimMs]で、丸めた両端の差にそろえる。
+ *
  * Locale.USを明示するのは、アラビア語ロケールなど数字の字形が違う環境でも
  * 常に半角のアラビア数字で表示するため（既定ロケールに任せると環境依存になる）。
  */
 fun formatSeconds(ms: Long): String {
-    val totalSeconds = ms / 1000
+    val totalSeconds = roundToSecondMs(ms) / 1000
     return String.format(Locale.US, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
 }
+
+/**
+ * トリミング後の長さの、表示用の値。両端をそれぞれ秒へ丸めてから差を取る。
+ *
+ * 長さそのもの（end−start）を丸めると、両端の表示の引き算と1秒ずれることがある
+ * （3.5〜15.4秒は「0:04 〜 0:15」なのに、長さ11.9秒を丸めると「0:12」）。
+ * 表示はだいたいの目安なので、見た目の引き算が必ず合う方を採る。書き出しの長さには使わないこと。
+ */
+fun roundedTrimMs(startMs: Long, endMs: Long): Long =
+    (roundToSecondMs(endMs) - roundToSecondMs(startMs)).coerceAtLeast(0L)
+
+/** 秒の単位へ四捨五入したミリ秒 */
+private fun roundToSecondMs(ms: Long): Long = (ms + 500) / 1000 * 1000
