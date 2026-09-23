@@ -285,7 +285,7 @@ internal fun mergeByShotAt(
 }
 
 /**
- * 区間ごと移動（[com.example.myvlogapp.VlogViewModel.moveTrim]）で、実際にずらせる量。
+ * 区間ごと移動（[com.example.myvlogapp.edit.TimelineStore.moveTrim]）で、実際にずらせる量。
  *
  * トリム範囲とひとことの区切りは「相対位置を保ったままひとかたまりで動く」のが狙いなので、
  * 区切りだけを1つずつ範囲へ丸めてはいけない。以前は各区切りを `coerceIn(1L, durationMs)` で

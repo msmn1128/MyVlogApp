@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（144件）
+./gradlew testDebugUnitTest        # JVM単体テスト（145件）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
 ./gradlew assembleRelease          # リリースAPK（R8 + 署名）
 ./gradlew bundleRelease            # Play アップロード用 AAB
@@ -153,7 +153,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 ### 中止
 
 `VlogExporter.cancel()` は `runningSessionId` を狙い撃ちする。引数なしの `FFmpegKit.cancel()` は
-全セッションを止めるため、起動直後の機能判定（`-encoders`/`-filters`、`capabilities` で1回だけ実行）を
+全セッションを止めるため、機能判定（`-encoders`/`-filters`、初回の書き出しの冒頭で実行し、成功した結果だけを覚える）を
 巻き込んで結果を汚す。セッションIDが分かる前に押された場合は `cancelRequested` が拾う。
 
 中止・サービス破棄の経路は3つあり、**すべてが `VlogExporter.cancel()` を呼ぶ必要がある**
@@ -224,7 +224,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、144件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
+JVM単体テスト（`src/test`）のみ、145件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
 
 | ファイル | 対象 |
 |---|---|

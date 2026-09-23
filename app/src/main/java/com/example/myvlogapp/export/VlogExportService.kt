@@ -253,9 +253,11 @@ class VlogExportService : Service() {
         manager.notify(NOTIFICATION_ID, buildNotification(message, progress))
     }
 
-    /// 完了・中止・失敗の結果を、進行中の通知とは別の通知として出す。
-    /// setOngoing(true)の進行中通知はstopSelf()で消えてしまうため、それとは
-    /// 独立に結果だけを伝える（Activityが破棄されていても届く）。
+    /**
+     * 完了・中止・失敗の結果を、進行中の通知とは別の通知として出す。
+     * setOngoing(true)の進行中通知はstopSelf()で消えてしまうため、それとは
+     * 独立に結果だけを伝える（Activityが破棄されていても届く）。
+     */
     private fun notifyResult(title: String, message: String) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)

@@ -51,8 +51,8 @@ internal fun resetCancelRequest() {
  * 実行中のFFmpeg処理を中断する。
  *
  * 引数なしの`FFmpegKit.cancel()`は**実行中の全セッション**を止めるため、
- * 起動直後の機能判定（FFmpegCapabilities.ktの`-encoders`/`-filters`）が同時に走っていると
- * それも巻き込んで空文字を返させ、エンコーダの判定結果が変わってしまう。
+ * 機能判定（FFmpegCapabilities.ktの`-encoders`/`-filters`。初回の書き出しの冒頭で走る）が
+ * 同時に走っていると、それも巻き込んで空文字を返させ、エンコーダの判定結果が変わってしまう。
  * 書き出し本体のセッションだけを狙って止める。
  */
 internal fun cancelRunningFFmpeg() {
