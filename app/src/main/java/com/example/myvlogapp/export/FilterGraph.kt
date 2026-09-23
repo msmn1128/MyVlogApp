@@ -43,6 +43,8 @@ private const val FADE_FRAME_COUNT = 20
  *
  * @param textFiles 生成した行ごとのテキストファイルをここへ積む（呼び出し元がexport()の
  *   finallyでまとめて掃除するため）
+ * @param hdrTransfers 各クリップがHDRならその伝達特性（SDRはnull）。HDRのクリップだけ、
+ *   先頭でSDRへ変換する（Hdr.kt）
  */
 internal suspend fun buildFilterGraph(
     clips: List<VlogClip>,
@@ -53,7 +55,8 @@ internal suspend fun buildFilterGraph(
     id: Long,
     textFiles: MutableList<File>,
     includeTitle: Boolean,
-    audioPlan: AudioPlan
+    audioPlan: AudioPlan,
+    hdrTransfers: List<HdrTransfer?> = List(clips.size) { null }
 ): String {
     val graph = mutableListOf<String>()
 
@@ -93,8 +96,12 @@ internal suspend fun buildFilterGraph(
         // ここでは時刻を0始まりに直し、trim=endで長さを保証するだけにする。
         // setpts=PTS-STARTPTSを最初に行うため、以降のdrawtextのtは
         // 「クリップ先頭からの経過時間」になる（enable式はそれを前提にしている）。
+        // HDRのクリップは、文字の焼き込みより前にSDRへ変換する（Hdr.kt）。変換は1画素ずつの
+        // 浮動小数点の計算で重いので、先に出力の大きさまで縮めてから行う（4Kなら計算する画素が
+        // 4分の1になる。エミュレータの4K・3秒のHLGで、書き出し全体が28秒→20秒。SDRは10秒）
+        val toSdr = hdrTransfers[index]?.let { "${fitToCanvasFilter()},${hdrToSdrFilter(it)}," }.orEmpty()
         graph += "[$inputIndex:v]setpts=PTS-STARTPTS,${trimFilter(durationSec, audio = false)}," +
-                "${buildClipFilter(spans, clip.startMs, timeFile, fonts)}[${vTag(index)}]"
+                "$toSdr${buildClipFilter(spans, clip.startMs, timeFile, fonts)}[${vTag(index)}]"
 
         // concatは各セグメントの音声ストリームを明示参照するため、
         // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
@@ -275,7 +282,7 @@ private fun buildClipFilter(
     }
 
     return buildList {
-        add("scale=$CANVAS_WIDTH:$CANVAS_HEIGHT:force_original_aspect_ratio=decrease")
+        add(fitToCanvasFilter())
         add("pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black")
         addAll(hitokotoLayers)
         add(
@@ -330,6 +337,10 @@ private fun drawText(
             ":fontsize=${fontsizePt.toInt()}:fontcolor=$color" +
             ":x=$x:y=$y$alphaPart$enable"
 }
+
+/** キャンバス（1920x1080）に歪みなく収まる大きさへ縮める（余白はあとでpadが黒で埋める） */
+private fun fitToCanvasFilter() =
+    "scale=$CANVAS_WIDTH:$CANVAS_HEIGHT:force_original_aspect_ratio=decrease"
 
 /** 横方向の中央揃え式。text_wを使うので文字数やフォントサイズが変わっても中央のまま。 */
 private fun centeredX() = "(w-text_w)/2"
