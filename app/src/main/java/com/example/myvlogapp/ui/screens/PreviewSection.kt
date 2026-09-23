@@ -1,5 +1,7 @@
 package com.example.myvlogapp.ui.screens
 
+import android.annotation.SuppressLint
+import android.view.LayoutInflater
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -67,6 +69,7 @@ import com.example.myvlogapp.CANVAS_WIDTH
 import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
 import com.example.myvlogapp.PREVIEW_FONT_SCALE
+import com.example.myvlogapp.R
 import com.example.myvlogapp.SECTION_GAP
 import com.example.myvlogapp.TIME_FONT_PT
 import com.example.myvlogapp.TIME_MARGIN_PT
@@ -206,14 +209,18 @@ private fun PreviewPane(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            // iOS版に合わせ、シークバーなどの操作UIは出さずタップで再生/一時停止だけ切り替える。
+            // iOS版に合わせ、シークバーなどの操作UIは出さずタップで再生/一時停止だけ切り替える
+            // （操作UIを出さない設定はレイアウトの側）。
             // ripple(波紋)も消す。動画の上に光る輪が出ると書き出し結果と見た目が食い違って見えるため。
+            // 映像はTextureViewで描く。SurfaceViewのままだと、枠の大きさが変わったとき一時停止中の
+            // 絵が拡大されたまま残る（理由は preview_player_view.xml）
             AndroidView(
-                factory = {
-                    PlayerView(it).apply {
-                        this.player = player
-                        useController = false
-                    }
+                factory = { context ->
+                    // 親を渡さない（null）のは、大きさをComposeのAndroidViewが決めるため（XMLの
+                    // layout_width/heightは使われない）。lintのInflateParamsはこの前提を知らない
+                    @SuppressLint("InflateParams")
+                    val view = LayoutInflater.from(context).inflate(R.layout.preview_player_view, null) as PlayerView
+                    view.apply { this.player = player }
                 },
                 // ExoPlayerはViewModelが持ち続けるので、外れたPlayerViewが
                 // playerとサーフェスを握ったままにならないよう切り離す
