@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（151件）
+./gradlew testDebugUnitTest        # JVM単体テスト（174件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -247,7 +247,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）のみ、151件。対象は純粋関数と、再生側を偽物に差し替えた `TimelineStore`。
+JVM単体テスト（`src/test`）、174件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -261,6 +261,10 @@ JVM単体テスト（`src/test`）のみ、151件。対象は純粋関数と、�
 | `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
+| `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
+| `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
+| `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
+| `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの） |
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
@@ -338,8 +342,11 @@ JVMで動かないため実装を入れている。
 ## 未解決 / 今後
 
 - 画面操作のテストは部品単位だけで、画面全体（MainActivity＋ViewModel）を通したものは無い（「テスト」節を参照）。
-  `ProjectsController` / `VlogViewModel` は JVM 単体テストで1件も守られていないので、
-  触ったら実機で確認すること。`TimelineStore` は再生側を `edit/TimelinePlayback`
+  アプリの保存データ（SharedPreferences）をそのまま使うため、実機で流すと利用者の編集内容を消してしまう。
+  `VlogViewModel` は判断の部分（`AutosavePolicy`・`planAddition`）だけを切り出してテストしている。
+  配線（復元→自動保存の順番、波形の取得、書き出しの窓口）は、触ったら実機で確認すること。
+  `ProjectsController` は保存先を `data/ProjectRepository` 越しに受け取るので、偽物を渡してテストできる。
+  `TimelineStore` は再生側を `edit/TimelinePlayback`
   （実装は `PlaybackController`）越しに受け取るようにしたので、偽物を渡してテストできる
   （`TimelineStoreTest`）。ただし偽物はプレイリストの中身と自動遷移を持たないので、
   並べ替え・削除・一時保存の読み出しとプレビューの同期は実機で確認すること。
