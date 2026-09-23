@@ -2,7 +2,9 @@ package com.example.myvlogapp.playback
 
 import android.content.Context
 import androidx.annotation.OptIn
+import android.util.Log
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -10,6 +12,7 @@ import androidx.media3.exoplayer.SeekParameters
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.PLAY_AT_END_TOLERANCE_MS
 import com.example.myvlogapp.PLAYBACK_POLL_INTERVAL_MS
 import com.example.myvlogapp.VlogClip
@@ -68,11 +71,14 @@ internal fun playFromWhere(
  *
  * @param clips いまのタイムライン。呼ぶたびに最新を返すこと
  *   （このクラスは一覧を保持せず、判断のたびに読みに行く）
+ * @param onPlaybackError 動画を再生できなかったとき（編集中に移動・削除された動画など）に呼ぶ。
+ *   画面へ知らせるのは呼び出し元（ViewModel）の仕事
  */
 @OptIn(UnstableApi::class)
 class PlaybackController(
     context: Context,
-    private val clips: () -> List<VlogClip>
+    private val clips: () -> List<VlogClip>,
+    private val onPlaybackError: () -> Unit
 ) : TimelinePlayback {
 
     /** タイムラインの動画は自動再生しない */
@@ -140,6 +146,8 @@ class PlaybackController(
              * false になって監視が素通りしてしまうため。
              */
             override fun onPlaybackStateChanged(playbackState: Int) {
+                // 読み込めたら、次に同じ動画で失敗したときはまた知らせる（[onPlayerError]）
+                if (playbackState == Player.STATE_READY) lastErrorIndex = null
                 if (playbackState != Player.STATE_ENDED) return
                 player.playWhenReady = false
                 stopAtTimelineEnd()
@@ -147,6 +155,23 @@ class PlaybackController(
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
+            }
+
+            /**
+             * 読めない動画（編集中に移動・削除された、権限が取り消されたなど）に当たると、
+             * ExoPlayerはプレイリスト全体を止めて待機状態（STATE_IDLE）になる。この状態では
+             * 別のクリップを選んで再生を押しても何も映らず、以前はアプリを再起動するまで
+             * プレビューが一切動かなくなっていた。立て直しは次のユーザー操作のとき
+             * （[recoverFromError]）に行う。ここですぐprepareし直すと、同じ動画でまた失敗して
+             * 失敗と準備し直しを繰り返し続けるため。
+             */
+            override fun onPlayerError(error: PlaybackException) {
+                Log.w(LOG_TAG, "プレビューで動画を再生できませんでした", error)
+                // 同じ動画で続けて失敗したときは知らせ直さない。選んだときと再生を押したときの
+                // 両方で失敗するので、そのままだと同じお知らせが2回続けて出る
+                val index = player.currentMediaItemIndex
+                if (index != lastErrorIndex) onPlaybackError()
+                lastErrorIndex = index
             }
         })
     }
@@ -165,6 +190,21 @@ class PlaybackController(
     override fun seekWithoutPause(positionMs: Long) {
         player.seekTo(_selectedIndex.value, positionMs)
         _playbackPositionMs.value = positionMs
+        recoverFromError()
+    }
+
+    /** 直前に再生できなかった動画の位置。同じ動画で失敗を知らせ直さないために控える */
+    private var lastErrorIndex: Int? = null
+
+    /**
+     * 再生エラーで止まっていたら（[Player.Listener.onPlayerError]の説明）、準備し直す。
+     * クリップを選ぶ・シークする・再生を押す、といったユーザー操作のたびに呼ぶ。
+     * 選び直した先がまた読めない動画なら、もう一度エラーになって知らせるだけで済む。
+     */
+    private fun recoverFromError() {
+        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) {
+            player.prepare()
+        }
     }
 
     /** 再生を止めてからシークする。ユーザーがトリミング等で位置を直接動かす操作用 */
@@ -426,6 +466,7 @@ class PlaybackController(
             }
             PlayFrom.SELECTED_CLIP_START -> seekWithoutPause(clip.startMs)
         }
+        recoverFromError()
         player.play()
     }
 

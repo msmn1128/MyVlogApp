@@ -66,6 +66,12 @@ internal val TOOLBAR_ICON_SIZE = 20.dp
 /** セクション間の余白。プレビュー/タイムライン/ひとこと欄の区切りで共通に使う */
 internal val SECTION_GAP = 12.dp
 
+/**
+ * これより縦に短い画面では、キーボードを出している間タイムラインを畳む（VlogAppScreen）。
+ * MaterialのウィンドウサイズクラスでcompactにあたるHeightの境目。
+ */
+internal val COMPACT_HEIGHT = 480.dp
+
 /** 波形の高さ。つまみを指で掴める大きさが要るので、表示だけだった頃より厚くしてある */
 internal val WAVEFORM_HEIGHT = 76.dp
 
@@ -115,6 +121,8 @@ private fun rememberAssetFontFamily(assetName: String): FontFamily {
  *   1カラムのまま縦に4分割すると、縦が短い端末でタイムラインが潰れて
  *   スライダーや文字が入り切らなくなるため。
  */
+// imeAnimationSource/Target（キーボードの開閉度を求めるのに使う）が実験的なAPIのため
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val context = LocalContext.current
@@ -130,26 +138,40 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // セクションが一様に潰れて入力欄が読めなくなってしまう。
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
-    // 全開時の高さを覚えておき、0〜1の開閉度に正規化する。
+    // 全開時の高さで割って、0〜1の開閉度に正規化する。
     // ComposeのWindowInsets.imeはIME自体のスライドと同じフレームで
     // 値が更新されるため、animateFloatAsStateで別途アニメーションを足すと
     // 「キーボードはもう閉じているのにレイアウトだけ遅れて縮む」ズレが出る。
     // ここではその値をそのまま補間の材料にして、キーボードの動きと
     // 完全に同期させている。
     //
-    // 覚えた最大値はウィンドウの大きさが変わったら捨てる。configChangesで回転しても
-    // Activityが作り直されないため、そのままだと縦画面の（背の高い）キーボードの値が
-    // 横画面にも残り、横でキーボードを全開にしても開閉度が1に届かず、ひとこと欄が広がり切らない。
-    // 縦横の判定（isWide）と同じく、キーボードでは縮まないウィンドウ全体の大きさを使う。
-    val windowSize = LocalWindowInfo.current.containerSize
-    var imeMaxBottomPx by remember(windowSize) { mutableIntStateOf(0) }
-    if (imeBottomPx > imeMaxBottomPx) imeMaxBottomPx = imeBottomPx
+    // 全開時の高さは、IMEのアニメーションの出発点と行き先（imeAnimationSource/Target）の大きい方。
+    // 開くときは行き先、閉じるときは出発点が全開時の高さを指し、アニメーションしていないときは
+    // どちらも今の高さになる。以前は「これまでで一番高かった値」を覚えていたが、回転や
+    // 絵文字パネル（普通のキーボードより背が高い）で一度上がると下がらず、普通のキーボードを
+    // 全開にしても開閉度が1に届かず、ひとこと欄が広がり切らなかった。
+    // 今の高さ（imeBottomPx）も候補に入れるのは、IMEのアニメーションが届かない環境
+    // （アニメーションを伝えるWindowInsetsAnimationはAndroid 11からで、minSdkのAndroid 10では
+    // 互換ライブラリ頼みになる）で出発点と行き先が0のままでも、開いていれば開閉度が1になるようにするため。
+    val imeFullPx = maxOf(
+        imeBottomPx,
+        WindowInsets.imeAnimationSource.getBottom(density),
+        WindowInsets.imeAnimationTarget.getBottom(density)
+    )
     val imeOpenFraction =
-        if (imeMaxBottomPx > 0) (imeBottomPx.toFloat() / imeMaxBottomPx).coerceIn(0f, 1f) else 0f
+        if (imeFullPx > 0) (imeBottomPx.toFloat() / imeFullPx).coerceIn(0f, 1f) else 0f
     // ひとこと入力欄が、キーボードの開閉に合わせて自分の表示（placeholderの出し分けや
     // スクロール位置）を切り替えるための合図。isFocusedだけを見ると、キーボードを閉じても
     // フォーカスは残ったままなことがあり、空欄でもカーソルだけ点滅し続けてしまう。
     val isImeVisible = imeBottomPx > 0
+    // 縦横の判定（isWide）には、キーボードでは縮まないウィンドウ全体の大きさを使う（理由は下）
+    val windowSize = LocalWindowInfo.current.containerSize
+    // 縦に短い画面（横向きのスマホなど。Materialの区分でcompactにあたる480dp未満）では、
+    // キーボードを出すと残りが数百pxしかなく、比率を変えてもタイムラインとひとこと欄が
+    // 両方潰れ、入力欄が枠線1本ほどになって打った文字が見えなかった。
+    // キーボードが出ている間はタイムラインを畳み、ひとこと欄に高さを回す。
+    val isCompactHeight = with(density) { windowSize.height.toDp() } < COMPACT_HEIGHT
+    val showTimeline = !(isCompactHeight && isImeVisible)
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
@@ -288,6 +310,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
     // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
     // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
+    // windowSize は上（キーボードまわりの判定）で読んである。
     val isWide = windowSize.width > windowSize.height
 
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。
@@ -375,6 +398,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             isExporting = isExporting,
             timelineWeight = timelineWeight,
             editorWeight = editorWeight,
+            showTimeline = showTimeline,
             isImeVisible = isImeVisible
         )
     }

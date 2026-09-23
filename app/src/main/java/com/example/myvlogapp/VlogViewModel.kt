@@ -75,7 +75,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * プレビュー再生の受け持ち。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
      * トリミング終端での停止はすべてこちら（playback/PlaybackController.kt）にある。
      */
-    private val playback = PlaybackController(application) { timeline.current }
+    private val playback = PlaybackController(
+        context = application,
+        clips = { timeline.current },
+        onPlaybackError = {
+            sendMessage("この動画を再生できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
+        }
+    )
 
     /**
      * クリップ一覧・履歴・プレイリスト同期の持ち主（edit/TimelineStore.kt）。
@@ -349,10 +355,17 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             addSkipMessage(alreadyAdded = alreadyInTimeline, unreadable = 0)?.let(::sendMessage)
             return
         }
-        // すでに上限いっぱいなら、読み込むまでもなく断る
-        if (timeline.current.size >= MAX_CLIPS) {
+        // 上限（MAX_CLIPS）に入りきらない分は、メタデータを読む前に断る。読んでから捨てていた
+        // 頃は、残り5本のところへ50本選ぶと、入らない45本ぶんまで読むのを待たされていた。
+        // 入れる分は選んだ順に先頭から取る（読んだあとで上限を守っていた頃と同じ選び方）。
+        // その中に読めない動画が混ざると入る本数が空きより少なくなるが、それは通知で伝わる。
+        // 並行した追加との兼ね合いは、反映の直前（insertByShotAt）でもう一度守っている
+        val room = (MAX_CLIPS - timeline.current.size).coerceAtLeast(0)
+        val toLoad = newUris.take(room)
+        val overLimitBeforeLoading = newUris.size - toLoad.size
+        if (toLoad.isEmpty()) {
             addSkipMessage(
-                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = newUris.size
+                alreadyAdded = alreadyInTimeline, unreadable = 0, overLimit = overLimitBeforeLoading
             )?.let(::sendMessage)
             return
         }
@@ -365,7 +378,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 確実にずらした時刻を用意しておく。
         val fallbackBaseMillis = System.currentTimeMillis()
         val loaded = withContext(Dispatchers.IO) {
-            newUris.mapParallel(METADATA_PARALLELISM) { offset, uri ->
+            toLoad.mapParallel(METADATA_PARALLELISM) { offset, uri ->
                 val meta = getVideoMetadata(context, uri, fallbackBaseMillis + offset)
                 VlogClip(
                     id = nextClipId(),
@@ -389,7 +402,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
             // alreadyPresent は、メタデータの取得中に別の追加が先に入れてしまった分
             alreadyAdded = alreadyInTimeline + result.alreadyPresent,
             unreadable = unreadable.size,
-            overLimit = result.overLimit
+            overLimit = overLimitBeforeLoading + result.overLimit
         )?.let(::sendMessage)
     }
 
@@ -431,10 +444,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 波形をバックグラウンドで用意する。取得済み・取得中のURIは何もしない。
      * 選択中クリップぶんだけ呼ぶ（全件を先読みするとデコードが渋滞して、
      * 肝心の「いま触っているクリップ」の表示が後回しになる）。
+     *
+     * 取得に失敗した（null）URIは、次に選ばれたときに取り直す。以前は失敗も「取得済み」として
+     * 扱っていたため、一時的に読めなかっただけの動画（クラウド上のファイルなど）でも、
+     * アプリを再起動するまで「波形を取得できませんでした」のままだった。取り直している間は
+     * 失敗の表示のまま、届いたら差し替わる。音声の無い動画は失敗ではない（Waveform.Silent）ので
+     * 取り直さない。
      */
     private fun requestWaveform(clip: VlogClip) {
         val key = clip.uri.toString()
-        if (_waveforms.value.containsKey(key)) return
+        if (_waveforms.value[key] != null) return
         if (waveformJobs[key]?.isActive == true) return
 
         waveformJobs[key] = viewModelScope.launch {

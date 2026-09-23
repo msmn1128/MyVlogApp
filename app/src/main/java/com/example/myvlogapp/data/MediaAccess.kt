@@ -3,6 +3,7 @@ package com.example.myvlogapp.data
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.content.ContextCompat
 
@@ -11,6 +12,17 @@ import androidx.core.content.ContextCompat
 //
 // GalleryPicker.kt から分離。Composeに依存しない権限判定だけをここに集める。
 // =====================================================================================
+
+/**
+ * いまこのURIを開けるか。権限切れ・移動・削除をまとめて判定できる。
+ *
+ * 権限の一覧と突き合わせるのではなく実際に開いて確かめるのは、MediaStoreのURIとファイル選択（SAF）の
+ * URIを同じ判定で扱えるうえ、元の動画が移動・削除された場合も同時に弾けるため。
+ * 前回の続きの復元（ClipStore）と、書き出し前の確認（VlogExporter）で使う。
+ */
+internal fun isReadable(context: Context, uri: Uri): Boolean = runCatching {
+    context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+}.getOrDefault(false)
 
 /** この端末で動画一覧に必要な権限。Android 14以降は「選択した項目のみ」も含む */
 val mediaPermissions: Array<String> = when {

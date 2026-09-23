@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.coroutineContext
 import com.example.myvlogapp.HITOKOTO_FONT_PT
+import com.example.myvlogapp.TIME_FONT_PT
+import com.example.myvlogapp.TITLE_DATE_FONT_PT
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.mapParallel
@@ -25,6 +27,7 @@ import com.example.myvlogapp.TITLE_DURATION_MS
 import com.example.myvlogapp.TITLE_FONT_ASSET
 import com.example.myvlogapp.TITLE_SFX_ASSET
 import com.example.myvlogapp.VlogClip
+import com.example.myvlogapp.data.isReadable
 import com.example.myvlogapp.waveform.findAudioTrackIndex
 
 class VlogExportException(message: String) : Exception(message)
@@ -124,6 +127,7 @@ object VlogExporter {
                         "クリップを減らしてください"
             )
         }
+        requireAllReadable(context, clips)
 
         // 作業ファイルはcacheDirに置く（OSが必要に応じて掃除してくれる領域）
         val workDir = workDir(context).apply { mkdirs() }
@@ -137,10 +141,13 @@ object VlogExporter {
         try {
             requireDrawtext()
             val logoType = copyFontAsset(context, TITLE_FONT_ASSET)
+            val time = copyFontAsset(context, TIME_FONT_ASSET)
             val fonts = ExportFonts(
                 logoType = logoType,
-                time = copyFontAsset(context, TIME_FONT_ASSET),
-                hitokotoBaselineShiftPt = baselineShiftPt(logoType, HITOKOTO_FONT_PT)
+                time = time,
+                hitokotoBaselineShiftPt = baselineShiftPt(logoType, HITOKOTO_FONT_PT),
+                timeBaselineShiftPt = baselineShiftPt(time, TIME_FONT_PT),
+                titleBaselineShiftPt = baselineShiftPt(time, TITLE_DATE_FONT_PT)
             )
 
             // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ
@@ -217,6 +224,23 @@ object VlogExporter {
             mergedFile.delete()
             textFiles.forEach { it.delete() }
         }
+    }
+
+    /**
+     * 全クリップの動画が今も開けるかを、書き出しを始める前に確かめる。
+     *
+     * 編集中に動画が移動・削除された、権限が取り消されたなどで開けない動画が混ざっていると、
+     * FFmpegが「saf:2.unknown: Invalid data found when processing input」のような
+     * どの動画が原因か分からないメッセージで失敗していた。何本目のどの動画かを伝えて断る。
+     */
+    private fun requireAllReadable(context: Context, clips: List<VlogClip>) {
+        val missing = clips.withIndex().filterNot { (_, clip) -> isReadable(context, clip.uri) }
+        if (missing.isEmpty()) return
+        val which = missing.joinToString("、") { (index, clip) -> "${index + 1}本目（${clip.timeText}）" }
+        throw VlogExportException(
+            "${which}の動画が見つかりません。移動・削除されたか、アクセス権限が取り消されています。" +
+                    "タイムラインから外してから書き出してください"
+        )
     }
 
     /** 実行中のFFmpeg処理を中断する。実体は FFmpegRunner.kt */
