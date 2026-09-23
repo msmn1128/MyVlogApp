@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（186件）
+./gradlew testDebugUnitTest        # JVM単体テスト（189件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（12件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -56,7 +56,7 @@ ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
 ## 全体像
 
 ```
-MainActivity            画面構成（縦1カラム / 横2ペイン）、権限、ダイアログ、ポーリング
+MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイアログ・ポーリング・許可の入口は別ファイル
   └ VlogViewModel       配線と窓口。画面はここだけを見る
       ├ TimelineStore       クリップ一覧・履歴・プレイリスト同期・編集操作の本体
       │    └ EditHistory       もとに戻す / やり直す
@@ -74,7 +74,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 
 | パッケージ | 役割 |
 |---|---|
-| ルート | `VlogModels`(純粋データ) / `VlogConstants`(定数) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity` |
+| ルート | `VlogModels`(純粋データ) / `VlogConstants`(書き出しと共有する数値) / `UiDimens`(画面だけで使う寸法と配分) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity`(画面構成) / `VlogAppDialogs`・`VlogAppSideEffects`・`ActivityLaunchers`(MainActivityから切り出したダイアログ・画面の外の処理・許可とファイル選択の入口。ViewModelを受け取るので`ui/screens/`には置かない) |
 | `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
 | `playback/` | `PlaybackController` とその純粋関数 `playFromWhere` |
 | `edit/` | `TimelineStore`(クリップ一覧の持ち主) `EditHistory`（スナップショット型を問わない汎用の履歴） |
@@ -145,6 +145,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
 | `FilterGraph.kt` | `filter_complex` の組み立て。**下の地雷はほぼすべてここ** |
 | `ExportTextFiles.kt` | drawtextへ渡す行ごとのテキストファイル |
 | `ExportAssets.kt` | フォント・効果音のassetsからの展開 |
+| `ClipProbe.kt` | 書き出し前に、各動画を1回ずつ開いて音声トラックの有無とHDRかを読む |
 | `FFmpegCapabilities.kt` | 使えるエンコーダ・フィルタの判定と出力フォーマット |
 | `FFmpegRunner.kt` | 実行・進捗・中止（実行中セッションを控えるのはここだけ） |
 | `Segments.kt` | 本数が多いときの区切り方と、つなぐファイルの一覧 |
@@ -250,7 +251,8 @@ init から、**書き出しが走っていないときだけ**掃除する。
 - **コミットメッセージも日本語で、「何が問題だったか」を書く。** 末尾に
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。
 - 数値は `VlogConstants.kt` に集約する。UI側とExporter側で同じ値を使う箇所が多く、
-  散らすと片方だけ変えて見た目が食い違う。
+  散らすと片方だけ変えて見た目が食い違う。ただし画面だけで使う寸法（dp）と画面の配分は
+  `UiDimens.kt` に置く（書き出し側からは使わないので、書き出しと共有する値と混ぜない）。
 - 画面に出す文字列はKotlin側にベタ書き。多言語化の予定が無いため。
   `strings.xml` にあるのはアプリ名（`app_name` = "MyVlog."）だけ。
 - Composeでは、80msごとに変わる再生位置を**コンポジション中で読まない**。
@@ -262,7 +264,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、186件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、189件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -276,6 +278,7 @@ JVM単体テスト（`src/test`）、186件。対象は純粋関数と、再生�
 | `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
+| `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
 | `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
 | `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |

@@ -9,8 +9,8 @@ import kotlinx.coroutines.sync.withPermit
 // =====================================================================================
 // 並列処理のヘルパー。
 //
-// 動画のメタデータ取得（[VlogViewModel.addClips]）と、書き出し前の音声トラック判定
-// （com.example.myvlogapp.export.AudioPlan.build）が同じ形を別々に書いていたのでまとめた。
+// 動画のメタデータ取得（[VlogViewModel.addClips]）と、書き出し前に動画の中身を調べる処理
+// （com.example.myvlogapp.export.probeClip）が同じ形を別々に書いていたのでまとめた。
 // 復元時に動画を開けるかの確認（com.example.myvlogapp.data.ClipStore）でも使う。
 // =====================================================================================
 

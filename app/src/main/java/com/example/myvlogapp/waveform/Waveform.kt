@@ -37,7 +37,7 @@ internal fun waveformBucketsFor(durationMs: Long): Int =
 /** 出力バッファを待つ時間。空振りしたときだけこのぶん眠るので、CPUを回し続けずに済む */
 private const val DECODE_TIMEOUT_US = 10_000L
 
-/** 音声トラックのインデックスを探す。見つからなければ null（[VlogExporter]の音声有無判定とも共用） */
+/** 音声トラックのインデックスを探す。見つからなければ null（書き出し前に動画を調べる probeClip とも共用） */
 internal fun MediaExtractor.findAudioTrackIndex(): Int? =
     (0 until trackCount).firstOrNull { index ->
         getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true

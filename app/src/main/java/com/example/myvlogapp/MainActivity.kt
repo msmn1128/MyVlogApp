@@ -1,17 +1,10 @@
 package com.example.myvlogapp
 
-import android.Manifest
-import android.app.Activity
-import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,7 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
@@ -28,65 +20,19 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myvlogapp.data.hasMediaAccess
 import com.example.myvlogapp.data.mediaPermissions
 import com.example.myvlogapp.export.ExportState
-import com.example.myvlogapp.export.VlogEvent
 import com.example.myvlogapp.ui.screens.EditSection
-import com.example.myvlogapp.ui.screens.GalleryPickerDialog
 import com.example.myvlogapp.ui.screens.PreviewSection
-import com.example.myvlogapp.ui.screens.SaveLoadDialog
 import com.example.myvlogapp.ui.screens.TimelineActions
 import com.example.myvlogapp.ui.screens.TimelineFit
 import com.example.myvlogapp.ui.screens.TimelineState
 import com.example.myvlogapp.ui.screens.TitleCreationDialog
 import com.example.myvlogapp.ui.theme.MyVlogAppTheme
 import com.example.myvlogapp.waveform.WaveformTrimmerCallbacks
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-
-// =====================================================================================
-// レイアウト定数
-//
-// 使用箇所より大幅に後ろに埋もれていると見つけにくいため、ファイル先頭に集約する。
-// PreviewSection.kt/TimelineSection.kt/ToolbarButtons.ktからも参照するためinternal。
-// =====================================================================================
-
-/**
- * 操作バーのボタン1個の大きさ。Materialの推奨に合わせて48dp。
- * 横幅の狭い端末ではみ出す分は、操作バー自体の横スクロールで吸収する。
- */
-internal val TOOLBAR_BUTTON_SIZE = 48.dp
-
-/** 操作バーのアイコンサイズ */
-internal val TOOLBAR_ICON_SIZE = 20.dp
-
-/** セクション間の余白。プレビュー/タイムライン/ひとこと欄の区切りで共通に使う */
-internal val SECTION_GAP = 12.dp
-
-/**
- * これより縦に短い画面では、キーボードを出している間タイムラインを畳む（VlogAppScreen）。
- * MaterialのウィンドウサイズクラスでcompactにあたるHeightの境目。
- */
-internal val COMPACT_HEIGHT = 480.dp
-
-// タイムラインの欄を広げるとき（TimelineFit.kt）に、削る側へ残す比率の下限。
-// 縦1カラムのプレビューは全体の2割、横2ペインのひとこと欄は右ペイン（タイムライン0.40＋ひとこと0.20）の2割
-private const val MIN_PREVIEW_WEIGHT = 0.20f
-private const val MIN_WIDE_EDITOR_WEIGHT = 0.12f
-
-/** 波形の高さ。つまみを指で掴める大きさが要るので、表示だけだった頃より厚くしてある */
-internal val WAVEFORM_HEIGHT = 76.dp
-
-// トリミングつまみの寸法・ズームの余白など、波形トリマー固有の定数は
-// WaveformTrimmer.kt側に集約してある（MIN_TRIM_MSだけはTrimSectionでも使うため公開）。
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -444,187 +390,4 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             }
         }
     }
-}
-
-/**
- * 書き出しを始める入口を作る。返す関数の引数は（タイトルを付けるか, タイトルの文言）。
- * 文言はタイトルを付けるとき（タイトル作成ダイアログで確定済み）だけ意味を持つ。
- *
- * 書き出し中はフォアグラウンドサービスの通知を出す（VlogExportService）。Android 13以降は
- * 表示に実行時の許可が要るので、まだ許可されていなければ先に聞き、答えが返ってから始める。
- * 許可されてもされなくても書き出す（通知は進み具合を知らせるだけで、無くても書き出せる）。
- * 聞くのと同時に始めていた頃は、許可の画面の裏で書き出しが進み、短い書き出しだと
- * 完了の知らせまで画面の裏で済んで、何が起きたか分からなかった。
- * 2回断られるとシステムはもう画面を出さず、すぐに「拒否」で返ってくるので、その場合もすぐ始まる。
- *
- * 呼ぶのは[VlogAppScreen]の、縦横の分岐より外側（理由は呼び出し側）。
- */
-@Composable
-private fun rememberExportStarter(
-    onStart: (includeTitle: Boolean, titleText: String?) -> Unit
-): (includeTitle: Boolean, titleText: String?) -> Unit {
-    val context = LocalContext.current
-    // 許可を聞いている間、始める書き出しの内容を覚えておく。許可の画面は別のActivityで、
-    // 答えるまでの間にこの画面がメモリ不足で回収されることがある（回転では作り直さない設定。
-    // マニフェストのconfigChanges）。戻ったときに消えていないようrememberSaveableにする
-    var pending by rememberSaveable { mutableStateOf(false) }
-    var pendingIncludeTitle by rememberSaveable { mutableStateOf(false) }
-    var pendingTitleText by rememberSaveable { mutableStateOf<String?>(null) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        if (pending) {
-            pending = false
-            onStart(pendingIncludeTitle, pendingTitleText)
-        }
-    }
-    return { includeTitle, titleText ->
-        val needsToAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-        if (needsToAsk) {
-            pendingIncludeTitle = includeTitle
-            pendingTitleText = titleText
-            pending = true
-            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            onStart(includeTitle, titleText)
-        }
-    }
-}
-
-/**
- * 動画を選ぶギャラリー・一時保存の一覧、2つのダイアログをまとめたもの。
- * [VlogAppScreen] から切り出したもの。
- *
- * ここではダイアログの開閉状態と結果コールバックだけを受け取り、
- * `rememberLauncherForActivityResult` 自体は [VlogAppScreen] 側に置いたままにしてある。
- * ランチャーをこの関数の中で生成すると、呼び出し位置がisWide分岐の外側であっても
- * このコンポーザブル自体が再生成されるたびにActivityResultRegistryとの紐付けが
- * 作り直されるおそれがあり、権限ダイアログのコールバックが失われるリスクを避けるため。
- */
-@Composable
-private fun VlogAppDialogs(
-    showGallery: Boolean,
-    galleryReloadToken: Int,
-    onDismissGallery: () -> Unit,
-    onPickFromGallery: (List<Uri>) -> Unit,
-    onUseFilePicker: () -> Unit,
-    onChangeSelection: () -> Unit,
-    showSaves: Boolean,
-    onDismissSaves: () -> Unit,
-    canSaveProject: Boolean,
-    onLoadProject: (Long) -> Unit,
-    viewModel: VlogViewModel
-) {
-    if (showGallery) {
-        GalleryPickerDialog(
-            reloadToken = galleryReloadToken,
-            onDismiss = onDismissGallery,
-            onPick = onPickFromGallery,
-            onUseFilePicker = onUseFilePicker,
-            onChangeSelection = onChangeSelection
-        )
-    }
-
-    if (showSaves) {
-        val projects by viewModel.projects.collectAsStateWithLifecycle()
-        // 開くたびに読み直す。保存・削除のたびにViewModel側でも更新される
-        LaunchedEffect(Unit) { viewModel.refreshProjects() }
-
-        SaveLoadDialog(
-            projects = projects,
-            canSave = canSaveProject,
-            onSave = viewModel::saveProject,
-            onLoad = onLoadProject,
-            onOverwrite = { project -> viewModel.overwriteProject(project.id, project.name) },
-            onDelete = viewModel::deleteProject,
-            onDismiss = onDismissSaves
-        )
-    }
-}
-
-/**
- * Toast通知・戻るボタン・バックグラウンド時の一時停止・再生位置ポーリングをまとめたもの。
- * [VlogAppScreen] から切り出したもの。
- */
-@Composable
-private fun VlogAppSideEffects(viewModel: VlogViewModel, clips: List<VlogClip>) {
-    val context = LocalContext.current
-
-    // Toastなどの一過性イベント
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is VlogEvent.Message -> Toast.makeText(context, event.text, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    // 戻るボタンでActivityが終了するとViewModelごと破棄され、読み込んだ動画が消える。
-    // クリップを読み込んでいる間は、ホームボタンと同じ「バックグラウンドへ回す」動きにして、
-    // 戻ってきたときに作業を続けられるようにする。
-    val activity = context as? Activity
-    BackHandler(enabled = clips.isNotEmpty()) {
-        activity?.moveTaskToBack(true)
-    }
-
-    // アプリが背面に回ったら再生を止める。前面に戻ったら、動画が開けるかを確かめ直す
-    // （背面にいる間にギャラリーなど別のアプリで動画を消された、権限を取り消された場合に気付くため）
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_STOP -> viewModel.pause()
-                Lifecycle.Event.ON_START -> viewModel.refreshMissingClips()
-                else -> Unit
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // 再生位置の更新とトリミング範囲の連続再生。
-    //
-    // 回すのは「前面」かつ「再生中」のときだけ。
-    //  - repeatOnLifecycle：バックグラウンドに回しても（BackHandlerでmoveTaskToBackした
-    //    場合など）ループ自体はComposition生存中ずっと動き続けてしまうため
-    //  - collectLatest(isPlaying)：一時停止中は再生位置が進まず、ポーリングしても
-    //    毎回同じ値を読んで捨てるだけの空振りになるため。再生が止まると
-    //    collectLatestが内側のループごとキャンセルし、再生を押すとまた始まる
-    //
-    // 一時停止中の位置あわせはポーリングではなく、シーク系の操作
-    // （PlaybackControllerのseekWithoutPause/seekAndPause）が直接行っている。
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            viewModel.isPlaying.collectLatest { playing ->
-                if (!playing) return@collectLatest
-                while (true) {
-                    delay(PLAYBACK_POLL_INTERVAL_MS)
-                    viewModel.refreshPlaybackProgress()
-                }
-            }
-        }
-    }
-}
-
-/**
- * 「最初に開く場所」を指定できるようにしたドキュメントピッカー。
- *
- * 既定では「最近使用したファイル」が開き、撮影した動画に辿り着くまでに
- * ドロワーを開いて階層を降りる必要がある。カメラの保存先を初期表示にして
- * その手間を無くす。
- *
- * 指定先が存在しない端末ではEXTRA_INITIAL_URIが単に無視され、従来どおりの画面が
- * 開くだけなので、フォールバックは要らない。
- */
-private class OpenVideosFromCamera : ActivityResultContracts.OpenMultipleDocuments() {
-    override fun createIntent(context: Context, input: Array<String>): Intent =
-        super.createIntent(context, input).apply {
-            putExtra(
-                DocumentsContract.EXTRA_INITIAL_URI,
-                DocumentsContract.buildDocumentUri(
-                    "com.android.externalstorage.documents",
-                    "primary:DCIM/Camera"
-                )
-            )
-        }
 }
