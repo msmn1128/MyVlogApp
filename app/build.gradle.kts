@@ -37,8 +37,8 @@ android {
         // 「書き出した動画が保存できない・サムネイルが出ない」状態になるため。
         minSdk = 29
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     signingConfigs {
