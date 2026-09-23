@@ -175,6 +175,22 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun aBrokenSegmentIsSkippedWithoutLosingTheClip() {
+        // 区間の中にオブジェクトでない要素が混ざっていても、その要素だけを飛ばしてクリップは残す
+        val json = testClip(durationMs = 10_000L).toJson().put(
+            VlogClipKeys.TEXTS,
+            JSONArray()
+                .put(JSONObject().put(VlogClipKeys.START_MS, 0L).put(VlogClipKeys.TEXT, "a"))
+                .put("壊れた要素")
+                .put(JSONObject().put(VlogClipKeys.START_MS, 3_000L).put(VlogClipKeys.TEXT, "b"))
+        )
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 3_000L), texts.map { it.startMs })
+        assertEquals(listOf("a", "b"), texts.map { it.text })
+    }
+
+    @Test
     fun aSegmentWithoutTheTextKeyIsReadAsEmptyNotAsThePlaceholder() {
         // 値が無いときの代わりに「ひとこと」を入れると、未入力のまま書き出したときに
         // その文字が動画へ焼き込まれてしまう。「ひとこと」は入力欄の案内文字でしかない

@@ -125,7 +125,12 @@ suspend fun extractWaveform(
         val counts = IntArray(buckets)
         val durationUs = durationMs * 1000.0
         val info = MediaCodec.BufferInfo()
-        var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+        // 出力の形式はデコーダが知らせてくる（INFO_OUTPUT_FORMAT_CHANGED）まで、素材の値で見込んでおく
+        var pcm = PcmLayout(
+            encoding = AudioFormat.ENCODING_PCM_16BIT,
+            sampleRate = inputFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: DEFAULT_SAMPLE_RATE,
+            channelCount = inputFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 1
+        )
         var inputDone = false
         var outputDone = false
 
@@ -136,8 +141,8 @@ suspend fun extractWaveform(
                 inputDone = feedInput(codec, extractor)
             }
 
-            val drained = drainOutput(codec, info, pcmEncoding, buckets, durationUs, sums, counts)
-            pcmEncoding = drained.pcmEncoding
+            val drained = drainOutput(codec, info, pcm, durationUs, sums, counts)
+            pcm = drained.pcm
             outputDone = drained.done
         }
 
@@ -180,8 +185,17 @@ private fun feedInput(codec: MediaCodec, extractor: MediaExtractor): Boolean {
     }
 }
 
-/** [drainOutput] の結果。pcmEncodingはINFO_OUTPUT_FORMAT_CHANGED時だけ更新される */
-private data class DrainResult(val pcmEncoding: Int, val done: Boolean)
+/**
+ * 復号済みPCMの並び方。サンプルの時刻を求めるのに、1秒あたりの数とチャンネル数が要る。
+ * @param encoding AudioFormat.ENCODING_PCM_*（16bit・8bit・float）
+ */
+private data class PcmLayout(val encoding: Int, val sampleRate: Int, val channelCount: Int)
+
+/** 素材にもデコーダの出力にもサンプルレートが無いときの見込み（ほとんどの動画の音声がこれ） */
+private const val DEFAULT_SAMPLE_RATE = 44_100
+
+/** [drainOutput] の結果。pcmはINFO_OUTPUT_FORMAT_CHANGED時だけ更新される */
+private data class DrainResult(val pcm: PcmLayout, val done: Boolean)
 
 /**
  * 出力バッファを1回だけ待って処理する。
@@ -191,8 +205,7 @@ private data class DrainResult(val pcmEncoding: Int, val done: Boolean)
 private fun drainOutput(
     codec: MediaCodec,
     info: MediaCodec.BufferInfo,
-    pcmEncoding: Int,
-    buckets: Int,
+    pcm: PcmLayout,
     durationUs: Double,
     sums: DoubleArray,
     counts: IntArray
@@ -200,46 +213,44 @@ private fun drainOutput(
     val outputIndex = codec.dequeueOutputBuffer(info, DECODE_TIMEOUT_US)
     return when {
         outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
-            DrainResult(codec.outputFormat.pcmEncoding(), done = false)
+            DrainResult(codec.outputFormat.pcmLayout(fallback = pcm), done = false)
 
         outputIndex >= 0 -> {
             if (info.size > 0) {
-                val bucket = (info.presentationTimeUs / durationUs * buckets)
-                    .toInt().coerceIn(0, buckets - 1)
                 codec.getOutputBuffer(outputIndex)?.let { buffer ->
                     buffer.position(info.offset)
                     buffer.limit(info.offset + info.size)
-                    accumulate(buffer, pcmEncoding, bucket, sums, counts)
+                    accumulate(buffer, pcm, info.presentationTimeUs, durationUs, sums, counts)
                 }
             }
             codec.releaseOutputBuffer(outputIndex, false)
-            DrainResult(pcmEncoding, done = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0)
+            DrainResult(pcm, done = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0)
         }
 
         // INFO_TRY_AGAIN_LATER と非推奨の INFO_OUTPUT_BUFFERS_CHANGED は何もしない
-        else -> DrainResult(pcmEncoding, done = false)
+        else -> DrainResult(pcm, done = false)
     }
 }
 
 /**
- * 復号済みPCMを二乗和として区間に足し込む。
+ * 復号済みPCMの出力バッファ1つを、二乗和として区間に足し込む。
  *
  * PCM形式ごとに「サンプル数」と「i番目のサンプルを-1f〜1fへ正規化する関数」だけが違う
- * (8bit PCMは1バイト=1サンプルなので、他の形式と同じ意味で`SAMPLE_STRIDE`だけ間引ける。
- * 開始位置が`buffer.position()`なのは、Float/Short用のview bufferは位置0基準になるのに対し、
- * 生バイトはByteBuffer自体の絶対位置を使う必要があるため)。
- * このループ自体は形式によらず共通なので、サンプラーだけ差し替えて1本にまとめてある。
+ * (8bit PCMは1バイト=1サンプル。開始位置が`buffer.position()`なのは、Float/Short用の
+ * view bufferは位置0基準になるのに対し、生バイトはByteBuffer自体の絶対位置を使う必要があるため)。
+ * 区間への振り分けは形式によらず共通なので[accumulateSamples]に任せる。
  */
 private fun accumulate(
     buffer: ByteBuffer,
-    pcmEncoding: Int,
-    bucket: Int,
+    pcm: PcmLayout,
+    startUs: Long,
+    durationUs: Double,
     sums: DoubleArray,
     counts: IntArray
 ) {
     buffer.order(ByteOrder.LITTLE_ENDIAN)
 
-    val (sampleCount, sampleAt) = when (pcmEncoding) {
+    val (sampleCount, sampleAt) = when (pcm.encoding) {
         AudioFormat.ENCODING_PCM_FLOAT -> {
             val samples = buffer.asFloatBuffer()
             samples.limit() to { i: Int -> samples.get(i).toDouble() }
@@ -258,18 +269,43 @@ private fun accumulate(
         }
     }
 
-    var sum = 0.0
-    var taken = 0
+    accumulateSamples(
+        sampleCount, sampleAt, startUs, pcm.sampleRate, pcm.channelCount, durationUs, sums, counts
+    )
+}
+
+/**
+ * サンプルを1つずつ、その時刻が属する区間へ二乗和として足し込む。
+ *
+ * 出力バッファ1つ（AACなら約23ms）を先頭の時刻の区間へまとめて足していた頃は、区間がそれより短い
+ * 短い動画（3秒なら240区間で1区間12.5ms）で、およそ2区間に1つが空になり、波形が櫛の歯のように
+ * 途切れて見えた。サンプルごとの時刻（先頭の時刻＋何コマ目か÷サンプルレート）で振り分ける。
+ *
+ * @param sampleAt i番目のサンプル（-1〜1）。チャンネルは交互に並んでいる
+ * @param startUs このバッファの先頭のサンプルの時刻
+ */
+internal fun accumulateSamples(
+    sampleCount: Int,
+    sampleAt: (Int) -> Double,
+    startUs: Long,
+    sampleRate: Int,
+    channelCount: Int,
+    durationUs: Double,
+    sums: DoubleArray,
+    counts: IntArray
+) {
+    val buckets = sums.size
+    val usPerFrame = 1_000_000.0 / sampleRate.coerceAtLeast(1)
+    val channels = channelCount.coerceAtLeast(1)
     var i = 0
     while (i < sampleCount) {
+        val timeUs = startUs + (i / channels) * usPerFrame
+        val bucket = (timeUs / durationUs * buckets).toInt().coerceIn(0, buckets - 1)
         val value = sampleAt(i)
-        sum += value * value
-        taken++
+        sums[bucket] += value * value
+        counts[bucket]++
         i += SAMPLE_STRIDE
     }
-
-    sums[bucket] += sum
-    counts[bucket] += taken
 }
 
 /**
@@ -287,7 +323,15 @@ private fun normalize(sums: DoubleArray, counts: IntArray): FloatArray {
     return FloatArray(sums.size) { i -> (rms[i] / peak).pow(0.6).toFloat().coerceIn(0f, 1f) }
 }
 
-/** 出力PCMのビット形式。指定が無い端末は16bitとして扱う */
-private fun MediaFormat.pcmEncoding(): Int =
-    runCatching { getInteger(MediaFormat.KEY_PCM_ENCODING) }
-        .getOrDefault(AudioFormat.ENCODING_PCM_16BIT)
+/**
+ * デコーダの出力の並び方。ビット形式の指定が無い端末は16bitとして扱い、
+ * サンプルレートとチャンネル数が無ければそれまでの見込み（[fallback]）のままにする。
+ */
+private fun MediaFormat.pcmLayout(fallback: PcmLayout): PcmLayout = PcmLayout(
+    encoding = intOrNull(MediaFormat.KEY_PCM_ENCODING) ?: AudioFormat.ENCODING_PCM_16BIT,
+    sampleRate = intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: fallback.sampleRate,
+    channelCount = intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: fallback.channelCount
+)
+
+private fun MediaFormat.intOrNull(key: String): Int? =
+    if (containsKey(key)) runCatching { getInteger(key) }.getOrNull() else null

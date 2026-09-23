@@ -217,8 +217,10 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
     // 昇順に直してから返す。区間の判定（textIndexAt / visibleTextSpans）は
     // 「前から順に並んでいる」前提で書かれているので、並びが崩れていると
     // ひとことが拾えない区間ができ、書き出しから文字が消える。
-    val segments = (0 until array.length()).map { index ->
-        val item = array.getJSONObject(index)
+    // オブジェクトでない要素は飛ばす。getJSONObjectで読むと例外になり、壊れた区間1つのせいで
+    // クリップごと復元されなくなる（ClipStoreが壊れた1件だけを落とすのと同じ考え方）
+    val segments = (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
         TextSegment(
             startMs = item.optLong(VlogClipKeys.START_MS),
             text = item.optString(VlogClipKeys.TEXT, "")
