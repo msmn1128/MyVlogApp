@@ -97,19 +97,24 @@ internal fun ColumnScope.EditSection(
     isExporting: Boolean,
     timelineWeight: Float,
     editorWeight: Float,
-    isImeVisible: Boolean
+    isImeVisible: Boolean,
+    showTimeline: Boolean
 ) {
-    TimelinePane(
-        clips = clips,
-        selectedIndex = selectedIndex,
-        selectedClip = selectedClip,
-        positionMs = positionMs,
-        state = state,
-        actions = actions,
-        isExporting = isExporting,
-        modifier = Modifier.fillMaxWidth().weight(timelineWeight)
-    )
-    Spacer(Modifier.height(SECTION_GAP))
+    // 縦に短い画面でキーボードを出している間は、タイムラインを畳んでひとこと欄だけにする
+    // （理由は呼び出し元のVlogAppScreen）。ひとこと欄の見出しも同じときに畳む
+    if (showTimeline) {
+        TimelinePane(
+            clips = clips,
+            selectedIndex = selectedIndex,
+            selectedClip = selectedClip,
+            positionMs = positionMs,
+            state = state,
+            actions = actions,
+            isExporting = isExporting,
+            modifier = Modifier.fillMaxWidth().weight(timelineWeight)
+        )
+        Spacer(Modifier.height(SECTION_GAP))
+    }
     EditorPane(
         selectedClip = selectedClip,
         positionMs = positionMs,
@@ -118,6 +123,7 @@ internal fun ColumnScope.EditSection(
         isPlaying = state.isPlaying,
         onTextChange = actions.updateText,
         onPause = actions.pause,
+        showHeader = showTimeline,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
 }
@@ -562,6 +568,7 @@ private fun EditorPane(
     isPlaying: StateFlow<Boolean>,
     onTextChange: (String) -> Unit,
     onPause: () -> Unit,
+    showHeader: Boolean,
     modifier: Modifier = Modifier
 ) {
     val segmentCount = selectedClip?.texts?.size ?: 1
@@ -607,35 +614,39 @@ private fun EditorPane(
 
     Card(modifier = modifier) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text("ひとこと", style = MaterialTheme.typography.titleSmall)
-                // 分割しているときだけ、いま何番目を触っているのかを出す。
-                //
-                // AnimatedVisibilityで出し入れせず、常にレイアウトへ含めて
-                // 透明度だけを変える。端末の文字サイズ設定によってはバッジの
-                // 実サイズを固定値で見積もりきれず、分割した瞬間に「ひとこと」欄の
-                // 枠自体が動いて見えるため、常に場所を確保しておく
-                val segmentInfoAlpha by animateFloatAsState(
-                    targetValue = if (segmentCount > 1) 1f else 0f,
-                    label = "editorPaneSegmentInfoAlpha"
-                )
+            // 縦に短い画面でキーボードを出している間は見出しを畳む。見出しのぶんだけでも、
+            // 入力欄が1行ぶんの高さ（上下の余白込み）に届かず、打った文字の下半分が切れていた
+            if (showHeader) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.alpha(segmentInfoAlpha)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
-                    Text(
-                        "／$segmentCount 区間目を編集中",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Text("ひとこと", style = MaterialTheme.typography.titleSmall)
+                    // 分割しているときだけ、いま何番目を触っているのかを出す。
+                    //
+                    // AnimatedVisibilityで出し入れせず、常にレイアウトへ含めて
+                    // 透明度だけを変える。端末の文字サイズ設定によってはバッジの
+                    // 実サイズを固定値で見積もりきれず、分割した瞬間に「ひとこと」欄の
+                    // 枠自体が動いて見えるため、常に場所を確保しておく
+                    val segmentInfoAlpha by animateFloatAsState(
+                        targetValue = if (segmentCount > 1) 1f else 0f,
+                        label = "editorPaneSegmentInfoAlpha"
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.alpha(segmentInfoAlpha)
+                    ) {
+                        SegmentBadge("$segmentNumber", fontSize = 9.sp, horizontalPadding = 4.dp)
+                        Text(
+                            "／$segmentCount 区間目を編集中",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
+                Spacer(Modifier.height(6.dp))
             }
-            Spacer(Modifier.height(6.dp))
             val interactionSource = remember { MutableInteractionSource() }
             val isFocused by interactionSource.collectIsFocusedAsState()
             val playing by isPlaying.collectAsStateWithLifecycle()
