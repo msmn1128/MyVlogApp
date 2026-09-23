@@ -431,10 +431,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      * 波形をバックグラウンドで用意する。取得済み・取得中のURIは何もしない。
      * 選択中クリップぶんだけ呼ぶ（全件を先読みするとデコードが渋滞して、
      * 肝心の「いま触っているクリップ」の表示が後回しになる）。
+     *
+     * 取得に失敗した（null）URIは、次に選ばれたときに取り直す。以前は失敗も「取得済み」として
+     * 扱っていたため、一時的に読めなかっただけの動画（クラウド上のファイルなど）でも、
+     * アプリを再起動するまで「波形を取得できませんでした」のままだった。取り直している間は
+     * 失敗の表示のまま、届いたら差し替わる。音声の無い動画は失敗ではない（Waveform.Silent）ので
+     * 取り直さない。
      */
     private fun requestWaveform(clip: VlogClip) {
         val key = clip.uri.toString()
-        if (_waveforms.value.containsKey(key)) return
+        if (_waveforms.value[key] != null) return
         if (waveformJobs[key]?.isActive == true) return
 
         waveformJobs[key] = viewModelScope.launch {
