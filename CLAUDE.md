@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（176件）
+./gradlew testDebugUnitTest        # JVM単体テスト（180件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -247,7 +247,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、176件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、180件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -266,6 +266,7 @@ JVM単体テスト（`src/test`）、176件。対象は純粋関数と、再生�
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
 | `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの） |
 | `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
+| `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 

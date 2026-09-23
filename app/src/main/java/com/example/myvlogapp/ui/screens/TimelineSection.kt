@@ -51,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
@@ -98,7 +99,8 @@ internal fun ColumnScope.EditSection(
     timelineWeight: Float,
     editorWeight: Float,
     isImeVisible: Boolean,
-    showTimeline: Boolean
+    showTimeline: Boolean,
+    timelineFit: TimelineFit
 ) {
     // 縦に短い画面でキーボードを出している間は、タイムラインを畳んでひとこと欄だけにする
     // （理由は呼び出し元のVlogAppScreen）。ひとこと欄の見出しも同じときに畳む
@@ -111,6 +113,9 @@ internal fun ColumnScope.EditSection(
             state = state,
             actions = actions,
             isExporting = isExporting,
+            onMeasured = { cardPx, contentPx ->
+                timelineFit.onMeasured(cardPx, contentPx, timelineWeight, isImeVisible)
+            },
             modifier = Modifier.fillMaxWidth().weight(timelineWeight)
         )
         Spacer(Modifier.height(SECTION_GAP))
@@ -143,6 +148,7 @@ private fun TimelinePane(
     state: TimelineState,
     actions: TimelineActions,
     isExporting: Boolean,
+    onMeasured: (cardPx: Int, contentPx: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val canUndo by state.canUndo.collectAsStateWithLifecycle()
@@ -163,11 +169,25 @@ private fun TimelinePane(
         if (selectedIndex in clips.indices) clipListState.animateScrollToItem(selectedIndex)
     }
 
-    Card(modifier = modifier) {
+    // 欄の実際の高さと、中身が収まる高さを測って渡す（足りなければ欄を広げてもらう。TimelineFit.kt）。
+    // 中身の高さは、縦スクロールの内側（高さの制限が無い）で測る
+    val padding = 12.dp
+    val paddingPx = with(LocalDensity.current) { (padding * 2).roundToPx() }
+    val measured = remember { IntArray(2) }
+    Card(
+        modifier = modifier.onSizeChanged {
+            measured[0] = it.height
+            onMeasured(measured[0], measured[1])
+        }
+    ) {
         Column(
             modifier = Modifier
-                .padding(12.dp)
+                .padding(padding)
                 .verticalScroll(rememberScrollState())
+                .onSizeChanged {
+                    measured[1] = it.height + paddingPx
+                    onMeasured(measured[0], measured[1])
+                }
         ) {
             // 見出しと操作バーを2行に分ける。
             // 1行に収めていた頃は、ボタンが増えた時点で横幅の狭い端末では
