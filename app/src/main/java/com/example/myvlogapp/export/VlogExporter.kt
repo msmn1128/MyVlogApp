@@ -35,7 +35,7 @@ class VlogExportException(message: String) : Exception(message)
 private const val CLIP_PROBE_PARALLELISM = 4
 
 /**
- * 区切りごとの書き出しで、行ごとのテキストなどのファイル名に入れる番号を区切りごとに変えるための倍率。
+ * 区切りごとの書き出しで、撮影時刻のテキストや文字の画像などのファイル名に入れる番号を区切りごとに変えるための倍率。
  * 書き出しの番号（開始時刻のミリ秒）にこれを掛けて区切りの番号を足す（区切りは最大[MAX_CLIPS]個）
  */
 private const val SEGMENT_ID_SCALE = 1000L
@@ -105,7 +105,8 @@ internal class AudioPlan(
  * 工程ごとの中身は同じパッケージの別ファイルにある。ここに残すのは手順だけ：
  * - FFmpegCapabilities.kt : 使えるエンコーダ・フィルタの判定と出力フォーマット
  * - FilterGraph.kt        : filter_complex の組み立て（FFmpegの地雷はほぼここ）
- * - ExportTextFiles.kt    : drawtextへ渡す行ごとのテキストファイル
+ * - TextImages.kt         : ひとこと・タイトルの文言を画像にする（絵文字を描くため）
+ * - ExportTextFiles.kt    : drawtextへ渡す撮影時刻のテキストファイル
  * - ExportAssets.kt       : フォント・効果音のassetsからの展開
  * - FFmpegRunner.kt       : 実行・進捗・中止
  * - GalleryOutput.kt      : MediaStoreへの保存
@@ -152,11 +153,11 @@ object VlogExporter {
         // 書き出しを始めた現在時刻を、MP4のメタデータとギャラリーの撮影日時の両方へ入れる。
         val createdAtMillis = id
         val mergedFile = File(workDir, "merged_$id.mp4")
-        // 行ごとのテキスト・フィルタグラフ・区切りの中間ファイルなど、終わったら消すもの
+        // 撮影時刻のテキスト・文字の画像・フィルタグラフ・区切りの中間ファイルなど、終わったら消すもの
         val workFiles = mutableListOf<File>()
 
         try {
-            requireDrawtext()
+            requireTextFilters()
             val logoType = copyFontAsset(context, TITLE_FONT_ASSET)
             val time = copyFontAsset(context, TIME_FONT_ASSET)
             val fonts = ExportFonts(
@@ -273,7 +274,7 @@ object VlogExporter {
      * 1回分のFFmpeg呼び出し。1回で書き出すときは全クリップ、区切りごとに書き出すときは
      * その区切りのクリップだけを受け持つ。
      *
-     * @param passId 行ごとのテキスト・フィルタグラフのファイル名に入れる番号。区切りごとに変える
+     * @param passId 撮影時刻のテキスト・文字の画像・フィルタグラフのファイル名に入れる番号。区切りごとに変える
      * @param outputArgs 映像の引数のあとに付ける引数（音声の形式・メタデータ）
      */
     private suspend fun encodePass(
@@ -294,9 +295,10 @@ object VlogExporter {
         overallDurationMs: Long,
         onProgress: (message: String, progress: Float?) -> Unit
     ) {
+        // ひとことと文言は、Androidの文字の描画で画像にする（絵文字を描くため。TextImages.kt）
         val filterGraph = buildFilterGraph(
             clips, fonts, titleText, titleSfxDelayMs(), workDir, passId, workFiles,
-            includeTitle, audioPlan, hdrTransfers
+            includeTitle, audioPlan, AndroidTextRenderer(workDir, workFiles), hdrTransfers
         )
         // フィルタグラフは引数で渡さずファイルで渡す。本数が多いとグラフが数百KBに
         // なりうる（1クリップ約0.7〜1.5KB。100本で約70KB）。ファイルなら

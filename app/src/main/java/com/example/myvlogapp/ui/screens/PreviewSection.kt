@@ -170,8 +170,8 @@ private fun PreviewPane(
     // 毎回再コンポーズされてしまうため、表示する文字列だけを派生させておき、
     // ひとことが切り替わったときにだけ更新されるようにする。
     val hitokoto by remember(selectedClip) {
-        // 改行は書き出し（writeSpanTextFiles）と同じくlines()で区切り直す。
-        // Composeは単独の\rを改行にしないが、drawtextは改行にするため、
+        // 改行は書き出し（TextImages.hitokotoLines）と同じくlines()で区切り直す。
+        // Composeは単独の\rを改行にしないが、書き出しは\rでも行を分けるため、
         // そのままだと貼り付けた文字の行の割れ方がプレビューと書き出しで食い違う
         derivedStateOf { selectedClip.textAt(positionMs.value).lines().joinToString("\n") }
     }
@@ -242,7 +242,7 @@ private fun PreviewPane(
                 ),
                 fontFamily = hitokotoFontFamily,
                 textAlign = TextAlign.Center,
-                // 折り返さない。書き出しのdrawtextは「\n」の位置でしか改行しないので、
+                // 折り返さない。書き出しは改行の位置でしか行を分けないので、
                 // プレビューだけ自動で折り返すと、長い1行が画面では収まって見えるのに
                 // 書き出した動画では左右が切れる。はみ出しも書き出しと同じく中央から
                 // 左右均等にさせる（unboundedにしないと左端から描かれて右だけが切れる）。

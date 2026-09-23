@@ -755,8 +755,8 @@ private fun EditorPane(
                     // ひとことを改行で見やすく整えられなくなる。
                     // imeActionを明示的にNoneにしておく。指定しないとDefaultになり、IME側の
                     // 判断でエンターキーが「確定」扱いになって閉じてしまう環境がある
-                    // （改行として入らない）。書き出し側（ExportTextFiles）は"\n"で行を
-                    // 分けてdrawtextを積むので、改行はそのまま複数行として焼き込まれる。
+                    // （改行として入らない）。書き出し側（TextImages）は改行で行を
+                    // 分けて描くので、改行はそのまま複数行として焼き込まれる。
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.None),
                     modifier = Modifier.fillMaxWidth().height(fieldHeight)
                 )

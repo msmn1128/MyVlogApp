@@ -1,6 +1,7 @@
 package com.example.myvlogapp.export
 
 import com.example.myvlogapp.TextSegment
+import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.testClip
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -22,30 +23,47 @@ class FilterGraphTest {
         timeText = "12:34"
     )
 
-    // 音声トラックが無く、先頭から3秒だけ使うクリップ
+    // 音声トラックが無く、先頭から3秒だけ使うクリップ。ひとことは空のまま
     private val silentClip = testClip(id = 2, durationMs = 10_000L, startMs = 0L, endMs = 3_000L)
 
-    private fun buildGraph(): String {
-        val workDir = Files.createTempDirectory("vlog_graph_test").toFile()
-        return try {
-            val fonts = ExportFonts(
-                File(workDir, "logo.otf"), File(workDir, "time.ttf"),
-                hitokotoBaselineShiftPt = 20f, timeBaselineShiftPt = 15f, titleBaselineShiftPt = 12f
-            )
-            val audioPlan = AudioPlan(
-                needsTitleSfxInput = true,
-                clipHasRealAudio = listOf(true, false)
-            )
-            runBlocking {
-                buildFilterGraph(
-                    listOf(splitClip, silentClip), fonts, "2026/01/01", 667L, workDir, 1L,
-                    mutableListOf(), includeTitle = true, audioPlan = audioPlan
-                )
-            }
-        } finally {
-            workDir.deleteRecursively()
-        }
+    private fun fonts(workDir: File) = ExportFonts(
+        File(workDir, "logo.otf"), File(workDir, "time.ttf"),
+        hitokotoBaselineShiftPt = 20f, timeBaselineShiftPt = 15f, titleBaselineShiftPt = 12f
+    )
+
+    /**
+     * Androidの描画の代わり。本物と同じく、全行が空なら画像を作らず、帯の位置は[textStripLayout]で決める。
+     * 実際にPNGは書かない（グラフの組み立てはファイルの中身を読まない）
+     */
+    private fun fakeRenderer(workDir: File) = TextRenderer { lines, style, name ->
+        if (lines.all { it == null }) null
+        else TextImage(File(workDir, "$name.png"), textStripLayout(lines.size, style)!!.top)
     }
+
+    private fun buildGraph(
+        clips: List<VlogClip> = listOf(splitClip, silentClip),
+        includeTitle: Boolean = true,
+        titleText: String = "2026/01/01",
+        hdrTransfers: List<HdrTransfer?> = List(clips.size) { null },
+        workDir: File = Files.createTempDirectory("vlog_graph_test").toFile()
+    ): String = try {
+        val audioPlan = AudioPlan(
+            needsTitleSfxInput = includeTitle,
+            clipHasRealAudio = clips.map { it.id != silentClip.id }
+        )
+        runBlocking {
+            buildFilterGraph(
+                clips, fonts(workDir), titleText, 667L, workDir, 1L, mutableListOf(),
+                includeTitle = includeTitle, audioPlan = audioPlan,
+                renderText = fakeRenderer(workDir), hdrTransfers = hdrTransfers
+            )
+        }
+    } finally {
+        workDir.deleteRecursively()
+    }
+
+    /** グラフのうち、[from]から[to]の手前まで（1クリップぶんの映像の組み立て） */
+    private fun String.chain(from: String, to: String) = substringAfter(from).substringBefore(to)
 
     @Test
     fun clipInputArgs_seeksToStartLimitsDurationAndDecodesOnOneThread() {
@@ -97,70 +115,87 @@ class FilterGraphTest {
     }
 
     @Test
-    fun hitokotoLines_areAlignedByBaselineNotByTheirOwnHeight() {
+    fun hitokotoSpans_areOverlaidAsImagesAtTheirStripPosition() {
         val graph = buildGraph()
-        val splitChain = graph.substringAfter("[1:v]").substringBefore("[v0]")
-        val hitokotoLayers = splitChain.split(",drawtext=").filter { "/text_" in it }
+        val splitChain = graph.chain("[1:v]", "[v0]")
+        val top = textStripLayout(1, hitokotoStyle(fonts(File("/w"))))!!.top
 
-        // 1行だけの区間は、中央から（ascentとdescentの差の半分＝20pt）下にベースラインを置く。
-        // text_h（その行の文字の実際の高さ）で中央を出すと、文字の中身で縦位置が変わる
-        assertEquals(2, hitokotoLayers.size)
-        hitokotoLayers.forEach { layer ->
-            assertTrue(layer, layer.contains(":y=h/2+20-ascent"))
-            assertFalse(layer, layer.contains("text_h"))
-        }
+        // 区間ごとに画像を読み、キャンバスへ順に重ねる（絵文字を描くため、drawtextは使わない）
+        assertTrue(splitChain, splitChain.contains("/text_1_0_0.png'[t0_0]"))
+        assertTrue(splitChain, splitChain.contains("[c0_0][t0_0]overlay=x=0:y=$top:eof_action=repeat:enable="))
+        assertTrue(splitChain, splitChain.contains("/text_1_0_1.png'[t0_1]"))
+        assertTrue(splitChain, splitChain.contains("[c0_1][t0_1]overlay=x=0:y=$top:eof_action=repeat:enable="))
+        // 重ね終えた映像に撮影時刻を描く
+        assertTrue(splitChain, splitChain.contains("[c0_2]drawtext="))
+        assertFalse(splitChain, splitChain.contains("/text_1_0_0.txt"))
     }
 
     @Test
-    fun timeAndTitleLines_areAlsoAlignedByBaseline() {
+    fun emptyHitokoto_isNotOverlaid() {
+        // 空の区間は画像を作らない（drawtextの頃に空行を描かなかったのと同じ）
+        val silentChain = buildGraph().chain("[2:v]", "[v1]")
+
+        assertFalse(silentChain, silentChain.contains("overlay="))
+        assertFalse(silentChain, silentChain.contains("movie="))
+        assertTrue(silentChain, silentChain.contains("[c1_0]drawtext="))
+    }
+
+    @Test
+    fun singleSpanClip_hasNoEnable() {
+        // 区間が1つだけのクリップは、画像をクリップの最後まで出すだけで enable を付けない
+        val single = testClip(id = 3, texts = listOf(TextSegment(0L, "旅行")))
+        val chain = buildGraph(clips = listOf(single), includeTitle = false).chain("[0:v]", "[v0]")
+
+        assertTrue(chain, chain.contains("overlay="))
+        assertFalse(chain, chain.contains("enable="))
+    }
+
+    @Test
+    fun timeIsStillDrawnAsTextAlignedByBaseline() {
         val graph = buildGraph()
 
-        // 撮影時刻は中央から15pt下にベースライン
-        val timeLayer = graph.split(",drawtext=").first { "/time_" in it }
+        // 撮影時刻は固定の英数字なのでdrawtextのまま。中央から15pt下にベースライン
+        val timeLayer = graph.split("drawtext=").first { "/time_" in it }
         assertTrue(timeLayer, timeLayer.contains(":y=h/2+15-ascent"))
-        // タイトルの文言は、1行目の位置（中央から80pt下）にベースラインまでの12ptを足す
-        val titleLayer = graph.split(",drawtext=").first { "/title_" in it }
-        assertTrue(titleLayer, titleLayer.contains(":y=h/2+92-ascent"))
-        // 「Vlog.」は文言が固定なので text_h 基準のまま
-        assertTrue(graph.contains("text='Vlog.'"))
+        assertTrue(timeLayer, timeLayer.contains(":expansion=none"))
+    }
+
+    @Test
+    fun titleCard_overlaysTheTextImageAndFadesTheWholeCardToBlack() {
+        val graph = buildGraph()
+        val titleChain = graph.chain("[vtitlesrc]", "[vtitle]")
+        val top = textStripLayout(1, titleStyle(fonts(File("/w"))))!!.top
+
+        // 「Vlog.」は固定の英数字なのでdrawtextのまま。文字ごとのalphaはもう使わない
+        assertTrue(titleChain, titleChain.contains("text='Vlog.'"))
+        assertFalse(titleChain, titleChain.contains("alpha="))
+        // 文言は画像にして重ねる（自由入力に絵文字が入りうるため）
+        assertTrue(titleChain, titleChain.contains("/title_1.png'[ttitle]"))
+        assertTrue(titleChain, titleChain.contains("[vtitle_logo][ttitle]overlay=x=0:y=$top:eof_action=repeat[vtitle_text]"))
+        // 背景が黒なので、カード全体を黒へフェードすれば以前の文字のalphaと同じ見た目になる
+        // （n=30で95%、n=49で0%。start_frameは「まだ100%のコマ」なので1つ手前の29）
+        assertTrue(graph.contains("[vtitle_text]fade=t=out:start_frame=29:nb_frames=20[vtitle]"))
     }
 
     @Test
     fun onlyHdrClipsAreConvertedToSdrBeforeScalingAndText() {
-        val workDir = Files.createTempDirectory("vlog_graph_hdr").toFile()
-        val graph = try {
-            val fonts = ExportFonts(
-                File(workDir, "logo.otf"), File(workDir, "time.ttf"),
-                hitokotoBaselineShiftPt = 20f, timeBaselineShiftPt = 15f, titleBaselineShiftPt = 12f
-            )
-            runBlocking {
-                buildFilterGraph(
-                    listOf(splitClip, silentClip), fonts, "2026/01/01", 667L, workDir, 1L, mutableListOf(),
-                    includeTitle = false,
-                    audioPlan = AudioPlan(needsTitleSfxInput = false, clipHasRealAudio = listOf(true, false)),
-                    hdrTransfers = listOf(HdrTransfer.HLG, null)
-                )
-            }
-        } finally {
-            workDir.deleteRecursively()
-        }
-        val hdrChain = graph.substringAfter("[0:v]").substringBefore("[v0]")
-        val sdrChain = graph.substringAfter("[1:v]").substringBefore("[v1]")
+        val graph = buildGraph(includeTitle = false, hdrTransfers = listOf(HdrTransfer.HLG, null))
+        val hdrChain = graph.chain("[0:v]", "[v0]")
+        val sdrChain = graph.chain("[1:v]", "[v1]")
 
-        // HDR（HLG）のクリップは、先に出力の大きさまで縮めてからSDRへ変換し、そのあと文字を焼き込む
+        // HDR（HLG）のクリップは、先に出力の大きさまで縮めてからSDRへ変換し、そのあと文字を重ねる
         assertTrue(hdrChain, hdrChain.contains("zscale=tin=arib-std-b67"))
         assertTrue(hdrChain, hdrChain.indexOf("scale=1920:1080") < hdrChain.indexOf("zscale="))
+        assertTrue(hdrChain, hdrChain.indexOf("tonemap=") < hdrChain.indexOf("overlay="))
         assertTrue(hdrChain, hdrChain.indexOf("tonemap=") < hdrChain.indexOf("drawtext="))
         // SDRのクリップは何もしない
         assertFalse(sdrChain, sdrChain.contains("zscale"))
         assertFalse(sdrChain, sdrChain.contains("tonemap"))
     }
 
-    @Test
-    fun singleSpanClip_hasNoEnable() {
-        // 区間が1つだけのクリップ（silentClip）のdrawtextにはenableを付けない
-        val graph = buildGraph()
-        val silentChain = graph.substringAfter("[2:v]").substringBefore("[v1]")
-        assertFalse(silentChain.contains("enable="))
+    @Test(expected = IllegalArgumentException::class)
+    fun pathWithASingleQuote_isRefusedInsteadOfWritingABrokenGraph() {
+        // 単引用符の中では単引用符を書けない。壊れたグラフをFFmpegに渡さず、組み立ての時点で止める
+        buildGraph(workDir = Files.createTempDirectory("vlog'graph").toFile())
     }
 }

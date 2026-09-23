@@ -9,13 +9,8 @@ import kotlinx.coroutines.ensureActive
 import com.example.myvlogapp.CANVAS_FPS
 import com.example.myvlogapp.CANVAS_HEIGHT
 import com.example.myvlogapp.CANVAS_WIDTH
-import com.example.myvlogapp.HITOKOTO_FONT_PT
-import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
 import com.example.myvlogapp.TIME_FONT_PT
 import com.example.myvlogapp.TIME_MARGIN_PT
-import com.example.myvlogapp.TITLE_DATE_FONT_PT
-import com.example.myvlogapp.TITLE_DATE_LINE_SPACING_PT
-import com.example.myvlogapp.TITLE_DATE_Y_OFFSET_PT
 import com.example.myvlogapp.TITLE_DURATION_MS
 import com.example.myvlogapp.TITLE_FONT_PT
 import com.example.myvlogapp.TITLE_Y_OFFSET_PT
@@ -27,10 +22,14 @@ import com.example.myvlogapp.VlogClip
 // VlogExporter.kt から切り出したもの。書き出しの地雷はほぼすべてこのファイルに集まる
 // （-ss/-tの位置、apad→atrim、setsar=1、expansion=none、Locale.US固定）。
 // どれも実機で踏んだ不具合の記録なので、消す前に理由がまだ有効か確かめること。
+//
+// ひとこととタイトルの文言は、drawtextではなく画像（TextImages.kt）をoverlayで重ねる。
+// drawtextでは絵文字を描けないため。
 // =====================================================================================
 
 // --- タイトルカードのフェード -------------------------------------------------------
-// buildTitleFilterのalpha式で使う。nは0始まりのフレーム番号。
+// nは0始まりのフレーム番号。FADE_START_FRAMEのコマで95%、その20コマ後に0%になる
+// （以前の文字ごとのalpha式 1-(n-29)/20 と同じ。エミュレータでコマごとの明るさが±1で一致）。
 
 /** フェードアウトを開始するフレーム番号(0始まり) */
 private const val FADE_START_FRAME = 30
@@ -41,8 +40,9 @@ private const val FADE_FRAME_COUNT = 20
 /**
  * タイトルカード・全クリップ・結合をまとめた1本のfilter_complex文字列を組み立てる。
  *
- * @param textFiles 生成した行ごとのテキストファイルをここへ積む（呼び出し元がexport()の
- *   finallyでまとめて掃除するため）
+ * @param workFiles 生成した撮影時刻のテキストファイル・文字の画像をここへ積む（呼び出し元が
+ *   export()のfinallyでまとめて掃除するため）
+ * @param renderText ひとこと・タイトルの文言を画像にする。本番は[AndroidTextRenderer]
  * @param hdrTransfers 各クリップがHDRならその伝達特性（SDRはnull）。HDRのクリップだけ、
  *   先頭でSDRへ変換する（Hdr.kt）
  */
@@ -53,21 +53,20 @@ internal suspend fun buildFilterGraph(
     sfxDelayMs: Long,
     workDir: File,
     id: Long,
-    textFiles: MutableList<File>,
+    workFiles: MutableList<File>,
     includeTitle: Boolean,
     audioPlan: AudioPlan,
+    renderText: TextRenderer,
     hdrTransfers: List<HdrTransfer?> = List(clips.size) { null }
 ): String {
     val graph = mutableListOf<String>()
 
     if (includeTitle) {
         // --- タイトルカード（黒背景 / TITLE_DURATION_MSぶんの尺 /
-        //     FADE_START_FRAME〜FADE_START_FRAME+FADE_FRAME_COUNT-1フレーム目でフェードアウト /
-        //     TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
+        //     FADE_START_FRAMEから黒へフェードアウト / TITLE_SFX_FRAME_NUMBERフレーム目から効果音） ---
         graph += "color=c=black:s=${CANVAS_WIDTH}x$CANVAS_HEIGHT:r=$CANVAS_FPS" +
                 ":d=${ffmpegSeconds(TITLE_DURATION_MS)}[vtitlesrc]"
-        val titleLines = writeTitleTextFiles(workDir, id, titleText, textFiles)
-        graph += "[vtitlesrc]${buildTitleFilter(titleLines, fonts)}[vtitle]"
+        graph += buildTitleGraph(titleText, fonts, renderText, id)
         graph += if (audioPlan.needsTitleSfxInput) {
             // apadは終端を指定しないと無音を無限に継ぎ足し続ける。
             // 「動画(タイトルの尺)の方が短いから-shortestで自動的に切られるはず」と
@@ -89,19 +88,21 @@ internal suspend fun buildFilterGraph(
         coroutineContext.ensureActive()
         val inputIndex = index + audioPlan.clipInputOffset
         val durationSec = ffmpegSeconds(clip.trimmedDurationMs)
-        val spans = writeSpanTextFiles(workDir, id, index, clip, textFiles)
-        val timeFile = writeTimeTextFile(workDir, id, index, clip, textFiles)
+        val timeFile = writeTimeTextFile(workDir, id, index, clip, workFiles)
 
         // 入力側（[clipInputArgs]）で既に開始位置へシークして長さも絞ってあるので、
         // ここでは時刻を0始まりに直し、trim=endで長さを保証するだけにする。
-        // setpts=PTS-STARTPTSを最初に行うため、以降のdrawtextのtは
+        // setpts=PTS-STARTPTSを最初に行うため、以降のoverlayのenable式のtは
         // 「クリップ先頭からの経過時間」になる（enable式はそれを前提にしている）。
         // HDRのクリップは、文字の焼き込みより前にSDRへ変換する（Hdr.kt）。変換は1画素ずつの
         // 浮動小数点の計算で重いので、先に出力の大きさまで縮めてから行う（4Kなら計算する画素が
         // 4分の1になる。エミュレータの4K・3秒のHLGで、書き出し全体が28秒→20秒。SDRは10秒）
         val toSdr = hdrTransfers[index]?.let { "${fitToCanvasFilter()},${hdrToSdrFilter(it)}," }.orEmpty()
+        val canvasTag = "c${index}_0"
         graph += "[$inputIndex:v]setpts=PTS-STARTPTS,${trimFilter(durationSec, audio = false)}," +
-                "$toSdr${buildClipFilter(spans, clip.startMs, timeFile, fonts)}[${vTag(index)}]"
+                "$toSdr${fitToCanvasFilter()},pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black[$canvasTag]"
+        val withHitokoto = addHitokotoOverlays(graph, index, clip, canvasTag, fonts, renderText, id)
+        graph += "[$withHitokoto]${buildTimeAndSarFilter(timeFile, fonts)}[${vTag(index)}]"
 
         // concatは各セグメントの音声ストリームを明示参照するため、
         // 音声トラックの無い素材でも無音を生成して必ず音声を持たせる。
@@ -169,149 +170,125 @@ private fun trimFilter(durationSec: String, audio: Boolean): String {
 }
 
 /**
- * タイトルカードのフィルタ。
- * - 「Vlog.」 [fonts].logoType、[TITLE_FONT_PT]、中央やや上
- * - タイトル文言（既定は撮影日 "yyyy/MM/dd"） [fonts].time、[TITLE_DATE_FONT_PT]、中央やや下。
- *   2行目以降になっても1行目のy座標（[TITLE_DATE_Y_OFFSET_PT]）は動かさず、
- *   下へ[TITLE_DATE_FONT_PT]+[TITLE_DATE_LINE_SPACING_PT]ずつ積む
- *   （中央揃えでブロックごと動かすと自由入力の行数次第で1行目の位置がずれてしまうため）。
- *   縦位置はひとことと同じくベースラインで揃える（[baselineY]）。自由入力で行ごとに
- *   文字の高さが違うと、text_h基準では行ごとに上下へずれるため。
- *   「Vlog.」は文言が固定なので、text_h基準のままでも位置は変わらない。
- * - [FADE_START_FRAME]フレーム目からフェードアウト開始（nは0始まり）
- *
- * alpha式はシングルクォートで囲まれているため、内部のカンマを
- * バックスラッシュでエスケープしてはいけない（数式が壊れる）。
+ * タイトルカード。[vtitlesrc]（黒）から[vtitle]までを組み立てる。
+ * - 「Vlog.」 [ExportFonts.logoType]、[TITLE_FONT_PT]、中央やや上。文言が固定の英数字なのでdrawtextのまま。
+ *   text_h基準の中央でも位置は変わらない
+ * - タイトル文言（既定は撮影日 "yyyy/MM/dd"）：画像にして重ねる（置き方は[titleStyle]）
+ * - 最後にカード全体を黒へフェードアウトする。以前は文字ごとにalphaで消していたが、背景が黒なので
+ *   見た目は同じで、文言の画像にalphaを持ち込まずに済む
+ *   （fadeのstart_frameは「まだ100%のコマ」なので、95%にしたいコマの1つ手前を渡す）
  */
-private fun buildTitleFilter(titleLines: List<File>, fonts: ExportFonts): String {
-    val fadeEndFrame = FADE_START_FRAME + FADE_FRAME_COUNT - 1
-    val alpha = "if(lt(n,$FADE_START_FRAME),1," +
-            "if(between(n,$FADE_START_FRAME,$fadeEndFrame)," +
-            "1-(n-${FADE_START_FRAME - 1})/$FADE_FRAME_COUNT,0))"
-    val lineHeight = TITLE_DATE_FONT_PT + TITLE_DATE_LINE_SPACING_PT
-    val offsets = lineOffsets(titleLines.size, lineHeight, LineAnchor.TOP)
-    val logoLayer = drawText(
+private fun buildTitleGraph(
+    titleText: String,
+    fonts: ExportFonts,
+    renderText: TextRenderer,
+    id: Long
+): List<String> = buildList {
+    val logo = drawText(
         fontfile = fonts.logoType,
         fontsizePt = TITLE_FONT_PT,
         x = centeredX(),
         y = centeredY(TITLE_Y_OFFSET_PT),
-        text = "Vlog.",
-        alpha = alpha
+        text = "Vlog."
     )
-    val titleLayers = titleLines.mapIndexed { lineIndex, file ->
-        drawText(
-            fontfile = fonts.time,
-            fontsizePt = TITLE_DATE_FONT_PT,
-            x = centeredX(),
-            y = baselineY(TITLE_DATE_Y_OFFSET_PT + offsets[lineIndex] + fonts.titleBaselineShiftPt),
-            textFile = file,
-            alpha = alpha
-        )
+    add("[vtitlesrc]$logo[vtitle_logo]")
+    var current = "vtitle_logo"
+    renderText.render(titleLines(titleText), titleStyle(fonts), "title_$id")?.let { image ->
+        add("${movieSource(image.file)}[ttitle]")
+        add("[$current][ttitle]${overlayFilter(image, enable = "")}[vtitle_text]")
+        current = "vtitle_text"
     }
-    return (listOf(logoLayer) + titleLayers).joinToString(",")
+    add("[$current]fade=t=out:start_frame=${FADE_START_FRAME - 1}:nb_frames=$FADE_FRAME_COUNT[vtitle]")
 }
-
-/** 複数行のdrawtextを縦に積むときのy方向オフセット（pt）の求め方 */
-private enum class LineAnchor {
-    /** 行の集まり全体を中央に置く（ひとこと用） */
-    CENTERED,
-
-    /** 1行目の位置を固定し、以降を下に積む（タイトルカード用） */
-    TOP
-}
-
-/** [count]行ぶんの縦オフセット（pt）を、行送り[lineHeight]・[anchor]に従って計算する */
-private fun lineOffsets(count: Int, lineHeight: Float, anchor: LineAnchor): List<Float> =
-    when (anchor) {
-        LineAnchor.CENTERED ->
-            (0 until count).map { ((it - (count - 1) / 2.0) * lineHeight).toFloat() }
-        LineAnchor.TOP -> (0 until count).map { it * lineHeight }
-    }
 
 /**
- * 1クリップのフィルタ。
- * - 1920x1080キャンバスに歪みなしで配置（余白は黒帯）、30fps
- * - ひとこと：[fonts].logoType、[HITOKOTO_FONT_PT]、上下左右中央
- *   1行につき1つのdrawtextを積む（このFFmpegビルドにはtext_alignが無いため、
- *   1つのdrawtextに複数行を渡すと左揃えになってしまう）。
- *   縦位置は行ごとの文字の高さ（text_h）ではなくベースラインで揃える（[baselineY]）
- * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）。
- *   縦位置はひとことと同じくベースラインで揃える。プレビューはフォントの行の箱で
- *   上下中央に置いているので、text_h基準のままだとプレビューより数px上に出ていた
+ * ひとことを区間ごとに画像にして、[canvasTag]の映像へ重ねる。
+ * 空の区間は重ねない（drawtextの頃に空行を描かなかったのと同じ）。
  *
- * @param spans ひとことの区間と、その各行のテキストファイル。
- *   空行はnull（描かずに間隔だけ空ける）。区間が2つ以上ある場合は enable で出し分ける。
- * @param clipStartMs トリミングの開始位置（素材上の絶対位置）。区間の位置はこの絶対位置で
- *   持っているので、enable式で「クリップ先頭からの経過時間」へ直すのに使う
- * @param timeFile 撮影時刻を書き出したテキストファイル（[writeTimeTextFile]）
+ * クリップの途中でひとことを変えている場合は、区間ごとの画像を enable で出し分ける。
+ * 動画は切らないので、分割してもクリップは1本のまま（つなぎ目が生まれない）。
+ *
+ * @return 重ね終えた映像のラベル
  */
-private fun buildClipFilter(
-    spans: List<SpanLines>,
-    clipStartMs: Long,
-    timeFile: File,
-    fonts: ExportFonts
+private fun addHitokotoOverlays(
+    graph: MutableList<String>,
+    clipIndex: Int,
+    clip: VlogClip,
+    canvasTag: String,
+    fonts: ExportFonts,
+    renderText: TextRenderer,
+    id: Long
 ): String {
-    // 行の高さぶんだけ上下にずらして、行の集まり全体が画面中央に来るようにする
-    val lineHeight = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT
-    val hitokotoLayers = spans.flatMapIndexed { spanIndex, (span, lineFiles) ->
+    val spans = clip.visibleTextSpans()
+    var current = canvasTag
+    spans.forEachIndexed { spanIndex, span ->
+        val image = renderText.render(
+            hitokotoLines(span.text), hitokotoStyle(fonts), "text_${id}_${clipIndex}_$spanIndex"
+        ) ?: return@forEachIndexed
         // 区間が1つだけなら enable は付けない（式の評価ぶんだけ無駄になる）
         val enable = if (spans.size <= 1) "" else {
             // enable式のtは、入力側のシークとsetpts=PTS-STARTPTSで0始まりになった
             // 「クリップ先頭からの経過時間」。区間のstartMs/endMsは素材上の絶対位置なので、
             // トリミング開始位置を引いて合わせる（引き忘れると判定窓がずれて、
             // ひとことが出なくなる）。
-            val from = span.startMs - clipStartMs
+            val from = span.startMs - clip.startMs
             // between は両端を含むので、隣の区間と1ms重ならないよう手前で切る。
             // 重なるとその1フレームだけ前後の文字が二重に焼き付いてしまう。
             val isLast = spanIndex == spans.lastIndex
-            val to = (span.endMs - clipStartMs - if (isLast) 0L else 1L).coerceAtLeast(from)
+            val to = (span.endMs - clip.startMs - if (isLast) 0L else 1L).coerceAtLeast(from)
             ":enable='between(t,${ffmpegSeconds(from)},${ffmpegSeconds(to)})'"
         }
-        val offsets = lineOffsets(lineFiles.size, lineHeight, LineAnchor.CENTERED)
-        lineFiles.mapIndexedNotNull { lineIndex, file ->
-            if (file == null) return@mapIndexedNotNull null
-            drawText(
-                fontfile = fonts.logoType,
-                fontsizePt = HITOKOTO_FONT_PT,
-                x = centeredX(),
-                y = baselineY(offsets[lineIndex] + fonts.hitokotoBaselineShiftPt),
-                textFile = file,
-                enable = enable
-            )
-        }
+        val imageTag = "t${clipIndex}_$spanIndex"
+        val next = "c${clipIndex}_${spanIndex + 1}"
+        graph += "${movieSource(image.file)}[$imageTag]"
+        graph += "[$current][$imageTag]${overlayFilter(image, enable)}[$next]"
+        current = next
     }
-
-    return buildList {
-        add(fitToCanvasFilter())
-        add("pad=$CANVAS_WIDTH:$CANVAS_HEIGHT:(ow-iw)/2:(oh-ih)/2:black")
-        addAll(hitokotoLayers)
-        add(
-            drawText(
-                fontfile = fonts.time,
-                fontsizePt = TIME_FONT_PT,
-                x = "$CANVAS_WIDTH-text_w-${TIME_MARGIN_PT.toInt()}",
-                y = baselineY(fonts.timeBaselineShiftPt),
-                textFile = timeFile
-            )
-        )
-        // scaleは入力のSAR（画素の縦横比）を引き継ぐため、非正方画素の素材が混ざると
-        // タイトルカード（SAR 1:1）や他クリップとSARが食い違い、concatが
-        // 「Input link parameters do not match」で書き出しごと失敗する。
-        // 1:1の素材には何も起きないので、全クリップで無条件に揃えておく。
-        add("setsar=1")
-    }.joinToString(",")
+    return current
 }
 
 /**
+ * 文字の画像を読む生成フィルタ。追加の-iにしないのは、入力の番号（タイトル効果音・各クリップ）を
+ * ずらさずに済むため（-iで渡すと、区間の数だけ各クリップの入力番号が変わる）。
+ */
+private fun movieSource(file: File) = "movie=${quotedPath(file)}"
+
+/**
+ * 文字の画像を重ねる。画像は1枚きり（1コマ）なので、eof_action=repeatで最後まで出し続ける
+ * （既定値だが、1枚の画像を重ね続けるのはこれに頼っているので明示する）。
+ */
+private fun overlayFilter(image: TextImage, enable: String) =
+    "overlay=x=0:y=${image.top}:eof_action=repeat$enable"
+
+/**
+ * 撮影時刻（drawtextのまま）と、SARの揃え。
+ * - 撮影時刻：[ExportFonts.time]、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）。
+ *   縦位置はベースラインで揃える。プレビューはフォントの行の箱で上下中央に置いているので、
+ *   text_h基準のままだとプレビューより数px上に出ていた
+ */
+private fun buildTimeAndSarFilter(timeFile: File, fonts: ExportFonts): String = listOf(
+    drawText(
+        fontfile = fonts.time,
+        fontsizePt = TIME_FONT_PT,
+        x = "$CANVAS_WIDTH-text_w-${TIME_MARGIN_PT.toInt()}",
+        y = baselineY(fonts.timeBaselineShiftPt),
+        textFile = timeFile
+    ),
+    // scaleは入力のSAR（画素の縦横比）を引き継ぐため、非正方画素の素材が混ざると
+    // タイトルカード（SAR 1:1）や他クリップとSARが食い違い、concatが
+    // 「Input link parameters do not match」で書き出しごと失敗する。
+    // 1:1の素材には何も起きないので、全クリップで無条件に揃えておく。
+    "setsar=1"
+).joinToString(",")
+
+/**
  * drawtextフィルタ1つぶんの式を組み立てる。
- * fontfile/fontsize/fontcolor/x/yの並びと書式を1箇所に集約し、
- * タイトル・ひとこと・時刻の見た目が食い違わないようにする。
+ * fontfile/fontsize/fontcolor/x/yの並びと書式を1箇所に集約する。
  *
  * @param text テキストを直接埋め込む場合。引用符・コロン・バックスラッシュ等のエスケープは
  *   行わないので、固定の英数字リテラル（"Vlog."）専用。任意の文字列は[textFile]を使うこと。
  *   [textFile]と排他。
- * @param textFile 別ファイルの内容を読ませる場合（改行や引用符を含むテキスト用）。[text]と排他。
- * @param enable 出し分け条件。付けない場合は空文字列のまま。
+ * @param textFile 別ファイルの内容を読ませる場合（引用符などを含みうるテキスト用）。[text]と排他。
  */
 private fun drawText(
     fontfile: File,
@@ -320,22 +297,29 @@ private fun drawText(
     y: String,
     text: String? = null,
     textFile: File? = null,
-    color: String = "white",
-    alpha: String? = null,
-    enable: String = ""
+    color: String = "white"
 ): String {
-    val content = if (textFile != null) "textfile='${textFile.absolutePath}'" else "text='$text'"
-    val alphaPart = if (alpha != null) ":alpha='$alpha'" else ""
-    return "drawtext=fontfile='${fontfile.absolutePath}'" +
+    val content = if (textFile != null) "textfile=${quotedPath(textFile)}" else "text='$text'"
+    return "drawtext=fontfile=${quotedPath(fontfile)}" +
             ":$content" +
             // expansion=none で %{...}（strftimeやメタデータの展開）を止める。
-            // 既定のnormalのままだと、ひとことにたまたま "%" が入っているだけで
+            // 既定のnormalのままだと、たまたま "%" が入っているだけで
             // 展開を試みて表示が壊れたり、パースエラーで書き出しごと失敗したりする。
-            // 以前は文字列側で "%" を "%%" に置換して逃げていたが、
-            // 展開機能自体を切れば置換は要らない（=置換漏れの余地も無くなる）。
             ":expansion=none" +
             ":fontsize=${fontsizePt.toInt()}:fontcolor=$color" +
-            ":x=$x:y=$y$alphaPart$enable"
+            ":x=$x:y=$y"
+}
+
+/**
+ * フィルタグラフに書くファイルのパス（単引用符で囲む）。
+ * 単引用符の中では単引用符そのものを書けない（エスケープの規則が二段階あり、中身次第で壊れる）。
+ * 作業フォルダやfilesDirのパスに単引用符は入らないが、万一入っていたら壊れたグラフを
+ * FFmpegに渡さず、ここで止める。
+ */
+private fun quotedPath(file: File): String {
+    val path = file.absolutePath
+    require('\'' !in path) { "フィルタグラフに書けないパスです: $path" }
+    return "'$path'"
 }
 
 /** キャンバス（1920x1080）に歪みなく収まる大きさへ縮める（余白はあとでpadが黒で埋める） */
@@ -346,9 +330,8 @@ private fun fitToCanvasFilter() =
 private fun centeredX() = "(w-text_w)/2"
 
 /**
- * 画面中央から上下にずらしたy座標式をつくる。
- * text_h（その行の実際の文字高さ）を使って中央を出しているので、
- * フォントサイズを変えても縦位置がずれない。
+ * 画面中央から上下にずらしたy座標式をつくる（「Vlog.」用）。
+ * text_h（その行の実際の文字高さ）で中央を出すので、文言が固定のときだけ使う。
  */
 private fun centeredY(offsetPt: Float): String {
     val offset = offsetPt.toInt()
@@ -360,16 +343,15 @@ private fun centeredY(offsetPt: Float): String {
 }
 
 /**
- * ベースラインを「画面中央から[baselineFromCenterPt]下」に置くy座標式。
+ * ベースラインを「画面中央から[baselineFromCenterPt]下」に置くy座標式（撮影時刻用）。
  *
  * [centeredY]のようにtext_h（その行の文字の実際の高さ）で中央を出すと、縦位置が
- * 文字の中身で変わる。「ー」だけの行は低く、「漢字」の行は高く測られるので、
- * 複数行では行ごとに上下へずれ、区間が切り替わると文字が上下に跳ね、
- * フォントの行の箱で並べているプレビューとも合わない。
+ * 文字の中身で変わり、フォントの行の箱で並べているプレビューとも合わない。
  *
  * このFFmpegビルド(6.x)のdrawtextは、yの位置からその行の文字の最大の高さ（ascent）だけ
  * 下にベースラインを置く。y = 目標のベースライン − ascent とすれば、文字の中身に
  * 関係なくベースラインが目標の位置に来る（y_align=fontはFFmpeg 7以降で、6.xには無い）。
+ * ひとこと・タイトルの文言の画像（[textStripLayout]）も、同じ位置にベースラインを置いている。
  */
 private fun baselineY(baselineFromCenterPt: Float): String {
     val offset = baselineFromCenterPt.roundToInt()
