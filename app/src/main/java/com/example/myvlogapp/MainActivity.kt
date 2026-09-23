@@ -150,7 +150,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // どちらも今の高さになる。以前は「これまでで一番高かった値」を覚えていたが、回転や
     // 絵文字パネル（普通のキーボードより背が高い）で一度上がると下がらず、普通のキーボードを
     // 全開にしても開閉度が1に届かず、ひとこと欄が広がり切らなかった。
+    // 今の高さ（imeBottomPx）も候補に入れるのは、IMEのアニメーションが届かない環境
+    // （アニメーションを伝えるWindowInsetsAnimationはAndroid 11からで、minSdkのAndroid 10では
+    // 互換ライブラリ頼みになる）で出発点と行き先が0のままでも、開いていれば開閉度が1になるようにするため。
     val imeFullPx = maxOf(
+        imeBottomPx,
         WindowInsets.imeAnimationSource.getBottom(density),
         WindowInsets.imeAnimationTarget.getBottom(density)
     )
