@@ -175,6 +175,13 @@ object VlogExporter {
             // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ
             // まとめておく。以降はこのAudioPlanを読むだけで、下の処理は分岐を持たない。
             val audioPlan = AudioPlan.build(context, clips, includeTitle, muted)
+            // HDRで撮ったクリップはSDRへ変換する（Hdr.kt）。音声の有無と同じく、1本ずつ開いて調べる
+            val hdrTransfers = clips.mapParallel(AUDIO_PROBE_PARALLELISM) { _, clip ->
+                probeHdrTransfer(context, clip.uri)
+            }
+            if (hdrTransfers.any { it != null }) {
+                Log.i(LOG_TAG, "HDRのクリップ: ${hdrTransfers.withIndex().filter { it.value != null }.map { "${it.index + 1}本目=${it.value}" }}")
+            }
             val titleSfx = if (audioPlan.needsTitleSfxInput) {
                 copySfxAsset(context, TITLE_SFX_ASSET)
             } else null
@@ -198,7 +205,7 @@ object VlogExporter {
                 // 生の素材から直接1回だけエンコードする。30fps変換も結合後の連続した1本の
                 // 映像に対して1回で完結する。
                 encodePass(
-                    context, clips, fonts, titleText, includeTitle, audioPlan, titleSfx,
+                    context, clips, fonts, titleText, includeTitle, audioPlan, hdrTransfers, titleSfx,
                     workDir, passId = id, workFiles = workFiles, output = mergedFile,
                     outputArgs = aacAudioArgs() + creationTime,
                     progressOffsetMs = 0L, overallDurationMs = totalDurationMs, onProgress = onProgress
@@ -217,7 +224,8 @@ object VlogExporter {
                     val file = File(workDir, "segment_${id}_$index.mov").also { workFiles += it }
                     encodePass(
                         context, segmentClips, fonts, titleText, withTitle,
-                        audioPlan.forSegment(range, includesTitle = withTitle), titleSfx,
+                        audioPlan.forSegment(range, includesTitle = withTitle),
+                        hdrTransfers.slice(range), titleSfx,
                         workDir, passId = id * SEGMENT_ID_SCALE + index, workFiles = workFiles,
                         output = file, outputArgs = pcmAudioArgs(),
                         progressOffsetMs = doneMs, overallDurationMs = totalDurationMs,
@@ -279,6 +287,7 @@ object VlogExporter {
         titleText: String,
         includeTitle: Boolean,
         audioPlan: AudioPlan,
+        hdrTransfers: List<HdrTransfer?>,
         titleSfx: File?,
         workDir: File,
         passId: Long,
@@ -291,7 +300,7 @@ object VlogExporter {
     ) {
         val filterGraph = buildFilterGraph(
             clips, fonts, titleText, titleSfxDelayMs(), workDir, passId, workFiles,
-            includeTitle, audioPlan
+            includeTitle, audioPlan, hdrTransfers
         )
         // フィルタグラフは引数で渡さずファイルで渡す。本数が多いとグラフが数百KBに
         // なりうる（1クリップ約0.7〜1.5KB。100本で約70KB）。ファイルなら

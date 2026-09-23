@@ -126,6 +126,37 @@ class FilterGraphTest {
     }
 
     @Test
+    fun onlyHdrClipsAreConvertedToSdrBeforeScalingAndText() {
+        val workDir = Files.createTempDirectory("vlog_graph_hdr").toFile()
+        val graph = try {
+            val fonts = ExportFonts(
+                File(workDir, "logo.otf"), File(workDir, "time.ttf"),
+                hitokotoBaselineShiftPt = 20f, timeBaselineShiftPt = 15f, titleBaselineShiftPt = 12f
+            )
+            runBlocking {
+                buildFilterGraph(
+                    listOf(splitClip, silentClip), fonts, "2026/01/01", 667L, workDir, 1L, mutableListOf(),
+                    includeTitle = false,
+                    audioPlan = AudioPlan(needsTitleSfxInput = false, clipHasRealAudio = listOf(true, false)),
+                    hdrTransfers = listOf(HdrTransfer.HLG, null)
+                )
+            }
+        } finally {
+            workDir.deleteRecursively()
+        }
+        val hdrChain = graph.substringAfter("[0:v]").substringBefore("[v0]")
+        val sdrChain = graph.substringAfter("[1:v]").substringBefore("[v1]")
+
+        // HDR（HLG）のクリップは、先に出力の大きさまで縮めてからSDRへ変換し、そのあと文字を焼き込む
+        assertTrue(hdrChain, hdrChain.contains("zscale=tin=arib-std-b67"))
+        assertTrue(hdrChain, hdrChain.indexOf("scale=1920:1080") < hdrChain.indexOf("zscale="))
+        assertTrue(hdrChain, hdrChain.indexOf("tonemap=") < hdrChain.indexOf("drawtext="))
+        // SDRのクリップは何もしない
+        assertFalse(sdrChain, sdrChain.contains("zscale"))
+        assertFalse(sdrChain, sdrChain.contains("tonemap"))
+    }
+
+    @Test
     fun singleSpanClip_hasNoEnable() {
         // 区間が1つだけのクリップ（silentClip）のdrawtextにはenableを付けない
         val graph = buildGraph()

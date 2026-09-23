@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（180件）
+./gradlew testDebugUnitTest        # JVM単体テスト（181件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（10件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -165,6 +165,13 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）、権限
   複数行の中央揃えは「1行につき1つのdrawtext」で実現している。
 - **フィルタグラフは `-filter_complex_script` でファイル渡し。** 100本で約70KBになる。
 - **秒数は必ず `Locale.US` 固定**（`ffmpegSeconds`）。小数点にカンマを使うロケールで壊れる。
+- **HDR（HLG・PQ）のクリップはSDRへ変換する**（`Hdr.kt`）。書き出しの前に `MediaExtractor` の
+  `KEY_COLOR_TRANSFER` で見分け、そのクリップだけフィルタの先頭で
+  「出力の大きさへ縮める → `zscale`（`npl=203`）で直線の明るさへ → BT.709の色域 → `tonemap=mobius:param=0.9` → SDR」。
+  変換しないと白っぽく色が抜ける（合成したカラーバーでSDRとの平均のずれ HLG 58・PQ 84 → 変換後 4.1・6.9）。
+  縮めてから変換するのは、1画素ずつの浮動小数点の計算が重いため（4K・3秒で28秒→20秒）。
+- **出力には BT.709 の色空間の情報を付ける**（`videoEncodeArgs`）。付けないと再生する側が変換式を推測し、
+  BT.601と取られると色がずれる。
 - **ひとこと・撮影時刻・タイトルの文言の縦位置はベースラインで揃える**（`y=h/2±N-ascent`、`baselineY`）。`text_h` で中央を出すと
   文字の中身で高さが変わり、行ごと・区間ごとに上下へずれる。N はフォントの ascent/descent から
   Android の `Paint` で測って渡す（`baselineShiftPt`）。プレビュー（`LineHeightStyle.Center` + `Trim.Both`）と同じ並べ方。
@@ -247,7 +254,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、180件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、181件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
