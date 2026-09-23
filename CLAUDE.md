@@ -20,7 +20,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleDebug            # デバッグAPK
 ./gradlew testDebugUnitTest        # JVM単体テスト（213件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（19件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（20件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -307,7 +307,7 @@ JVM単体テスト（`src/test`）、213件。対象は純粋関数と、再生�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、19件）
+### 画面操作のテスト（`src/androidTest`、20件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）と実機（SM-F971Q、Android 17）で通してある。
@@ -316,6 +316,7 @@ JVMで動かないため実装を入れている。
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
 | `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／動画への許可が無いときの案内（許可し直す・設定を開く）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
+| `PreviewSectionTest` | プレビューのタップが読み上げに「再生／一時停止」のボタンとして伝わる |
 | `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
