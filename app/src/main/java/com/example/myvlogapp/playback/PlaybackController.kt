@@ -20,7 +20,7 @@ import com.example.myvlogapp.edit.TimelinePlayback
 //
 // VlogViewModel から切り出したもの。ExoPlayerの保持・プレイリストの同期・再生位置の監視・
 // トリミング終端での停止／自動遷移といった「再生まわり」だけをここに集める。
-// クリップ一覧そのものは引き続き ViewModel が持ち、ここへは [clips] で覗かせる
+// クリップ一覧そのものは TimelineStore（edit/）が持ち、ここへは [clips] で覗かせる
 // （再生側から一覧を書き換えることは無い。選択位置と再生位置だけがここの持ち物）。
 // =====================================================================================
 
@@ -346,7 +346,8 @@ class PlaybackController(
     private var resumeAfterScrub = false
 
     fun beginScrub() {
-        resumeAfterScrub = player.isPlaying
+        // バッファ待ちで止まっていても再生のつもりなら続きを流す（togglePlaybackと同じ理由）
+        resumeAfterScrub = player.playWhenReady
         // なぞっている間に映像が進むと指の位置とコマがずれるので、いったん止める
         player.playWhenReady = false
     }
@@ -398,7 +399,9 @@ class PlaybackController(
      * 「動かない」ように見えてしまうので、[playFromWhere]に従って頭出ししてから再生する。
      */
     fun togglePlayback() {
-        if (player.isPlaying) {
+        // isPlayingではなくplayWhenReadyで見る。バッファ待ち（シーク直後やクラウド上の動画）の
+        // 間はisPlayingがfalseなので、それで判断すると一時停止のつもりのタップが再生扱いになる
+        if (player.playWhenReady) {
             player.pause()
             return
         }

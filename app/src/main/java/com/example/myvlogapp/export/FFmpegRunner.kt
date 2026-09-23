@@ -4,6 +4,7 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MAX_CLIPS
@@ -50,8 +51,8 @@ internal fun resetCancelRequest() {
  * 実行中のFFmpeg処理を中断する。
  *
  * 引数なしの`FFmpegKit.cancel()`は**実行中の全セッション**を止めるため、
- * 起動直後の機能判定（FFmpegCapabilities.ktの`-encoders`/`-filters`）が同時に走っていると
- * それも巻き込んで空文字を返させ、エンコーダの判定結果が変わってしまう。
+ * 機能判定（FFmpegCapabilities.ktの`-encoders`/`-filters`。初回の書き出しの冒頭で走る）が
+ * 同時に走っていると、それも巻き込んで空文字を返させ、エンコーダの判定結果が変わってしまう。
  * 書き出し本体のセッションだけを狙って止める。
  */
 internal fun cancelRunningFFmpeg() {
@@ -116,7 +117,10 @@ internal suspend fun runFFmpegWithProgress(
     }
     when {
         ReturnCode.isSuccess(session.returnCode) -> Unit
-        ReturnCode.isCancel(session.returnCode) -> throw VlogExportException("書き出しを中止しました")
+        // 中止はキャンセルとして投げる。失敗（VlogExportException）として投げると、
+        // ネイティブ側の完了がコルーチンのキャンセルより先に届いたとき、呼び出し元（サービス）が
+        // 失敗の分岐へ入り、中止したのに「書き出しに失敗しました」と通知していた
+        ReturnCode.isCancel(session.returnCode) -> throw CancellationException("書き出しを中止しました")
         else -> {
             val log = session.allLogsAsString.orEmpty()
             logFfmpegOutput("書き出しに失敗しました", "${session.returnCode}", log)

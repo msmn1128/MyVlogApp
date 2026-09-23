@@ -466,8 +466,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     // 画面からはViewModelだけを見ていればよいよう、編集の窓口はここに残す。
     // 中身は edit/TimelineStore.kt にあり、ここは受け渡しだけを行う。
 
-    val selectedClip: VlogClip? get() = timeline.selectedClip
-
     fun select(index: Int) = timeline.select(index)
 
     fun updateTrim(startMs: Long, endMs: Long, previewAtMs: Long = startMs) =

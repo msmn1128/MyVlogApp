@@ -136,7 +136,13 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 「キーボードはもう閉じているのにレイアウトだけ遅れて縮む」ズレが出る。
     // ここではその値をそのまま補間の材料にして、キーボードの動きと
     // 完全に同期させている。
-    var imeMaxBottomPx by remember { mutableIntStateOf(0) }
+    //
+    // 覚えた最大値はウィンドウの大きさが変わったら捨てる。configChangesで回転しても
+    // Activityが作り直されないため、そのままだと縦画面の（背の高い）キーボードの値が
+    // 横画面にも残り、横でキーボードを全開にしても開閉度が1に届かず、ひとこと欄が広がり切らない。
+    // 縦横の判定（isWide）と同じく、キーボードでは縮まないウィンドウ全体の大きさを使う。
+    val windowSize = LocalWindowInfo.current.containerSize
+    var imeMaxBottomPx by remember(windowSize) { mutableIntStateOf(0) }
     if (imeBottomPx > imeMaxBottomPx) imeMaxBottomPx = imeBottomPx
     val imeOpenFraction =
         if (imeMaxBottomPx > 0) (imeBottomPx.toFloat() / imeMaxBottomPx).coerceIn(0f, 1f) else 0f
@@ -282,7 +288,6 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
     // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
     // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
-    val windowSize = LocalWindowInfo.current.containerSize
     val isWide = windowSize.width > windowSize.height
 
     // ひとことはクリップの途中で切り替わるので、再生位置を見て出し分ける。

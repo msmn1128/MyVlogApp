@@ -2,6 +2,8 @@ package com.example.myvlogapp.export
 
 import java.io.File
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.ensureActive
 import com.example.myvlogapp.CANVAS_FPS
@@ -221,7 +223,8 @@ private fun lineOffsets(count: Int, lineHeight: Float, anchor: LineAnchor): List
  * - 1920x1080キャンバスに歪みなしで配置（余白は黒帯）、30fps
  * - ひとこと：[fonts].logoType、[HITOKOTO_FONT_PT]、上下左右中央
  *   1行につき1つのdrawtextを積む（このFFmpegビルドにはtext_alignが無いため、
- *   1つのdrawtextに複数行を渡すと左揃えになってしまう）
+ *   1つのdrawtextに複数行を渡すと左揃えになってしまう）。
+ *   縦位置は行ごとの文字の高さ（text_h）ではなくベースラインで揃える（[baselineY]）
  * - 撮影時刻：[fonts].time、[TIME_FONT_PT]、キャンバス右端に配置（縦横問わず同じ位置）
  *
  * @param spans ひとことの区間と、その各行のテキストファイル。
@@ -259,7 +262,7 @@ private fun buildClipFilter(
                 fontfile = fonts.logoType,
                 fontsizePt = HITOKOTO_FONT_PT,
                 x = centeredX(),
-                y = centeredY(offsets[lineIndex]),
+                y = baselineY(offsets[lineIndex] + fonts.hitokotoBaselineShiftPt),
                 textFile = file,
                 enable = enable
             )
@@ -338,6 +341,24 @@ private fun centeredY(offsetPt: Float): String {
         offset > 0 -> "(h-text_h)/2+$offset"
         else -> "(h-text_h)/2-${-offset}"
     }
+}
+
+/**
+ * ベースラインを「画面中央から[baselineFromCenterPt]下」に置くy座標式。
+ *
+ * [centeredY]のようにtext_h（その行の文字の実際の高さ）で中央を出すと、縦位置が
+ * 文字の中身で変わる。「ー」だけの行は低く、「漢字」の行は高く測られるので、
+ * 複数行では行ごとに上下へずれ、区間が切り替わると文字が上下に跳ね、
+ * フォントの行の箱で並べているプレビューとも合わない。
+ *
+ * このFFmpegビルド(6.x)のdrawtextは、yの位置からその行の文字の最大の高さ（ascent）だけ
+ * 下にベースラインを置く。y = 目標のベースライン − ascent とすれば、文字の中身に
+ * 関係なくベースラインが目標の位置に来る（y_align=fontはFFmpeg 7以降で、6.xには無い）。
+ */
+private fun baselineY(baselineFromCenterPt: Float): String {
+    val offset = baselineFromCenterPt.roundToInt()
+    val sign = if (offset < 0) "-" else "+"
+    return "h/2$sign${abs(offset)}-ascent"
 }
 
 /**

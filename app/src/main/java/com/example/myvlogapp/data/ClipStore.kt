@@ -15,6 +15,7 @@ import org.json.JSONObject
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.VlogClipKeys
+import com.example.myvlogapp.mapParallel
 import com.example.myvlogapp.nextClipId
 import com.example.myvlogapp.toJson
 import com.example.myvlogapp.uniqueSaveName
@@ -55,6 +56,12 @@ object ClipStore {
     private const val KEY_CLIPS = "clips"
     private const val KEY_AUTO_ADVANCE = "auto_advance"
     private const val KEY_PROJECTS = "projects"
+
+    /**
+     * 復元のとき、動画を開けるか同時に確かめる本数。ファイルを開いてすぐ閉じるだけなので
+     * メタデータの読み取り（4本）より多めにしてある
+     */
+    private const val READABLE_CHECK_PARALLELISM = 8
 
     /**
      * 一時保存だけを入れる保存領域。
@@ -145,37 +152,45 @@ object ClipStore {
     }
 
     suspend fun restore(context: Context): RestoredClips = withContext(Dispatchers.IO) {
-        parseJsonArray(
+        val array = parseJsonArray(
             context.prefs().getString(KEY_CLIPS, null),
-            default = RestoredClips(emptyList(), 0),
+            default = null,
             errorMessage = "クリップの復元に失敗しました"
-        ) { fromJson(context, it) }
+        ) { it } ?: return@withContext RestoredClips(emptyList(), 0)
+        readableClips(context, array)
     }
 
     /**
      * JSONからクリップ一覧へ。いま読めないURIは落として件数だけ返す。
      *
-     * 1件ごとにtry-catchするのは、壊れた・スキーマの古い1件のせいで
+     * 1件ごとに失敗を拾うのは、壊れた・スキーマの古い1件のせいで
      * 残り全件の復元が巻き添えで消えるのを防ぐため。
+     *
+     * 開けるかどうかの確認（[isReadable]）だけは並列に行う。1本ずつ実際に開くので、
+     * クラウド上の動画やSDカードが混ざると本数ぶん待たされ、起動しても前回の続きが
+     * なかなか出てこない。JSONの読み取りと組み立ては順番どおり（並びと通し番号を保つため）。
      */
-    private fun fromJson(context: Context, array: JSONArray): RestoredClips {
-        var dropped = 0
-        val clips = (0 until array.length()).mapNotNull { index ->
+    private suspend fun readableClips(context: Context, array: JSONArray): RestoredClips {
+        val entries = (0 until array.length()).map { index ->
             runCatching {
                 val json = array.getJSONObject(index)
-                val uri = Uri.parse(json.getString(VlogClipKeys.URI))
-                if (!isReadable(context, uri)) {
-                    dropped++
-                    return@runCatching null
-                }
-                VlogClip.fromJson(json, id = nextClipId())
+                json to Uri.parse(json.getString(VlogClipKeys.URI))
             }.getOrElse { e ->
                 Log.w(LOG_TAG, "1件のクリップ復元に失敗しました（この1件だけ落とします）", e)
-                dropped++
                 null
             }
         }
-        return RestoredClips(clips, dropped)
+        val readable = entries.mapParallel(READABLE_CHECK_PARALLELISM) { _, entry ->
+            entry != null && isReadable(context, entry.second)
+        }
+        val clips = entries.zip(readable).mapNotNull { (entry, isReadable) ->
+            if (entry == null || !isReadable) return@mapNotNull null
+            runCatching { VlogClip.fromJson(entry.first, id = nextClipId()) }.getOrElse { e ->
+                Log.w(LOG_TAG, "1件のクリップ復元に失敗しました（この1件だけ落とします）", e)
+                null
+            }
+        }
+        return RestoredClips(clips, dropped = entries.size - clips.size)
     }
 
     // --- 一時保存 -----------------------------------------------------------------------
@@ -274,12 +289,11 @@ object ClipStore {
             val entry = projectsMutex.withLock {
                 readProjects(context).firstOrNull { it.optLong(ProjectKeys.ID) == id }
             } ?: return@withContext null
-            runCatching {
-                fromJson(context, entry.getJSONArray(ProjectKeys.CLIPS))
-            }.getOrElse { e ->
+            val clips = runCatching { entry.getJSONArray(ProjectKeys.CLIPS) }.getOrElse { e ->
                 Log.w(LOG_TAG, "一時保存の読み出しに失敗しました", e)
-                null
+                return@withContext null
             }
+            readableClips(context, clips)
         }
 
     suspend fun deleteProject(context: Context, id: Long) = withContext(Dispatchers.IO) {

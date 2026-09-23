@@ -35,9 +35,9 @@ import com.example.myvlogapp.ui.components.splitMarkerColor
 //
 // MainActivity.kt から切り出したもの。VlogClip/TextSegmentとCompose標準APIだけで
 // 完結しており、画面全体の構成には依存しないため独立したファイルに置ける。
-// 波形自体の見た目（[TimelineDivider]など操作バーの部品）や、ひとことの区切りバッジ
-// （[splitMarkerColor]/[SegmentBadge]など）は他の画面でも使う共通部品なので、
-// あちらは引き続き MainActivity.kt 側に残してある。
+// 操作バーの部品（TimelineDividerなど）や、ひとことの区切りの色・バッジ
+// （[splitMarkerColor]/SegmentBadgeなど）は他の画面でも使う共通部品なので、
+// ui/components/ToolbarButtons.kt に置いてある。
 // =====================================================================================
 
 /** トリミングつまみの幅 */
@@ -48,7 +48,7 @@ private val TRIM_GRAB_RADIUS = 30.dp
 
 /**
  * これ以上は詰められない長さ。0にできてしまうと書き出しが通らなくなる。
- * TrimSection（MainActivity.kt）でも「トリミング可能かどうか」の判定に使うため公開している。
+ * TrimSection（ui/screens/TimelineSection.kt）でも「トリミング可能かどうか」の判定に使うため公開している。
  */
 const val MIN_TRIM_MS = 300L
 

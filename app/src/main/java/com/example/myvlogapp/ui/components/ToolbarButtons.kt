@@ -115,13 +115,16 @@ private fun disabledAlpha(enabled: Boolean, label: String): Float {
 /**
  * 操作バーのボタンの土台。円形の当たり判定＋背景色だけを担い、
  * 中身（アイコンと色）はCompactIconButton/TimelineToggleButtonそれぞれに任せる。
+ *
+ * 押したときの説明（onClickLabel）は付けない。ボタンの名前は中のIconのcontentDescriptionが
+ * そのまま読まれるので、同じ文言を渡すと「もとに戻す、ダブルタップしてもとに戻す」のように
+ * 読み上げが重複する。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ToolbarButtonBox(
     background: Color,
     role: Role,
-    contentDescription: String,
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -137,7 +140,6 @@ private fun ToolbarButtonBox(
             .combinedClickable(
                 enabled = enabled,
                 role = role,
-                onClickLabel = contentDescription,
                 onLongClickLabel = onLongClickLabel,
                 onLongClick = onLongClick,
                 onClick = onClick
@@ -182,7 +184,6 @@ internal fun CompactIconButton(
     ToolbarButtonBox(
         background = Color.Transparent,
         role = Role.Button,
-        contentDescription = contentDescription,
         enabled = enabled,
         onClick = onClick,
         onLongClick = wrappedOnLongClick,
@@ -272,7 +273,6 @@ internal fun TimelineToggleButton(
     ToolbarButtonBox(
         background = background,
         role = Role.Switch,
-        contentDescription = contentDescription,
         enabled = enabled,
         onClick = onClick,
         modifier = modifier

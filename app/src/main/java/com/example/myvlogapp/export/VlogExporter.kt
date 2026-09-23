@@ -16,6 +16,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.coroutineContext
+import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.mapParallel
@@ -135,9 +136,11 @@ object VlogExporter {
 
         try {
             requireDrawtext()
+            val logoType = copyFontAsset(context, TITLE_FONT_ASSET)
             val fonts = ExportFonts(
-                logoType = copyFontAsset(context, TITLE_FONT_ASSET),
-                time = copyFontAsset(context, TIME_FONT_ASSET)
+                logoType = logoType,
+                time = copyFontAsset(context, TIME_FONT_ASSET),
+                hitokotoBaselineShiftPt = baselineShiftPt(logoType, HITOKOTO_FONT_PT)
             )
 
             // includeTitle・muted・クリップ個別isMutedの組み合わせ判定を先に1箇所へ
@@ -161,18 +164,6 @@ object VlogExporter {
             // クリップごとに個別エンコードして結合し直すと同じ映像を2回圧縮することになるため、
             // 生の素材から直接1回だけエンコードする。30fps変換も結合後の連続した1本の
             // 映像に対して1回で完結する。
-            //
-            // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
-            // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
-            // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
-            // 要求しない生成フィルタなので、追加の-iは不要。
-            val inputs = buildList {
-                titleSfx?.let { addAll(listOf("-i", it.absolutePath)) }
-                clips.forEach { clip ->
-                    addAll(clipInputArgs(clip, FFmpegKitConfig.getSafParameterForRead(context, clip.uri)))
-                }
-            }.toTypedArray()
-
             val filterGraph = buildFilterGraph(
                 clips, fonts, titleText, titleSfxDelayMs(), workDir, id, textFiles,
                 includeTitle, audioPlan
@@ -189,6 +180,21 @@ object VlogExporter {
             )
             val totalDurationMs = (if (includeTitle) TITLE_DURATION_MS else 0L) +
                     clips.sumOf { it.trimmedDurationMs }
+
+            // 入力はタイトル効果音を含めるときだけ 0=タイトル効果音、1..N=各クリップ
+            // （SAF経由）。含めないときは効果音の-iを省き、0..N-1=各クリップになる。
+            // タイトルの映像(color=)や無音クリップの音声(anullsrc=)は実体ファイルを
+            // 要求しない生成フィルタなので、追加の-iは不要。
+            //
+            // 組み立てるのはFFmpegを走らせる直前。getSafParameterForReadは呼んだ時点で
+            // 動画を開き、FFmpegが閉じるまで持ち続ける。フィルタグラフを組んでいる途中で
+            // 中止・失敗すると誰も閉じず、書き出しのたびに最大で本数ぶん開きっぱなしになる。
+            val inputs = buildList {
+                titleSfx?.let { addAll(listOf("-i", it.absolutePath)) }
+                clips.forEach { clip ->
+                    addAll(clipInputArgs(clip, FFmpegKitConfig.getSafParameterForRead(context, clip.uri)))
+                }
+            }.toTypedArray()
 
             runFFmpegWithProgress(
                 arrayOf(

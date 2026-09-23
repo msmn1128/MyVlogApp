@@ -31,7 +31,21 @@ private data class Capabilities(
     val hasDrawtext: Boolean
 )
 
-private val capabilities: Capabilities by lazy {
+/**
+ * 判定済みの結果。判定そのものに失敗した回（出力が空）は覚えない。
+ *
+ * `by lazy`で持っていた頃は、一度失敗すると「drawtextが無い」という結果がプロセスの
+ * 終わりまで残り、アプリを再起動するまで書き出しがすべて失敗していた。
+ */
+@Volatile
+private var probedCapabilities: Capabilities? = null
+
+private val capabilities: Capabilities
+    get() = probedCapabilities ?: synchronized(Capabilities::class) {
+        probedCapabilities ?: probeCapabilities()
+    }
+
+private fun probeCapabilities(): Capabilities {
     val encoders = runCatching {
         FFmpegKit.execute("-hide_banner -encoders").allLogsAsString.orEmpty()
     }.getOrDefault("")
@@ -57,7 +71,8 @@ private val capabilities: Capabilities by lazy {
         LOG_TAG,
         "FFmpeg機能判定: encoder=${caps.videoEncoder} drawtext=${caps.hasDrawtext}"
     )
-    caps
+    if (encoders.isNotEmpty() && filters.isNotEmpty()) probedCapabilities = caps
+    return caps
 }
 
 /**
@@ -68,12 +83,14 @@ private val capabilities: Capabilities by lazy {
  * 掛けていた頃は、素材の実フレームレートとの差分の帳尻合わせがクリップ末尾
  * （＝つなぎ目）に集中してしまい、継ぎ目で一瞬止まって見える原因になっていた。
  */
-internal fun videoEncodeArgs(): Array<String> = arrayOf(
-    "-c:v", capabilities.videoEncoder,
-    *capabilities.extraVideoArgs.toTypedArray(),
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS", "-b:a", AUDIO_BITRATE
-)
+internal fun videoEncodeArgs(): Array<String> = capabilities.let { caps ->
+    arrayOf(
+        "-c:v", caps.videoEncoder,
+        *caps.extraVideoArgs.toTypedArray(),
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS", "-b:a", AUDIO_BITRATE
+    )
+}
 
 internal fun requireDrawtext() {
     if (!capabilities.hasDrawtext) {
