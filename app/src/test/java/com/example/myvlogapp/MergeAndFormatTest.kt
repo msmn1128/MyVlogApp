@@ -59,9 +59,27 @@ class FormattersTest {
     @Test
     fun formatSeconds_isMinutesAndZeroPaddedSeconds() {
         assertEquals("0:00", formatSeconds(0L))
-        assertEquals("0:59", formatSeconds(59_999L))
+        assertEquals("0:59", formatSeconds(59_000L))
         assertEquals("1:01", formatSeconds(61_000L))
         assertEquals("10:00", formatSeconds(600_000L))
+    }
+
+    @Test
+    fun formatSeconds_roundsToTheNearestSecond() {
+        // 切り捨てだと、3.2〜15.1秒が「0:03 〜 0:15（0:11）」になり、引き算と合わなく見えていた
+        assertEquals("0:03", formatSeconds(3_499L))
+        assertEquals("0:04", formatSeconds(3_500L))
+        assertEquals("1:00", formatSeconds(59_999L))
+    }
+
+    @Test
+    fun roundedTrim_alwaysMatchesTheDifferenceOfTheDisplayedEnds() {
+        // 3.2〜15.1秒（11.9秒）→「0:03 〜 0:15（0:12）」
+        assertEquals("0:12", formatSeconds(roundedTrimMs(3_200L, 15_100L)))
+        // 3.5〜15.4秒（11.9秒）→「0:04 〜 0:15」。長さを丸めると0:12でずれるが、両端の差なら0:11
+        assertEquals("0:11", formatSeconds(roundedTrimMs(3_500L, 15_400L)))
+        // 前後が入れ替わった値でも負にならない
+        assertEquals(0L, roundedTrimMs(5_000L, 2_000L))
     }
 
     @Test

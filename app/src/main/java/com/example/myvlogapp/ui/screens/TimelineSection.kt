@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -68,6 +69,7 @@ import com.example.myvlogapp.SECTION_GAP
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.WAVEFORM_HEIGHT
 import com.example.myvlogapp.formatSeconds
+import com.example.myvlogapp.roundedTrimMs
 import com.example.myvlogapp.ui.components.CompactIconButton
 import com.example.myvlogapp.ui.components.SegmentBadge
 import com.example.myvlogapp.ui.components.TimelineDivider
@@ -100,10 +102,11 @@ internal fun ColumnScope.EditSection(
     editorWeight: Float,
     isImeVisible: Boolean,
     showTimeline: Boolean,
+    showEditorHeader: Boolean,
     timelineFit: TimelineFit
 ) {
-    // 縦に短い画面でキーボードを出している間は、タイムラインを畳んでひとこと欄だけにする
-    // （理由は呼び出し元のVlogAppScreen）。ひとこと欄の見出しも同じときに畳む
+    // キーボードを出している間は、画面によってタイムラインやひとこと欄の見出しを畳む
+    // （どの画面で何を畳むかと、その理由は呼び出し元のVlogAppScreen）
     if (showTimeline) {
         TimelinePane(
             clips = clips,
@@ -128,7 +131,7 @@ internal fun ColumnScope.EditSection(
         isPlaying = state.isPlaying,
         onTextChange = actions.updateText,
         onPause = actions.pause,
-        showHeader = showTimeline,
+        showHeader = showEditorHeader,
         modifier = Modifier.fillMaxWidth().weight(editorWeight)
     )
 }
@@ -164,9 +167,22 @@ private fun TimelinePane(
     // 選択中のタイルが常に見えるようにする。連続再生の自動遷移や「ひとつ後ろへ移動」で
     // 選択が変わっても、本数が多いとタイルが画面外のままになり、いまどれを編集して
     // いるのかタイムラインから読み取れなくなるため。
+    //
+    // すでに全部見えているタイルは動かさない。以前は毎回そのタイルを左端まで送っていたので、
+    // 見えているタイルを押しただけで並びが横に動き、続けて押そうとした指の下のタイルが入れ替わって
+    // いた（長押しのミュートが別のクリップに効く）。はみ出しているときは、はみ出したぶんだけずらす。
     val clipListState = rememberLazyListState()
     LaunchedEffect(selectedIndex, clips.size) {
-        if (selectedIndex in clips.indices) clipListState.animateScrollToItem(selectedIndex)
+        if (selectedIndex !in clips.indices) return@LaunchedEffect
+        val layout = clipListState.layoutInfo
+        val item = layout.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        when {
+            item == null -> clipListState.animateScrollToItem(selectedIndex)
+            item.offset < layout.viewportStartOffset ->
+                clipListState.animateScrollBy((item.offset - layout.viewportStartOffset).toFloat())
+            item.offset + item.size > layout.viewportEndOffset ->
+                clipListState.animateScrollBy((item.offset + item.size - layout.viewportEndOffset).toFloat())
+        }
     }
 
     // 欄の実際の高さと、中身が収まる高さを測って渡す（足りなければ欄を広げてもらう。TimelineFit.kt）。
@@ -275,7 +291,7 @@ private fun TrimSection(
             Text(
                 text = "${clip.timeText}：" +
                         "${formatSeconds(clip.startMs)} 〜 ${formatSeconds(clip.endMs)}" +
-                        "（${formatSeconds(clip.trimmedDurationMs)}）",
+                        "（${formatSeconds(roundedTrimMs(clip.startMs, clip.endMs))}）",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -342,7 +358,11 @@ private fun TimelineToolbar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 2.dp)
-            .horizontalScroll(rememberScrollState()),
+            // 収まりきらないときは、右端（よく使う2s/4sと分割）が見えた状態から始める。
+            // 既定の向きだと左端から始まり、押し間違えが怖い削除が見えていて、よく使う分割は
+            // 横にずらさないと出てこなかった（実機 SM-F971Q の開いた画面・閉じた画面の両方）。
+            // reverseScrollingは数える起点を右端にするだけで、指の動きと中身の動く向きは変わらない
+            .horizontalScroll(rememberScrollState(), reverseScrolling = true),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -533,9 +553,10 @@ internal fun ClipTile(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // 時刻を見出しに上げたぶん、ここは尺の表示に使う
+                // 時刻を見出しに上げたぶん、ここは尺の表示に使う。
+                // 波形の上の範囲の表示（「0:03 〜 0:15（0:12）」）と同じ値にそろえる
                 Text(
-                    formatSeconds(clip.trimmedDurationMs),
+                    formatSeconds(roundedTrimMs(clip.startMs, clip.endMs)),
                     fontSize = 10.sp
                 )
                 // ひとことを分割してあるクリップは、区間の数を出す。
@@ -755,8 +776,8 @@ private fun EditorPane(
                     // ひとことを改行で見やすく整えられなくなる。
                     // imeActionを明示的にNoneにしておく。指定しないとDefaultになり、IME側の
                     // 判断でエンターキーが「確定」扱いになって閉じてしまう環境がある
-                    // （改行として入らない）。書き出し側（ExportTextFiles）は"\n"で行を
-                    // 分けてdrawtextを積むので、改行はそのまま複数行として焼き込まれる。
+                    // （改行として入らない）。書き出し側（TextImages）は改行で行を
+                    // 分けて描くので、改行はそのまま複数行として焼き込まれる。
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.None),
                     modifier = Modifier.fillMaxWidth().height(fieldHeight)
                 )

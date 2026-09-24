@@ -34,6 +34,7 @@ import com.example.myvlogapp.data.ProjectsController
 import com.example.myvlogapp.data.SavedProject
 import com.example.myvlogapp.data.getVideoMetadata
 import com.example.myvlogapp.data.isReadable
+import com.example.myvlogapp.data.sameVideoKey
 import com.example.myvlogapp.edit.TimelineStore
 import com.example.myvlogapp.export.ExportState
 import com.example.myvlogapp.export.ExportStatus
@@ -369,10 +370,19 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
 
         // 追加済み・上限超え・読み込むものに振り分ける（決まりはClipAddition.kt）
+        // 同じ動画かは、ギャラリーとファイル選択でのURIの形の違いをそろえた鍵で比べる
+        // （data/MediaIdentity.kt）。ファイル選択のURIは鍵を求めるのに端末へ問い合わせるので、
+        // バックグラウンドで求める
+        val current = timeline.current
+        val (requestedKeys, existingKeys) = withContext(Dispatchers.IO) {
+            uris.associateWith { sameVideoKey(context, it) } to
+                current.mapTo(HashSet()) { sameVideoKey(context, it.uri) }
+        }
         val plan = planAddition(
             requested = uris,
-            existing = timeline.current.mapTo(HashSet()) { it.uri },
-            currentCount = timeline.current.size
+            existing = existingKeys,
+            currentCount = current.size,
+            keyOf = requestedKeys::getValue
         )
         if (plan.toLoad.isEmpty()) {
             addSkipMessage(

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  プレビューの PlayerView（PreviewSection.kt の PreviewPane）。
+  映像を描く面の種類（surface_type）は XML の属性でしか選べないので、このレイアウトから作る。
+
+  texture_view にしているのは、既定の surface_view だと、起動直後にプレビューの枠が縮んだとき
+  （タイムライン欄へ高さを回す TimelineFit）、一時停止中は新しいコマが来ないため、縮む前の大きさで
+  描いた絵のまま残り、映像が約1.45倍に拡大されて左上だけが映っていた（実機 SM-F971Q で確認）。
+  TextureView は普通の部品と同じく配置に合わせて描き直されるので、枠の大きさが変わっても追従する
+  （キーボードの開閉でもプレビューの大きさは毎コマ変わる）。角丸の切り抜きも映像に効く。
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:use_controller="false" />

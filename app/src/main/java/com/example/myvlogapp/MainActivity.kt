@@ -123,12 +123,17 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     val isImeVisible = imeBottomPx > 0
     // 縦横の判定（isWide）には、キーボードでは縮まないウィンドウ全体の大きさを使う（理由は下）
     val windowSize = LocalWindowInfo.current.containerSize
-    // 縦に短い画面（横向きのスマホなど。Materialの区分でcompactにあたる480dp未満）では、
-    // キーボードを出すと残りが数百pxしかなく、比率を変えてもタイムラインとひとこと欄が
-    // 両方潰れ、入力欄が枠線1本ほどになって打った文字が見えなかった。
-    // キーボードが出ている間はタイムラインを畳み、ひとこと欄に高さを回す。
+    val isWide = windowSize.width > windowSize.height
+    // キーボードが出ている間は、次の2つの画面でタイムラインを畳み、ひとこと欄に高さを回す。
+    // - 縦に短い画面（横向きのスマホなど。Materialの区分でcompactにあたる480dp未満）：
+    //   残りが数百pxしかなく、比率を変えてもタイムラインとひとこと欄が両方潰れ、入力欄が
+    //   枠線1本ほどになって打った文字が見えなかった。ひとこと欄の見出しも畳む
+    // - 横2ペイン（Foldを開いた画面など）：右ペインのタイムライン欄が見出しと操作バーだけの
+    //   高さまで縮み、「2s」「4s」が上下で切れて見えた（実機 SM-F971Q）。こちらは高さに余裕が
+    //   あるので、ひとこと欄の見出し（何区間目を編集中か）は残す
     val isCompactHeight = with(density) { windowSize.height.toDp() } < COMPACT_HEIGHT
-    val showTimeline = !(isCompactHeight && isImeVisible)
+    val showTimeline = !((isCompactHeight || isWide) && isImeVisible)
+    val showEditorHeader = !(isCompactHeight && isImeVisible)
     // 波形を足したぶんタイムラインの取り分を増やしてある。
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
@@ -251,13 +256,12 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
 
     VlogAppSideEffects(viewModel = viewModel, clips = clips)
 
-    // 縦横の判定にはウィンドウ全体の大きさ（containerSize）を使う。
+    // 縦横の判定（isWide、上で求めてある）にはウィンドウ全体の大きさ（containerSize）を使う。
     // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
     // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
     // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
     // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
     // windowSize は上（キーボードまわりの判定）で読んである。
-    val isWide = windowSize.width > windowSize.height
 
     // タイムラインへの上乗せは、縦1カラムではプレビューから、横2ペインでは同じ右ペインの
     // ひとこと欄から差し引く。どちらも削り切らない下限を残す。プレビューは動画を縮めて
@@ -359,6 +363,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             timelineWeight = timelineWeight,
             editorWeight = editorWeight,
             showTimeline = showTimeline,
+            showEditorHeader = showEditorHeader,
             isImeVisible = isImeVisible,
             timelineFit = timelineFit
         )

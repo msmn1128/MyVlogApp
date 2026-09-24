@@ -47,4 +47,30 @@ class ClipAdditionTest {
             planAddition(listOf("x", "a", "b"), existing = setOf("x"), currentCount = 10, limit = 10)
         )
     }
+
+    @Test
+    fun theSameVideoInADifferentUriFormIsSkippedAsAlreadyAdded() {
+        // ギャラリー（MediaStore）とファイル選択（SAF）で同じ動画のURIが違っても、鍵が同じなら追加済み。
+        // 読み込むものは選ばれた形のまま返す（保存するURIは変えない）
+        val keys = mapOf("saf/cam.mp4" to "media:7", "saf/new.mp4" to "media:8")
+        assertEquals(
+            AdditionPlan(toLoad = listOf("saf/new.mp4"), alreadyAdded = 1, overLimit = 0),
+            planAddition(
+                listOf("saf/cam.mp4", "saf/new.mp4"), existing = setOf("media:7"), currentCount = 1,
+                keyOf = keys::getValue
+            )
+        )
+    }
+
+    @Test
+    fun theSameVideoChosenFromBothPlacesAtOnceIsLoadedOnce() {
+        val keys = mapOf("media/7" to "media:7", "saf/cam.mp4" to "media:7")
+        assertEquals(
+            AdditionPlan(toLoad = listOf("media/7"), alreadyAdded = 0, overLimit = 0),
+            planAddition(
+                listOf("media/7", "saf/cam.mp4"), existing = emptySet<String>(), currentCount = 0,
+                keyOf = keys::getValue
+            )
+        )
+    }
 }

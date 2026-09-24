@@ -25,7 +25,8 @@ private const val SFX_ASSET_DIR = "sfx"
  * タイトルカード・各クリップ両方で使うフォント一式。
  *
  * 各 *BaselineShiftPt は、その文字の行の中心からベースラインまでの距離（[baselineShiftPt]）。
- * drawtextはフォントの指標を式から読めないので、書き出しの前にAndroid側で測って渡す。
+ * drawtext（撮影時刻）はフォントの指標を式から読めないので、書き出しの前にAndroid側で測って渡す。
+ * ひとこと・タイトルの文言の画像（TextImages.kt）も、同じ値でベースラインを置く。
  *
  * @param hitokotoBaselineShiftPt ひとこと（[logoType]、HITOKOTO_FONT_PT）
  * @param timeBaselineShiftPt 撮影時刻（[time]、TIME_FONT_PT）

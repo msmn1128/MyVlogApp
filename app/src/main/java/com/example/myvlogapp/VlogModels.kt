@@ -94,7 +94,7 @@ data class VlogClip(
 
     /**
      * トリミング範囲に実際に映るひとことを、区間ごとに切り出す。
-     * 書き出しのdrawtextはこの区間ぶんだけ表示すればよい。
+     * 書き出しはこの区間ぶんだけ、ひとことの画像を重ねればよい。
      *
      * トリミングで頭を落としたとき、その手前の区間は尺が無くなるので落とす。
      * ただし「トリム開始時点で出ている文字」は残す（indexOfLastで拾われる区間がそれ）。
@@ -246,8 +246,8 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
  * [startMs] は動画内の絶対位置（トリミング位置と同じ基準）。先頭は必ず 0。
  *
  * [text] の既定値は空文字。動画追加直後に触らなければプレビュー・書き出しの
- * どちらにも何も焼き込まれない（空行はdrawtextを描かないので[ExportTextFiles.writeSpanTextFiles]側で
- * 自然に何も出ない）。入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
+ * どちらにも何も焼き込まれない（書き出しは空の区間の画像を作らないので
+ * [com.example.myvlogapp.export.AndroidTextRenderer]側で自然に何も出ない）。入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
  * タイムラインのタイル表示（未入力時の目印）は[DEFAULT_HITOKOTO]へのifBlankフォールバックで補う。
  */
 data class TextSegment(

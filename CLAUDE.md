@@ -18,9 +18,9 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（192件）
+./gradlew testDebugUnitTest        # JVM単体テスト（209件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（13件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（18件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -75,7 +75,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
 | パッケージ | 役割 |
 |---|---|
 | ルート | `VlogModels`(純粋データ) / `VlogConstants`(書き出しと共有する数値) / `UiDimens`(画面だけで使う寸法と配分) / `Formatters`(表示整形) / `Parallel`(同時実行数を絞る並列処理) / `VlogViewModel` / `MainActivity`(画面構成) / `VlogAppDialogs`・`VlogAppSideEffects`・`ActivityLaunchers`(MainActivityから切り出したダイアログ・画面の外の処理・許可とファイル選択の入口。ViewModelを受け取るので`ui/screens/`には置かない) |
-| `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) |
+| `data/` | `ClipStore`(永続化) `ProjectsController`(一時保存の窓口) `VideoMetadataReader`(撮影日時・尺) `GalleryRepository`(MediaStore) `MediaAccess`(権限) `MediaIdentity`(ギャラリーとファイル選択で形の違うURIが同じ動画かを見分ける) |
 | `playback/` | `PlaybackController` とその純粋関数 `playFromWhere` |
 | `edit/` | `TimelineStore`(クリップ一覧の持ち主) `EditHistory`（スナップショット型を問わない汎用の履歴） |
 | `export/` | 下記「書き出しパイプライン」参照 |
@@ -93,7 +93,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
 - `texts` は **必ず1件以上**あり、**先頭の `startMs` は必ず 0**、**昇順**。
   この3つが崩れると `textIndexAt` / `visibleTextSpans` が拾えない区間を作り、書き出しから文字が消える。
   復元時に `VlogModels.readTextSegments()` が並べ替えと先頭0への補正を行っている。
-- 動画は分割しない。文字だけを `drawtext` の `enable` で時間によって出し分ける。
+- 動画は分割しない。文字（区間ごとの画像）だけを `overlay` の `enable` で時間によって出し分ける。
   だからクリップは何区間に分けても1本のままで、つなぎ目が生まれない。
 
 ### クリップ
@@ -143,7 +143,8 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
 |---|---|
 | `VlogExporter.kt` | `export()` の手順、`AudioPlan`、強制終了時の後始末2種 |
 | `FilterGraph.kt` | `filter_complex` の組み立て。**下の地雷はほぼすべてここ** |
-| `ExportTextFiles.kt` | drawtextへ渡す行ごとのテキストファイル |
+| `TextImages.kt` | ひとこと・タイトルの文言を、Androidの描画で透明なPNGの帯にする（絵文字のため） |
+| `ExportTextFiles.kt` | drawtextへ渡す撮影時刻のテキストファイル |
 | `ExportAssets.kt` | フォント・効果音のassetsからの展開 |
 | `ClipProbe.kt` | 書き出し前に、各動画を1回ずつ開いて音声トラックの有無とHDRかを読む |
 | `FFmpegCapabilities.kt` | 使えるエンコーダ・フィルタの判定と出力フォーマット |
@@ -167,11 +168,20 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
   無限に無音を継ぎ足すので `atrim` と必ず対で使う。
 - **全クリップに `setsar=1`。** 非正方画素の素材が混ざるとタイトルカードとSARが食い違い、
   concatが `Input link parameters do not match` で書き出しごと失敗する。
-- **`drawtext` には `:expansion=none`。** `%{...}` の展開を切っている。既定のままだと、
-  ひとことに `%` が入っているだけで表示が壊れたりパースエラーで失敗したりする。
-- **文字は必ず `textfile=` 経由、1行1ファイル。** `text=` に直接埋めると引用符・コロン・
-  バックスラッシュの解釈が中身次第になる。また、このFFmpegビルド(6.x)に `text_align` が無いため、
-  複数行の中央揃えは「1行につき1つのdrawtext」で実現している。
+- **ひとこととタイトルの文言は drawtext で描かない。Android で画像にして `overlay` で重ねる**（`TextImages.kt`）。
+  drawtext は1つのフォントしか使えず（LogoTypeGothic に無い字を補えない）、端末のカラー絵文字も、
+  👨‍👩‍👧・👍🏽・国旗のような組み合わせの絵文字も描けないため、書き出しから絵文字が消えていた。
+  Android の描画ならプレビュー（Compose）と同じく端末のフォントで補ってカラーで描ける。
+  - 画像は全画面ではなく**横1920×必要な高さの帯**。区切り1つに最大10本×区間数ぶん載るため（全画面だと1枚約8MB）。
+    帯の上下は絵文字の背の高さぶん余白を取り（`STRIP_*_EM`）、位置と高さは偶数にそろえる（yuv420 の色のにじみ）。
+  - 画像は `-i` ではなく `movie=` で読む。`-i` にすると区間の数だけ各クリップの入力番号がずれる。
+    1枚きりの画像を最後まで出し続けるのは `overlay` の `eof_action=repeat`。
+  - タイトルカードは、文字ごとの alpha ではなく**カード全体を黒へ `fade`** する（背景が黒なので見た目は同じ。
+    `start_frame` は「まだ100%のコマ」なので、95%にしたいコマの1つ手前。エミュレータでコマごとに±1で一致）。
+  - 必要なフィルタ（drawtext・movie・overlay・fade）が無いビルドでは、始める前に断る（`requireTextFilters`）。
+- **撮影時刻と「Vlog.」は drawtext のまま**（固定の英数字）。`:expansion=none` で `%{...}` の展開を切り、
+  文字は `textfile=` 経由で渡す（`text=` に直接埋めると引用符・コロンの解釈が中身次第になる）。
+- **フィルタグラフに書くパスは単引用符で囲む**（`quotedPath`）。中に単引用符があると壊れるので、組み立ての時点で断る。
 - **フィルタグラフは `-filter_complex_script` でファイル渡し。** 100本で約70KBになる。
 - **秒数は必ず `Locale.US` 固定**（`ffmpegSeconds`）。小数点にカンマを使うロケールで壊れる。
 - **HDR（HLG・PQ）のクリップはSDRへ変換する**（`Hdr.kt`）。書き出しの前に `MediaExtractor` の
@@ -181,9 +191,11 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
   縮めてから変換するのは、1画素ずつの浮動小数点の計算が重いため（4K・3秒で28秒→20秒）。
 - **出力には BT.709 の色空間の情報を付ける**（`videoEncodeArgs`）。付けないと再生する側が変換式を推測し、
   BT.601と取られると色がずれる。
-- **ひとこと・撮影時刻・タイトルの文言の縦位置はベースラインで揃える**（`y=h/2±N-ascent`、`baselineY`）。`text_h` で中央を出すと
+- **ひとこと・撮影時刻・タイトルの文言の縦位置はベースラインで揃える**。撮影時刻は drawtext の `y=h/2±N-ascent`（`baselineY`）、
+  ひとことと文言の画像は同じ位置にベースラインを置く（`textStripLayout`）。`text_h` で中央を出すと
   文字の中身で高さが変わり、行ごと・区間ごとに上下へずれる。N はフォントの ascent/descent から
   Android の `Paint` で測って渡す（`baselineShiftPt`）。プレビュー（`LineHeightStyle.Center` + `Trim.Both`）と同じ並べ方。
+  画像にしてからも、絵文字の無い行の位置は drawtext の頃と1px以内で一致（エミュレータで比較）。
 
 ### 中止
 
@@ -265,7 +277,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、192件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、209件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -277,14 +289,15 @@ JVM単体テスト（`src/test`）、192件。対象は純粋関数と、再生�
 | `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
 | `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo、変わらないトリムは履歴に積まない、入れ替えのundoでタイル一覧を作り直す |
-| `FilterGraphTest` | FFmpegフィルタグラフの組み立て |
+| `FilterGraphTest` | FFmpegフィルタグラフの組み立て（区間ごとの画像の重ね方・タイトルのフェードを含む） |
 | `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
 | `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
 | `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
 | `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
-| `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの） |
-| `ExportTextFilesTest` | drawtextへ渡す行ファイルの分け方（改行コード・空行） |
+| `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
+| `data/MediaIdentityTest` | 同じ動画かを見分ける鍵のうち、MediaStoreのURIから作る部分（ボリューム名の違いを吸収） |
+| `TextImagesLayoutTest` | ひとこと・タイトルの文言の行の分け方（改行コード・空行）と、帯の位置（ベースラインが drawtext の頃と同じ） |
 | `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 | `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
 | `WaveformSamplesTest` | 復号した音声を、サンプルごとの時刻で波形の区間へ振り分ける（短い動画で区間が空かない） |
@@ -293,7 +306,7 @@ JVM単体テスト（`src/test`）、192件。対象は純粋関数と、再生�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、13件）
+### 画面操作のテスト（`src/androidTest`、18件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）で通してある。
@@ -302,6 +315,7 @@ JVMで動かないため実装を入れている。
 |---|---|
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
 | `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
+| `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
   `InputManager.getInstance` を呼んで全テストが落ちる。
@@ -327,6 +341,11 @@ JVMで動かないため実装を入れている。
   「あれば使い回す」にすると、assetsを差し替えても古い実体が使われ続ける。
 - **ギャラリー画面は自前**。システムのフォトピッカーは返すURIがプロセス生存中しか
   有効でなく、アプリを閉じると編集の続きを復元できないため使っていない。
+- **プレビューの PlayerView は TextureView で描く**（`res/layout/preview_player_view.xml` の `surface_type`。
+  コードからは選べないので、このレイアウトから作る）。既定の SurfaceView だと、起動直後にプレビューの枠が
+  縮んだとき（`TimelineFit` がタイムライン欄へ高さを回す）、一時停止中は新しいコマが来ないため
+  縮む前の大きさで描いた絵が残り、映像が約1.45倍に拡大されて左上だけが映っていた（実機 SM-F971Q で確認）。
+  キーボードの開閉でもプレビューの大きさは毎コマ変わるので、SurfaceView に戻さないこと。
 - **クリップタイルの `Modifier.animateItem()`**: タイムラインを丸ごと入れ替える
   （一時保存の読み出しと、その「もとに戻す」）と全クリップのidが一斉に変わり、
   消えるタイルのアニメーションが取り残されて**消えたはずのタイルが画面に残り続ける**

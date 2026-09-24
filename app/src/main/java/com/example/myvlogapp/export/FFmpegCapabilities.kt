@@ -33,8 +33,24 @@ private const val MEDIACODEC_BITRATE = "$MEDIACODEC_BITRATE_BPS"
 private data class Capabilities(
     val videoEncoder: String,
     val extraVideoArgs: List<String>,
-    val hasDrawtext: Boolean
+    /** 書き出しに要るのにこのビルドに無いフィルタ（[REQUIRED_FILTERS]のうち） */
+    val missingFilters: List<String>
 )
+
+/**
+ * 書き出しに要るフィルタ。
+ * - drawtext：撮影時刻と「Vlog.」（freetypeを含むビルドにしか無い）
+ * - movie・overlay：ひとこととタイトルの文言の画像を読んで重ねる（TextImages.kt）
+ * - fade：タイトルカードのフェードアウト
+ */
+private val REQUIRED_FILTERS = listOf("drawtext", "movie", "overlay", "fade")
+
+/**
+ * `-filters` の一覧に[name]のフィルタがあるか。一覧は「 T.. name  入出力  説明」の形なので、
+ * 前後の空白ごと探す（単に含むかで見ると、movieがamovieに、fadeがafadeに一致してしまう）。
+ */
+private fun hasFilter(filterList: String, name: String): Boolean =
+    Regex("""\s${Regex.escape(name)}\s""").containsMatchIn(filterList)
 
 /**
  * 判定済みの結果。判定そのものに失敗した回（出力が空）は覚えない。
@@ -58,23 +74,23 @@ private fun probeCapabilities(): Capabilities {
         FFmpegKit.execute("-hide_banner -filters").allLogsAsString.orEmpty()
     }.getOrDefault("")
 
-    val hasDrawtext = filters.contains("drawtext")
+    val missingFilters = REQUIRED_FILTERS.filterNot { hasFilter(filters, it) }
     val caps = when {
         // GPL版に含まれるソフトウェアH.264エンコーダ。品質・互換性ともに最良。
-        encoders.contains("libx264") -> Capabilities("libx264", emptyList(), hasDrawtext)
+        encoders.contains("libx264") -> Capabilities("libx264", emptyList(), missingFilters)
 
         // 端末のハードウェアエンコーダ。libx264が無いビルドでの代替。
         // ビットレート指定が無いと極端に低品質になるため明示する。
         encoders.contains("h264_mediacodec") ->
-            Capabilities("h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), hasDrawtext)
+            Capabilities("h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), missingFilters)
 
         // 最後の手段。mp4に入るが圧縮効率は落ちる。
-        else -> Capabilities("mpeg4", listOf("-q:v", "3"), hasDrawtext)
+        else -> Capabilities("mpeg4", listOf("-q:v", "3"), missingFilters)
     }
 
     Log.i(
         LOG_TAG,
-        "FFmpeg機能判定: encoder=${caps.videoEncoder} drawtext=${caps.hasDrawtext}"
+        "FFmpeg機能判定: encoder=${caps.videoEncoder} 足りないフィルタ=${caps.missingFilters}"
     )
     if (encoders.isNotEmpty() && filters.isNotEmpty()) probedCapabilities = caps
     return caps
@@ -112,10 +128,12 @@ internal fun pcmAudioArgs(): Array<String> = arrayOf(
     "-c:a", "pcm_s16le", "-ar", "$AUDIO_SAMPLE_RATE", "-ac", "$AUDIO_CHANNELS"
 )
 
-internal fun requireDrawtext() {
-    if (!capabilities.hasDrawtext) {
+/** 文字の焼き込みに要るフィルタ（[REQUIRED_FILTERS]）が揃っていなければ、書き出しを始める前に断る */
+internal fun requireTextFilters() {
+    val missing = capabilities.missingFilters
+    if (missing.isNotEmpty()) {
         throw VlogExportException(
-            "このFFmpegビルドにはdrawtextフィルタが含まれておらず、文字を焼き込めません。" +
+            "このFFmpegビルドには${missing.joinToString("・")}フィルタが含まれておらず、文字を焼き込めません。" +
                     "freetypeを含むビルド（full / full-gpl）に差し替えてください。"
         )
     }
