@@ -1,7 +1,5 @@
 package com.example.myvlogapp
 
-import android.net.Uri
-import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -9,32 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Locale
-
-/** VlogClip はUriを持つが、テスト対象の計算はUriに触れないのでモックで足りる */
-internal fun testClip(
-    id: Long = 1L,
-    durationMs: Long = 10_000L,
-    startMs: Long = 0L,
-    endMs: Long = durationMs,
-    texts: List<TextSegment> = listOf(TextSegment()),
-    shotAtMillis: Long = 0L,
-    dateText: String = "2026/01/01",
-    timeText: String = "00:00",
-    isMuted: Boolean = false,
-    shotAtReliable: Boolean = true
-) = VlogClip(
-    id = id,
-    uri = mockk<Uri>(relaxed = true),
-    timeText = timeText,
-    dateText = dateText,
-    durationMs = durationMs,
-    texts = texts,
-    startMs = startMs,
-    endMs = endMs,
-    shotAtMillis = shotAtMillis,
-    isMuted = isMuted,
-    shotAtReliable = shotAtReliable
-)
 
 class VlogClipTest {
 
@@ -169,54 +141,5 @@ class VlogClipTest {
         assertTrue(testClip(isMuted = true).isSilentInExport(timelineMuted = false))
         assertTrue(testClip(isMuted = false).isSilentInExport(timelineMuted = true))
         assertTrue(testClip(isMuted = true).isSilentInExport(timelineMuted = true))
-    }
-}
-
-/**
- * 区間ごと移動でトリム範囲とひとことの区切りを「ひとかたまり」で動かすための量。
- * 区切りを1つずつ丸めていた頃は、トリムより手前に残った区切りが先頭付近へ潰れ、
- * 相対位置が失われて「もとに戻す」以外で復元できなくなっていた。
- */
-class ClampTimelineShiftTest {
-
-    private val texts = listOf(
-        TextSegment(0L, "a"),
-        TextSegment(2_000L, "b"),
-        TextSegment(5_000L, "c")
-    )
-
-    @Test
-    fun aMoveThatKeepsEverySplitInsideTheVideoIsNotClamped() {
-        assertEquals(-1_000L, clampTimelineShift(texts, requested = -1_000L, durationMs = 10_000L))
-        assertEquals(3_000L, clampTimelineShift(texts, requested = 3_000L, durationMs = 10_000L))
-    }
-
-    @Test
-    fun movingLeftStopsWhereTheFirstSplitReachesTheMinimumSegmentLength() {
-        // 先頭の区間は絶対位置0のまま動かないので、次の区切りは400msより手前へは行けない
-        assertEquals(-1_600L, clampTimelineShift(texts, requested = -5_000L, durationMs = 10_000L))
-    }
-
-    @Test
-    fun movingRightStopsWhereTheLastSplitReachesTheEndOfTheVideo() {
-        assertEquals(5_000L, clampTimelineShift(texts, requested = 9_999L, durationMs = 10_000L))
-    }
-
-    @Test
-    fun aClipWithoutSplitsCanMoveAsFarAsTheTrimRangeAllows() {
-        assertEquals(
-            -9_999L,
-            clampTimelineShift(listOf(TextSegment()), requested = -9_999L, durationMs = 10_000L)
-        )
-    }
-
-    @Test
-    fun saveDataThatAlreadyBreaksTheRuleIsNeverPushedTheOtherWay() {
-        // すでに下限を割っている区切り。許容範囲に0（動かさない）を含めていないと、
-        // 左へ動かそうとしたのに右へ飛んでしまう
-        val broken = listOf(TextSegment(0L, "a"), TextSegment(100L, "b"))
-
-        assertEquals(0L, clampTimelineShift(broken, requested = -500L, durationMs = 10_000L))
-        assertEquals(500L, clampTimelineShift(broken, requested = 500L, durationMs = 10_000L))
     }
 }

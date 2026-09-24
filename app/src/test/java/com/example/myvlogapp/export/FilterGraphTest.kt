@@ -193,6 +193,20 @@ class FilterGraphTest {
         assertFalse(sdrChain, sdrChain.contains("tonemap"))
     }
 
+    @Test
+    fun clipsAreJoinedInOrderAfterTheTitleAndConvertedTo30fpsOnlyOnce() {
+        // 30fpsへの変換は、つないだあとの1本にだけかける（クリップごとだと、コマの帳尻合わせが
+        // つなぎ目に集中して一瞬止まって見える）
+        val withTitle = buildGraph()
+        assertTrue(withTitle.contains("[vtitle][atitle][v0][a0][v1][a1]concat=n=3:v=1:a=1[vraw][aout]"))
+        assertTrue(withTitle.endsWith("[vraw]fps=30[vout]"))
+        assertEquals(1, withTitle.split("fps=").size - 1)
+
+        val withoutTitle = buildGraph(includeTitle = false)
+        assertTrue(withoutTitle.contains("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vraw][aout]"))
+        assertFalse(withoutTitle.contains("vtitle"))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun pathWithASingleQuote_isRefusedInsteadOfWritingABrokenGraph() {
         // 単引用符の中では単引用符を書けない。壊れたグラフをFFmpegに渡さず、組み立ての時点で止める

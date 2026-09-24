@@ -1,5 +1,6 @@
 package com.example.myvlogapp.edit
 
+import com.example.myvlogapp.MAX_CLIPS
 import com.example.myvlogapp.MIN_TEXT_SEGMENT_MS
 import com.example.myvlogapp.TextSegment
 import com.example.myvlogapp.VideoMeta
@@ -210,7 +211,115 @@ class TimelineStoreTest {
         assertEquals(0L to 1_500L, selected.startMs to selected.endMs)
     }
 
+    @Test
+    fun movingTheRangeCarriesTheSplitsAlong() {
+        // 区間ごと移動は、トリム範囲とひとことの区切りをひとかたまりで動かす（相対位置を保つ）
+        val store = storeWith(
+            testClip(
+                id = 1, durationMs = 10_000L, startMs = 2_000L, endMs = 5_000L,
+                texts = listOf(TextSegment(0L, "a"), TextSegment(3_000L, "b"))
+            )
+        )
+
+        store.moveTrim(targetStartMs = 4_000L, previewAtMs = 4_000L)
+
+        assertEquals(4_000L to 7_000L, selected.startMs to selected.endMs)
+        assertEquals(listOf(0L, 5_000L), selected.texts.map { it.startMs })
+        assertEquals(4_000L, playback.positionMsValue)
+        store.undo()
+        assertEquals(listOf(0L, 3_000L), selected.texts.map { it.startMs })
+    }
+
+    // --- 区切りの解除 -----------------------------------------------------------------
+
+    @Test
+    fun removingASplitMergesOnlyThatOneAndCanBeUndone() {
+        val store = storeWith(
+            testClip(
+                id = 1,
+                texts = listOf(TextSegment(0L, "a"), TextSegment(3_000L, "b"), TextSegment(6_000L, "c"))
+            )
+        )
+
+        // 先頭の区間（絶対位置0）は区切りではないので解除できない
+        store.removeSplit(0L)
+        assertFalse(store.canUndo.value)
+
+        store.removeSplit(3_000L)
+        assertEquals(listOf(0L to "a", 6_000L to "c"), selected.texts.map { it.startMs to it.text })
+
+        store.undo()
+        assertEquals(listOf("a", "b", "c"), selected.texts.map { it.text })
+    }
+
+    // --- 削除・並べ替え ---------------------------------------------------------------
+
+    @Test
+    fun removingTheLastClipSelectsTheNewLastOneAtItsTrimStart() {
+        // 削除による自動遷移では頭出しが効かないので、選び直したクリップのトリム開始へ合わせる
+        val store = storeWith(testClip(id = 1, startMs = 500L), testClip(id = 2, startMs = 1_000L))
+        store.select(1)
+
+        store.removeSelected()
+
+        assertEquals(listOf(1L), store.current.map { it.id })
+        assertEquals(0, playback.selectedIndexValue)
+        assertEquals(500L, playback.positionMsValue)
+    }
+
+    @Test
+    fun removeAllCanBeUndone() {
+        // 全削除は確認ダイアログを出さない。押し間違えても「もとに戻す」で戻せることが前提
+        val store = storeWith(testClip(id = 1), testClip(id = 2))
+
+        store.removeAll()
+        assertTrue(store.current.isEmpty())
+
+        store.undo()
+        assertEquals(listOf(1L, 2L), store.current.map { it.id })
+    }
+
+    @Test
+    fun movingAClipKeepsItSelectedAndCanBeUndone() {
+        val store = storeWith(testClip(id = 1), testClip(id = 2), testClip(id = 3))
+
+        store.moveSelected(1)
+        assertEquals(listOf(2L, 1L, 3L), store.current.map { it.id })
+        assertEquals(1L, selected.id)
+
+        // 端より先へは動かさない（履歴にも積まない）
+        store.select(0)
+        store.moveSelected(-1)
+        assertEquals(listOf(2L, 1L, 3L), store.current.map { it.id })
+
+        store.undo()
+        assertEquals(listOf(1L, 2L, 3L), store.current.map { it.id })
+        assertEquals(1L, selected.id)
+    }
+
     // --- 動画の追加 -------------------------------------------------------------------
+
+    @Test
+    fun insertKeepsTheExistingOrderAndSelectsTheOldestAddedClip() {
+        val store = storeWith(testClip(id = 1, shotAtMillis = 1_000L), testClip(id = 2, shotAtMillis = 3_000L))
+
+        store.insertByShotAt(listOf(testClip(id = 11, shotAtMillis = 4_000L), testClip(id = 10, shotAtMillis = 2_000L)))
+
+        assertEquals(listOf(1L, 10L, 2L, 11L), store.current.map { it.id })
+        assertEquals(10L, selected.id)
+    }
+
+    @Test
+    fun insertStopsAtTheLimitCountedJustBeforeApplying() {
+        // 呼び出し元は読み込む前に上限を見ているが、並行した別の追加が先に入ると超えうる
+        val store = storeWith(*Array(MAX_CLIPS - 1) { testClip(id = it + 1L, shotAtMillis = it * 1_000L) })
+
+        val result = store.insertByShotAt(listOf(testClip(id = 500), testClip(id = 501)))
+
+        assertEquals(MAX_CLIPS, store.current.size)
+        assertEquals(1, result.overLimit)
+        assertEquals(0, result.alreadyPresent)
+    }
 
     /**
      * ギャラリーとファイル選択では、同じ動画でもURIの形が違う。反映の直前の確かめでも

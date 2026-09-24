@@ -18,9 +18,9 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（213件）
+./gradlew testDebugUnitTest        # JVM単体テスト（222件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（20件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（21件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -278,43 +278,45 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、213件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、222件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
-| `VlogClipTest` | 尺・区間・分割点の判定、区間ごと移動でずらせる量（`clampTimelineShift`） |
+| `VlogClipTest` | 尺・区間・分割点の判定、並び替えのキー |
 | `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順） |
-| `MergeAndFormatTest` | 撮影日時順の差し込み、連番付け、表示整形 |
-| `AddClipsSpecTest` | 追加時のスキップ通知、選択順 |
-| `ProjectSpecTest` | 一時保存の読み出し可否、保存領域の移行 |
-| `PlaybackSpecTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
-| `EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
-| `TimelineStoreTest` | 区切りの移動範囲、ひとことの書き換え・分割、undo/redo後の音量、撮影時刻の取り直しとundo、変わらないトリムは履歴に積まない、2s/4sは動画の終わりでも指定の長さを確保する、入れ替えのundoでタイル一覧を作り直す |
-| `FilterGraphTest` | FFmpegフィルタグラフの組み立て（区間ごとの画像の重ね方・タイトルのフェードを含む） |
-| `SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧、区切りごとの音声の計画 |
-| `AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力） |
-| `ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
-| `ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
-| `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
+| `VlogModelsTest` | 撮影日時順の差し込み（`mergeByShotAt`）、区間ごと移動でずらせる量（`clampTimelineShift`） |
+| `FormattersTest` | 表示整形、保存名の連番、追加時のスキップ通知、一時保存の読み出し可否と文言 |
 | `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
+| `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
+| `edit/EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
+| `edit/TimelineStoreTest` | 区切りの移動範囲と解除、ひとことの書き換え・分割、トリム（変わらないトリムは履歴に積まない、2s/4sは動画の終わりでも指定の長さを確保する、区間ごと移動で区切りも一緒に動く）、削除・全削除・並べ替えとundo、追加（撮影日時順・上限・別の経路から先に入った同じ動画）、入れ替えのundoでタイル一覧を作り直す、undo/redo後の音量、撮影時刻の取り直しとundo |
+| `playback/PlayFromWhereTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
+| `data/ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
+| `data/ClipStoreTest` | 一時保存が参照する動画のURIの集め方（権限の解放の判断）、保存領域の移行 |
 | `data/MediaIdentityTest` | 同じ動画かを見分ける鍵のうち、MediaStoreのURIから作る部分（ボリューム名の違いを吸収） |
-| `TextImagesLayoutTest` | ひとこと・タイトルの文言の行の分け方（改行コード・空行）と、帯の位置（ベースラインが drawtext の頃と同じ） |
-| `TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
-| `WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
-| `WaveformSamplesTest` | 復号した音声を、サンプルごとの時刻で波形の区間へ振り分ける（短い動画で区間が空かない） |
-| `VideoMetadataReaderTest` | creation_time・ファイル名のパース |
+| `data/VideoMetadataReaderTest` | creation_time・ファイル名のパース |
+| `export/FilterGraphTest` | FFmpegフィルタグラフの組み立て（区間ごとの画像の重ね方・タイトルのフェード・結合と30fps化を含む） |
+| `export/AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力・区切りごとの切り出し） |
+| `export/SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧 |
+| `export/ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
+| `export/GalleryOutputTest` | 書き出した動画のファイル名の日付と、メタデータの作成日時 |
+| `export/TextImagesLayoutTest` | ひとこと・タイトルの文言の行の分け方（改行コード・空行）と、帯の位置（ベースラインが drawtext の頃と同じ） |
+| `waveform/WaveformTest` | 復号した音声を、サンプルごとの時刻で波形の区間へ振り分ける（短い動画で区間が空かない）、波形の本数 |
+| `waveform/WaveformGeometryTest` | 波形のズーム範囲、ヒットテスト、クランプ、端スクロールのパンと刻み |
+| `ui/screens/GalleryPickerTest` | 選んだ動画を渡す順番 |
+| `ui/screens/TimelineFitTest` | 文字サイズが大きいとき、タイムライン欄を中身が収まるまで広げる量 |
 
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、20件）
+### 画面操作のテスト（`src/androidTest`、21件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）と実機（SM-F971Q、Android 17）で通してある。
 
 | ファイル | 対象 |
 |---|---|
-| `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
+| `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／再生位置が別の区間へ動いたら入力欄の文字も入れ替わる／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
 | `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／動画への許可が無いときの案内（許可し直す・設定を開く）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
 | `PreviewSectionTest` | プレビューのタップが読み上げに「再生／一時停止」のボタンとして伝わる |
 | `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない |

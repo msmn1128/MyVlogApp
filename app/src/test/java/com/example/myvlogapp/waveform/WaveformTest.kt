@@ -66,3 +66,24 @@ class WaveformSamplesTest {
         assertEquals(listOf(9), counts.indices.filter { counts[it] > 0 })
     }
 }
+
+/** 波形の本数（[waveformBucketsFor]）。長い動画ほど増やし、上限で止める */
+class WaveformBucketsTest {
+
+    @Test
+    fun shortClipsKeepTheBaseResolution() {
+        assertEquals(WAVEFORM_BUCKETS, waveformBucketsFor(10_000L))
+        assertEquals(WAVEFORM_BUCKETS, waveformBucketsFor(24_000L))
+    }
+
+    @Test
+    fun longClipsGetOneBucketPer100ms() {
+        assertEquals(600, waveformBucketsFor(60_000L))
+    }
+
+    @Test
+    fun veryLongClipsAreCapped() {
+        assertEquals(6_000, waveformBucketsFor(600_000L))
+        assertEquals(6_000, waveformBucketsFor(3_600_000L))
+    }
+}
