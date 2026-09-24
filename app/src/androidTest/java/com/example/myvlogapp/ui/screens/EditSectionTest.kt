@@ -10,6 +10,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -54,6 +55,9 @@ class EditSectionTest {
 
     private val calls = Calls()
 
+    /** 再生位置。画面の組み立ての外で作る（組み立ての中で作ると、組み立て直しのたびに作り直される） */
+    private val positionMs = mutableLongStateOf(3_000L)
+
     /** 素材10秒のうち2〜8秒を使い、5秒でひとことを切り替えるクリップ */
     private fun clip(id: Long = 1L) = VlogClip(
         id = id,
@@ -91,8 +95,6 @@ class EditSectionTest {
                 onSeek = {}, onScrubStart = {}, onScrubEnd = {}, onDragStart = {}, onDragEnd = {}
             )
         )
-        // 画面の組み立ての外で作る（組み立ての中で作ると、組み立て直しのたびに作り直される）
-        val positionMs = mutableLongStateOf(3_000L)
         rule.setContent {
             MyVlogAppTheme {
                 Column(Modifier.fillMaxSize()) {
@@ -132,6 +134,20 @@ class EditSectionTest {
         // 文字を打ったら伝える
         field.performTextInput("旅")
         rule.runOnIdle { assertTrue(calls.texts.toString(), calls.texts.lastOrNull()?.contains("旅") == true) }
+    }
+
+    @Test
+    fun theFieldFollowsTheSegmentUnderThePlayhead() {
+        // 外から文字が変わったとき（区間の切り替わり・クリップの選択・もとに戻す）は、入力欄を入れ替える。
+        // 自分で打った文字を巻き戻さないための仕組み（EditorPane）が、これまで止めてはいけない
+        show(listOf(clip()))
+        val field = rule.onNode(hasSetTextAction())
+        field.assertTextEquals("前半", includeEditableText = true)
+
+        rule.runOnIdle { positionMs.longValue = 6_000L }
+
+        field.assertTextEquals("後半", includeEditableText = true)
+        rule.runOnIdle { assertEquals(emptyList<String>(), calls.texts) }
     }
 
     // --- 操作バー ----------------------------------------------------------------------
