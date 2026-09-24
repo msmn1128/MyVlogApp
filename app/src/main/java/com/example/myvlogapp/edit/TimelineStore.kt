@@ -135,10 +135,16 @@ internal class TimelineStore(
      * 呼び出し元がメタデータ取得の前に行った重複チェックは、取得中に別の追加が同じ動画を先に
      * 入れてしまう競合には対応できない。ここでもう一度確かめて除外する。
      * 上限も、追加の直前の本数を基準にここで守る（並行した追加で超えないように）。
+     *
+     * @param keyOf 同じ動画かを見分ける鍵。呼び出し元の事前の振り分けと同じ鍵を渡すこと
+     *   （data/MediaIdentity.kt）。URIの一致だけで見ていた頃は、ギャラリーとファイル選択の両方から
+     *   同じ動画をほぼ同時に追加すると、URIの形が違うのでここを素通りして2本入っていた。
+     *   鍵を求めるには端末への問い合わせが要る（メインスレッドで呼べない）ので、
+     *   求めておいた結果を引くだけの関数を渡してもらう
      */
-    fun insertByShotAt(candidates: List<VlogClip>): InsertResult {
-        val currentUris = _clips.value.map { it.uri }.toSet()
-        val fresh = candidates.filter { it.uri !in currentUris }
+    fun insertByShotAt(candidates: List<VlogClip>, keyOf: (Uri) -> Any = { it }): InsertResult {
+        val currentKeys = _clips.value.mapTo(HashSet()) { keyOf(it.uri) }
+        val fresh = candidates.filter { keyOf(it.uri) !in currentKeys }
         val room = (MAX_CLIPS - _clips.value.size).coerceAtLeast(0)
         val toMerge = fresh.take(room)
         val result = InsertResult(

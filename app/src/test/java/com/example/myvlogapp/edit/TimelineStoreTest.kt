@@ -210,6 +210,26 @@ class TimelineStoreTest {
         assertEquals(0L to 1_500L, selected.startMs to selected.endMs)
     }
 
+    // --- 動画の追加 -------------------------------------------------------------------
+
+    /**
+     * ギャラリーとファイル選択では、同じ動画でもURIの形が違う。反映の直前の確かめでも
+     * 呼び出し元の鍵で比べ、読み込み中に別の経路から先に入った同じ動画は入れない
+     */
+    @Test
+    fun insertSkipsTheSameVideoAddedFromTheOtherPickerMeanwhile() {
+        val fromGallery = testClip(id = 1)
+        val fromFilePicker = testClip(id = 2)
+        val other = testClip(id = 3)
+        val keys = mapOf(fromGallery.uri to "media:42", fromFilePicker.uri to "media:42", other.uri to "media:7")
+        val store = storeWith(fromGallery)
+
+        val result = store.insertByShotAt(listOf(fromFilePicker, other)) { keys.getValue(it) }
+
+        assertEquals(1, result.alreadyPresent)
+        assertEquals(listOf(1L, 3L), store.current.map { it.id })
+    }
+
     // --- 一覧の入れ替え ---------------------------------------------------------------
 
     @Test

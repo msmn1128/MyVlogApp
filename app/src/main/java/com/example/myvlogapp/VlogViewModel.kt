@@ -371,6 +371,16 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 動画ごとの「同じ動画かを見分ける鍵」（[sameVideoKey]）。追加のたびに求めた分を覚えておく。
+     *
+     * 追加は「鍵を求めて振り分ける → メタデータを読む → 一覧へ反映する」の順で、読んでいる間に
+     * 別の追加が先に反映されうる。反映の直前にもう一度確かめるときに同じ鍵で比べるため、
+     * 求めた鍵をここから引く（反映はメインスレッドで、端末への問い合わせをやり直せないため）。
+     * 触るのはメインスレッドだけ。1件は文字列2つぶんで、1回の起動で追加する本数ぶんしか増えない
+     */
+    private val videoKeys = HashMap<Uri, String>()
+
     private suspend fun addClipsNow(uris: List<Uri>) {
         val context = getApplication<Application>()
 
@@ -381,11 +391,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         val current = timeline.current
         val (requestedKeys, existingKeys) = withContext(Dispatchers.IO) {
             uris.associateWith { sameVideoKey(context, it) } to
-                current.mapTo(HashSet()) { sameVideoKey(context, it.uri) }
+                current.associate { it.uri to sameVideoKey(context, it.uri) }
         }
+        // 反映の直前の確かめ（TimelineStore.insertByShotAt）でも同じ鍵で比べられるよう覚えておく
+        videoKeys.putAll(requestedKeys)
+        videoKeys.putAll(existingKeys)
         val plan = planAddition(
             requested = uris,
-            existing = existingKeys,
+            existing = existingKeys.values.toHashSet(),
             currentCount = current.size,
             keyOf = requestedKeys::getValue
         )
@@ -422,7 +435,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 長さを読めなかった動画は入れない（尺0のクリップは書き出しを止めてしまう）
         val (readable, unreadable) = loaded.partition { it.isValid }
 
-        val result = timeline.insertByShotAt(readable)
+        // 鍵を覚えていない動画（この間に一時保存から読み出した分など）はURIそのものを鍵にする。
+        // その場合は以前と同じくURIの一致だけで見ることになるが、取り違えて外すことはない
+        val result = timeline.insertByShotAt(readable) { uri -> videoKeys[uri] ?: uri.toString() }
 
         addSkipMessage(
             // alreadyPresent は、メタデータの取得中に別の追加が先に入れてしまった分
