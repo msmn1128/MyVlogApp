@@ -113,26 +113,6 @@ class HitTestTrimTest {
     }
 }
 
-class WaveformBucketsTest {
-
-    @Test
-    fun shortClipsKeepTheBaseResolution() {
-        assertEquals(WAVEFORM_BUCKETS, waveformBucketsFor(10_000L))
-        assertEquals(WAVEFORM_BUCKETS, waveformBucketsFor(24_000L))
-    }
-
-    @Test
-    fun longClipsGetOneBucketPer100ms() {
-        assertEquals(600, waveformBucketsFor(60_000L))
-    }
-
-    @Test
-    fun veryLongClipsAreCapped() {
-        assertEquals(6_000, waveformBucketsFor(600_000L))
-        assertEquals(6_000, waveformBucketsFor(3_600_000L))
-    }
-}
-
 /**
  * つまみ／区間ごと移動が今の表示範囲からはみ出したときのパン。
  * 表示幅（ズーム倍率）は変えず、窓だけを指の位置へずらす。

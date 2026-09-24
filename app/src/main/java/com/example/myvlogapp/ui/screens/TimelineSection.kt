@@ -646,7 +646,15 @@ private fun EditorPane(
     var field by remember { mutableStateOf(TextFieldValue()) }
     // 外から文字が変わったとき（区間の切り替わり・クリップの選択変更・もとに戻す）だけ
     // 入れ替える。自分が打った文字は一巡して同じ値で戻ってくるので、ここは素通りする。
+    //
+    // ただし、この効果が起動してから実際に動くまでの間に次の1文字が届くと、[hitokoto]は
+    // その1文字の前の古い値のままなので、入力欄を1文字前へ巻き戻し、その文字が消えていた
+    // （エミュレータで、入力欄をタップした直後に打つと数文字に1文字落ちた）。起動したあとに
+    // 自分で打った文字があれば、その打鍵で作り直される次の画面に任せて、ここでは何もしない
+    val localEdits = remember { IntArray(1) }
+    val editsAtComposition = localEdits[0]
     LaunchedEffect(selectedClip?.id, segmentNumber, hitokoto) {
+        if (localEdits[0] != editsAtComposition) return@LaunchedEffect
         if (field.text != hitokoto) {
             field = TextFieldValue(hitokoto, TextRange(hitokoto.length))
         }
@@ -749,7 +757,10 @@ private fun EditorPane(
                         // カーソル移動や変換範囲の変化だけでも呼ばれる。文字が変わったときだけ流す
                         val textChanged = it.text != field.text
                         field = it
-                        if (textChanged) onTextChange(it.text)
+                        if (textChanged) {
+                            localEdits[0]++
+                            onTextChange(it.text)
+                        }
                     },
                     enabled = selectedClip != null && !isExporting,
                     // 未入力かつ未フォーカスのときだけ「ひとこと」をグレーで案内表示する。

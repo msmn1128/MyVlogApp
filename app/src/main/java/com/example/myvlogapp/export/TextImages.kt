@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.StaticLayout
+import android.text.TextPaint
 import androidx.core.graphics.createBitmap
 import java.io.File
 import kotlin.math.ceil
@@ -13,6 +15,7 @@ import com.example.myvlogapp.CANVAS_HEIGHT
 import com.example.myvlogapp.CANVAS_WIDTH
 import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
+import com.example.myvlogapp.HITOKOTO_WRAP_WIDTH_PT
 import com.example.myvlogapp.TITLE_DATE_FONT_PT
 import com.example.myvlogapp.TITLE_DATE_LINE_SPACING_PT
 import com.example.myvlogapp.TITLE_DATE_Y_OFFSET_PT
@@ -71,11 +74,37 @@ internal fun hitokotoLines(text: String): List<String?> = text.lines().map { it.
 internal fun titleLines(text: String): List<String> = text.lines().filter { it.isNotBlank() }
 
 /**
+ * 行を[widthPx]に収まるように折り返す。空行（null）はそのまま1行として残す。
+ *
+ * プレビュー（PreviewSection）と書き出し（[AndroidTextRenderer]）の両方がこれを通す。
+ * それぞれに折り返させると、描き方の違い（Composeと`Canvas.drawText`）で改行の位置が
+ * 1文字ずれることがあり、「プレビューでは収まっていたのに書き出すと行の割れ方が違う」になる。
+ * 行の分け方はAndroidの`StaticLayout`に任せる（和文の禁則・英単語の区切り・絵文字の組み合わせを守る）。
+ *
+ * @param paint 書き出しと同じ書体・大きさ（[HITOKOTO_FONT_PT]をpxとして）を設定したもの
+ */
+internal fun wrapLines(lines: List<String?>, paint: Paint, widthPx: Int): List<String?> {
+    val textPaint = TextPaint(paint)
+    return lines.flatMap { line ->
+        if (line == null) return@flatMap listOf(null)
+        val layout = StaticLayout.Builder.obtain(line, 0, line.length, textPaint, widthPx)
+            .setIncludePad(false)
+            .build()
+        // 折り返した位置の空白は行末に残るので落とす（中央揃えで、その分だけ左へずれて見えるため）
+        (0 until layout.lineCount)
+            .map { line.substring(layout.getLineStart(it), layout.getLineEnd(it)).trimEnd() }
+            .filter { it.isNotEmpty() }
+            .ifEmpty { listOf(line) }
+    }
+}
+
+/**
  * 文字の見た目と置き方。
  *
  * @param offsetPt 画面中央からのずれ。[LineAnchor.CENTERED]なら行の集まりの中心、
  *   [LineAnchor.TOP]なら1行目の位置
  * @param baselineShiftPt 行の中心からベースラインまで（[baselineShiftPt]で測った値）
+ * @param wrapWidthPt この幅を超える行を折り返す（[wrapLines]）。nullなら折り返さない
  */
 internal data class TextStyleSpec(
     val font: File,
@@ -83,17 +112,19 @@ internal data class TextStyleSpec(
     val lineHeightPt: Float,
     val anchor: LineAnchor,
     val offsetPt: Float,
-    val baselineShiftPt: Float
+    val baselineShiftPt: Float,
+    val wrapWidthPt: Float? = null
 )
 
-/** ひとこと：[ExportFonts.logoType]、上下左右中央 */
+/** ひとこと：[ExportFonts.logoType]、上下左右中央。撮影時刻に届かない幅で折り返す */
 internal fun hitokotoStyle(fonts: ExportFonts) = TextStyleSpec(
     font = fonts.logoType,
     sizePt = HITOKOTO_FONT_PT,
     lineHeightPt = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT,
     anchor = LineAnchor.CENTERED,
     offsetPt = 0f,
-    baselineShiftPt = fonts.hitokotoBaselineShiftPt
+    baselineShiftPt = fonts.hitokotoBaselineShiftPt,
+    wrapWidthPt = HITOKOTO_WRAP_WIDTH_PT
 )
 
 /**
@@ -168,20 +199,22 @@ internal class AndroidTextRenderer(
 
     override fun render(lines: List<String?>, style: TextStyleSpec, name: String): TextImage? {
         if (lines.all { it == null }) return null
-        val layout = textStripLayout(lines.size, style) ?: return null
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             typeface = typefaces.getOrPut(style.font) { Typeface.createFromFile(style.font) }
             // drawtextのfontsizeと同じく、文字の大きさ（em）をpxで指定する（baselineShiftPtと同じ前提）
             textSize = style.sizePt
             color = Color.WHITE
-            // はみ出す長い行は、drawtextの頃と同じく左右が均等に切れる
+            // 折り返さない文言（タイトル）のはみ出す長い行は、drawtextの頃と同じく左右が均等に切れる
             textAlign = Paint.Align.CENTER
         }
+        // 折り返すと行が増えるので、帯の位置と高さは折り返したあとの行数で決める
+        val wrapped = style.wrapWidthPt?.let { wrapLines(lines, paint, it.toInt()) } ?: lines
+        val layout = textStripLayout(wrapped.size, style) ?: return null
         val bitmap = createBitmap(CANVAS_WIDTH, layout.height)
         try {
             val canvas = Canvas(bitmap)
-            lines.forEachIndexed { index, line ->
+            wrapped.forEachIndexed { index, line ->
                 if (line != null) {
                     canvas.drawText(line, CANVAS_WIDTH / 2f, layout.baselines[index].toFloat(), paint)
                 }

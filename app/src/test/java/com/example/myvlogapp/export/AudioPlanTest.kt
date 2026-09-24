@@ -52,4 +52,24 @@ class AudioPlanTest {
         assertEquals(0, plan.clipInputOffset)
         assertTrue(plan.hasRealAudio(0))
     }
+
+    // --- 区切りごとの書き出し（Segments.kt）での切り出し ---------------------------------
+
+    @Test
+    fun audioPlanForSegment_slicesClipsAndKeepsTheTitleSfxOnlyWhereTheTitleIs() {
+        val plan = AudioPlan(needsTitleSfxInput = true, clipHasRealAudio = listOf(true, false, true, false))
+
+        val first = plan.forSegment(0..1, includesTitle = true)
+        assertTrue(first.needsTitleSfxInput)
+        assertEquals(1, first.clipInputOffset)
+        assertTrue(first.hasRealAudio(0))
+        assertFalse(first.hasRealAudio(1))
+
+        // 2つ目以降の区切りにはタイトルカードが無いので、効果音の-iも無い。添字は0から振り直す
+        val second = plan.forSegment(2..3, includesTitle = false)
+        assertFalse(second.needsTitleSfxInput)
+        assertEquals(0, second.clipInputOffset)
+        assertTrue(second.hasRealAudio(0))
+        assertFalse(second.hasRealAudio(1))
+    }
 }

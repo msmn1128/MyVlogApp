@@ -115,8 +115,20 @@ class VlogExportService : Service() {
      * 中止の要求（ACTION_CANCEL）もIDを進めるため。書き出しのIDで止めようとすると、
      * 中止したあとに止まらず、進行中の通知が残り続ける。
      */
-    @Volatile
     private var latestStartId = 0
+
+    /**
+     * 書き出しを受け付けている最中か。[stateLock]の中でだけ読み書きする。
+     *
+     * 以前は「書き出しのジョブが生きているか」で多重起動を断っていた。ジョブは状態を「待機中」へ
+     * 戻したあとも、畳み終えるまで少しだけ生きている。その隙に画面から次の書き出しを押すと、
+     * 画面は待機中を見て送り出すのに、サービスは実行中と見て黙って捨てていた。
+     * 状態を戻すのと同じロックの中で下ろせば、画面が待機中を見たときには必ず受け付けられる。
+     */
+    private var exporting = false
+
+    /** [exporting]・[latestStartId]と、書き出しの状態（[ExportStatus]）の切り替えをまとめて守る */
+    private val stateLock = Any()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -126,8 +138,8 @@ class VlogExportService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        latestStartId = startId
         if (intent?.action == ACTION_CANCEL) {
+            synchronized(stateLock) { latestStartId = startId }
             VlogExporter.cancel()
             // 実行中なら、中止されたジョブのfinallyがstopSelfまで面倒を見る。
             // 実行中でない場合（書き出しが終わった直後に「中止」を押した等）は、
@@ -144,23 +156,29 @@ class VlogExportService : Service() {
         val pending = pendingExport
         pendingExport = null
 
-        // 既に実行中なら多重起動しない（連打・二重タップ対策）。後から来た書き出しは捨てる。
-        // 通知はいまの書き出しの進み具合のまま出し直す（「準備中...」へ戻して見せない）
-        if (exportJob?.isActive == true) {
-            val running = ExportStatus.state.value as? ExportState.Running
-            startForegroundWithNotification(running?.message ?: "準備中...", running?.progress)
-            return START_NOT_STICKY
-        }
+        val accepted: PendingExport = synchronized(stateLock) {
+            latestStartId = startId
 
-        if (pending == null || pending.clips.isEmpty()) {
+            // 既に実行中なら多重起動しない（連打・二重タップ対策）。後から来た書き出しは捨てる。
+            // 通知はいまの書き出しの進み具合のまま出し直す（「準備中...」へ戻して見せない）
+            if (exporting) {
+                val running = ExportStatus.state.value as? ExportState.Running
+                startForegroundWithNotification(running?.message ?: "準備中...", running?.progress)
+                return START_NOT_STICKY
+            }
+
+            if (pending == null || pending.clips.isEmpty()) {
+                startForegroundWithNotification("準備中...")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+
+            exporting = true
             startForegroundWithNotification("準備中...")
-            stopSelf(startId)
-            return START_NOT_STICKY
+            ExportStatus.setRunning("準備中...")
+            pending
         }
-        val (clips, includeTitle, muted, customTitleText) = pending
-
-        startForegroundWithNotification("準備中...")
-        ExportStatus.setRunning("準備中...")
+        val (clips, includeTitle, muted, customTitleText) = accepted
 
         // 書き出しを終えたあとに届いた進捗を捨てるための印と、そのロック。
         //
@@ -205,13 +223,20 @@ class VlogExportService : Service() {
                 ExportStatus.emit(VlogEvent.Message(message))
                 notifyResult("書き出しに失敗しました", message)
             } finally {
-                synchronized(progressLock) {
-                    finished = true
+                // 先に遅れて届く進捗を止めてから、待機中へ戻す（逆だと、戻した直後の進捗が
+                // 「書き出し中」へ書き戻してしまう）
+                synchronized(progressLock) { finished = true }
+                // 受け付けを下ろすのと待機中へ戻すのは同じロックの中で行う（理由は[exporting]）。
+                // 止めるIDもここで読む。このあとに次の書き出しが届いていれば、そちらのIDの方が
+                // 新しいのでstopSelfはサービスを止めない（次の書き出しを畳んでしまわない）
+                val stopId = synchronized(stateLock) {
+                    exporting = false
                     ExportStatus.setIdle()
+                    latestStartId
                 }
                 // stopForeground(true)相当。onDestroyに任せず自分で止める
                 // （サービスが仕事を終えたのに通知が残り続けるのを防ぐ）
-                stopSelf(latestStartId)
+                stopSelf(stopId)
             }
         }
         return START_NOT_STICKY
