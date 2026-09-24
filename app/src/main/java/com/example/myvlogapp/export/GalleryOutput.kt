@@ -93,7 +93,12 @@ internal suspend fun saveToGallery(
 
         values.clear()
         values.put(MediaStore.Video.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
+        // 1件も更新できなかったら失敗として扱う。戻り値を見ていなかった頃は、ここで失敗しても
+        // 「保存しました」と出たうえ、IS_PENDINGのまま残った動画を、次の起動の掃除
+        // （VlogExporter.cleanupOrphanedPendingFiles）が書き出し途中の残骸として消していた
+        if (resolver.update(uri, values, null, null) == 0) {
+            throw VlogExportException("ギャラリーへの保存に失敗しました")
+        }
     } catch (e: Throwable) {
         runCatching { resolver.delete(uri, null, null) }
         throw e

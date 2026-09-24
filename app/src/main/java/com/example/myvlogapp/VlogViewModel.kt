@@ -192,6 +192,20 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     /** 前回の続き（自動保存）を、いつ書き換えてよいか（AutosavePolicy.kt） */
     private val autosave = AutosavePolicy()
 
+    /**
+     * 動画を開けなくなったクリップのid（移動・削除された、権限が取り消されたなど）。
+     * タイムラインのタイルに目印を出すのに使う。起動時の復元では開けない動画は落とすが、
+     * 使っている間に消された動画はタイムラインに残ったままで、どれが消えたのか見分けられなかった。
+     *
+     * initより前に宣言する。initで始めるコルーチンは、最初に止まるところまではその場で走るので、
+     * 宣言がinitより後ろだと、その間に[refreshMissingClips]へ届いたとき、まだ作られていない
+     * フィールドに触れて落ちる（いまは届く経路が無いが、並びだけで決まる落とし穴を残さない）。
+     */
+    private val _missingClipIds = MutableStateFlow<Set<Long>>(emptySet())
+    val missingClipIds: StateFlow<Set<Long>> = _missingClipIds.asStateFlow()
+
+    private var missingCheckJob: Job? = null
+
     init {
         // 復元してから保存を始める。順番が逆だと、復元前の空リストを
         // 保存してしまい前回の内容が消える。
@@ -260,7 +274,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                     // 消してしまうので触らない。
                     // 復元と並べて、読み込み中（書き出しを始められない間）に済ませる。別に走らせていた
                     // 頃は書き出しの開始と待ち合わせておらず、理屈の上では始まったばかりの書き出しの
-                    // 作業ファイルを消しえた
+                    // 作業ファイルを消しえた（読み込み中に書き出しを断るのは[export]）
                     if (!ExportStatus.isRunning) {
                         launch(Dispatchers.IO) {
                             VlogExporter.cleanupOrphanedPendingFiles(getApplication())
@@ -388,10 +402,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 同じ動画かは、ギャラリーとファイル選択でのURIの形の違いをそろえた鍵で比べる
         // （data/MediaIdentity.kt）。ファイル選択のURIは鍵を求めるのに端末へ問い合わせるので、
         // バックグラウンドで求める
+        //
+        // タイムラインにある動画の鍵は、前に求めたものがあればそれを使う。毎回全部を求め直していた頃は、
+        // 1本追加するたびに、ファイル選択の動画の本数ぶん端末へ問い合わせていた（最大100本）
         val current = timeline.current
+        val knownKeys = HashMap(videoKeys)
         val (requestedKeys, existingKeys) = withContext(Dispatchers.IO) {
-            uris.associateWith { sameVideoKey(context, it) } to
-                current.associate { it.uri to sameVideoKey(context, it.uri) }
+            uris.associateWith { knownKeys[it] ?: sameVideoKey(context, it) } to
+                current.associate { it.uri to (knownKeys[it.uri] ?: sameVideoKey(context, it.uri)) }
         }
         // 反映の直前の確かめ（TimelineStore.insertByShotAt）でも同じ鍵で比べられるよう覚えておく
         videoKeys.putAll(requestedKeys)
@@ -448,16 +466,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- 開けなくなった動画 ----------------------------------------------------------------
-
-    /**
-     * 動画を開けなくなったクリップのid（移動・削除された、権限が取り消されたなど）。
-     * タイムラインのタイルに目印を出すのに使う。起動時の復元では開けない動画は落とすが、
-     * 使っている間に消された動画はタイムラインに残ったままで、どれが消えたのか見分けられなかった。
-     */
-    private val _missingClipIds = MutableStateFlow<Set<Long>>(emptySet())
-    val missingClipIds: StateFlow<Set<Long>> = _missingClipIds.asStateFlow()
-
-    private var missingCheckJob: Job? = null
+    // 状態（_missingClipIds・missingCheckJob）は、initより前（ファイルの上の方）で宣言してある
 
     /**
      * タイムラインの全クリップについて、動画が今も開けるかを確かめ直す。
@@ -640,6 +649,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 「始まっているのか」が画面から分からないので、理由を返す
         if (ExportStatus.isRunning) {
             sendMessage("すでに書き出し中です")
+            return
+        }
+        // 読み込み中（追加・起動時の復元）は始めない。画面のボタンも止めてあるが、通知の許可を聞いてから
+        // 始める経路（ActivityLaunchers.kt）は、答えが返った時点でここを直接呼ぶ。許可の画面の間に
+        // プロセスが回収されると、戻ったときは復元の最中で、復元に並べて走る作業ファイルの掃除
+        // （restoreClips）が、始まったばかりの書き出しの作業ファイルを消しうる
+        if (_isAdding.value) {
+            sendMessage("動画を読み込み中です。終わってからもう一度お試しください")
             return
         }
 

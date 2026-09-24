@@ -132,7 +132,7 @@ data class VlogClip(
                 timeText = json.getString(VlogClipKeys.TIME_TEXT),
                 dateText = json.getString(VlogClipKeys.DATE_TEXT),
                 durationMs = durationMs,
-                texts = json.readTextSegments(),
+                texts = json.readTextSegments(durationMs),
                 startMs = startMs,
                 endMs = endMs,
                 // 並び替え機能を追加する前の保存データにはキー自体が無いので optLong で0にフォールバック
@@ -210,8 +210,10 @@ fun VlogClip.toJson(): JSONObject = JSONObject().apply {
  *
  * 区間を持たせる前のバージョンで保存された分は [VlogClipKeys.LEGACY_USER_TEXT] しか
  * 無いので、その1件を先頭区間として読み直す（更新しても前回の続きが消えない）。
+ *
+ * @param durationMs 動画の尺。区切りをこの中へ収める（0以下なら尺が分からないので収めない）
  */
-private fun JSONObject.readTextSegments(): List<TextSegment> {
+private fun JSONObject.readTextSegments(durationMs: Long): List<TextSegment> {
     val array = optJSONArray(VlogClipKeys.TEXTS)
         ?: return listOf(TextSegment(0L, optString(VlogClipKeys.LEGACY_USER_TEXT, "")))
 
@@ -222,13 +224,20 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
     // クリップごと復元されなくなる（ClipStoreが壊れた1件だけを落とすのと同じ考え方）
     // 負の位置は0へ丸めてから並べる。下で直すのは先頭の1件だけなので、負の位置が2件以上あると
     // 2件目以降が0より前に残り、昇順が崩れていた（[-5, -3, 1000] → [0, -3, 1000]）
+    // 尺より後ろの位置は尺へ丸める。はみ出した区切りが残ると、区間ごと移動で後ろへずらせる量
+    // （clampTimelineShift）が0になり、範囲ごと後ろへ動かせなくなっていた
+    val maxStartMs = if (durationMs > 0L) durationMs else Long.MAX_VALUE
     val segments = (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         TextSegment(
-            startMs = item.optLong(VlogClipKeys.START_MS).coerceAtLeast(0L),
+            startMs = item.optLong(VlogClipKeys.START_MS).coerceIn(0L, maxStartMs),
             text = item.optString(VlogClipKeys.TEXT, "")
         )
     }.sortedBy { it.startMs }
+        // 同じ位置の区間は1つにまとめ、後ろの方を残す。textIndexAtは同じ位置なら後ろを拾うので、
+        // 前の方は表示も編集もできないまま残っていた（先頭0が2つだと、区切りとして外すこともできない）。
+        // 残すのは、それまで画面に出ていた方
+        .asReversed().distinctBy { it.startMs }.asReversed()
 
     if (segments.isEmpty()) return listOf(TextSegment())
 

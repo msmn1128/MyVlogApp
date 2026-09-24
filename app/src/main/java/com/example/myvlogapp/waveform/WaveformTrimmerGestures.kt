@@ -127,8 +127,9 @@ internal fun pannedViewport(locked: LongRange, ms: Long, durationMs: Long): Long
 
 /**
  * 端に張り付いたまま指を動かさずにいるときの、1ティックあたりの移動量。
- * 今のビューポート幅の2%を、[dragTrimHandle]/[dragBodyOrMove]内のスクロール用
- * コルーチンが約16ms毎に呼ぶ（iOS版WaveformView.edgeScrollTickMsと同じ考え方）。
+ * 今のビューポート幅の2%。[dragTrimHandle]/[dragBodyOrMove]が端への張り付きを知らせ、
+ * WaveformTrimmer内のオートスクロール（LaunchedEffect）が約16ms毎に呼ぶ
+ * （iOS版WaveformView.edgeScrollTickMsと同じ考え方）。
  *
  * @param viewport いま表示している範囲。ズームしていなければ null（クリップ全体が基準）
  */

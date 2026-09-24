@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（222件）
+./gradlew testDebugUnitTest        # JVM単体テスト（224件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（24件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -179,6 +179,7 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
   - タイトルカードは、文字ごとの alpha ではなく**カード全体を黒へ `fade`** する（背景が黒なので見た目は同じ。
     `start_frame` は「まだ100%のコマ」なので、95%にしたいコマの1つ手前。エミュレータでコマごとに±1で一致）。
   - 必要なフィルタ（drawtext・movie・overlay・fade）が無いビルドでは、始める前に断る（`requireTextFilters`）。
+    HDRのクリップがあるときは `zscale`・`tonemap` も確かめる（`requireHdrFilters`）。
   - **ひとことは撮影時刻に届かない幅（`HITOKOTO_WRAP_WIDTH_PT`＝1400）で自動で折り返す。行の分け方は
     `wrapLines`（`StaticLayout`）1つで決め、プレビューと書き出しの両方がそれを使う。** それぞれに折り返させると
     描き方の違いで改行位置が1文字ずれうるので、プレビューの Compose には折り返させない（`softWrap = false` のまま）。
@@ -227,7 +228,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 - クリップ一覧は持たず、`clips: () -> List<VlogClip>` で毎回最新を覗く。
   選択位置(`selectedIndex`)と再生位置(`playbackPositionMs`)だけがこのクラスの持ち物。
 - **トリム終端の監視は `PLAYBACK_POLL_INTERVAL_MS`(80ms) のポーリング**で行う。
-  MainActivity が `repeatOnLifecycle(STARTED)` と `collectLatest(isPlaying)` の二重ゲートで回す
+  `VlogAppSideEffects.kt` が `repeatOnLifecycle(STARTED)` と `collectLatest(isPlaying)` の二重ゲートで回す
   （前面かつ再生中のときだけ）。一時停止中の位置あわせはポーリングではなく
   `seekWithoutPause` / `seekAndPause` が直接行っている。
 - 終端検知は**2経路ある**。ポーリングの `enforceTrimBounds` と、`STATE_ENDED` のリスナー。
@@ -239,6 +240,9 @@ init から、**書き出しが走っていないときだけ**掃除する。
   `prepare()` すると、同じ動画で失敗と準備し直しを繰り返し続けるので**しないこと**。
 - ドラッグ中は `isInteractiveSeeking` でポーリングの上書きを止める。`seekTo()` は非同期で、
   直後の `currentPosition` が古い値を返すことがあり、シークのピンが跳ねて見える。
+  離したとき（`endInteractiveSeek`）に正確な位置へ合わせ直すのは、触っている間に位置を動かしたときだけ
+  （`seekedDuringInteraction`）。動かしていなければプレイヤーの位置を取り込む。いつも合わせ直していた頃は、
+  再生中につまみに触れて離すだけで、触れていた時間ぶん巻き戻っていた。
 
 ---
 
@@ -282,12 +286,12 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、222件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、224件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
 | `VlogClipTest` | 尺・区間・分割点の判定、並び替えのキー |
-| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順） |
+| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順・同じ位置は1つに・尺の中へ） |
 | `VlogModelsTest` | 撮影日時順の差し込み（`mergeByShotAt`）、区間ごと移動でずらせる量（`clampTimelineShift`） |
 | `FormattersTest` | 表示整形、保存名の連番、追加時のスキップ通知、一時保存の読み出し可否と文言 |
 | `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
@@ -399,6 +403,6 @@ JVMで動かないため実装を入れている。
   配線（復元→自動保存の順番、波形の取得、書き出しの窓口）は、触ったら実機で確認すること。
   `ProjectsController` は保存先を `data/ProjectRepository` 越しに受け取るので、偽物を渡してテストできる。
   `TimelineStore` は再生側を `edit/TimelinePlayback`
-  （実装は `PlaybackController`）越しに受け取るようにしたので、偽物を渡してテストできる
+  （実装は `PlaybackController`）越しに受け取るので、偽物を渡してテストできる
   （`TimelineStoreTest`）。ただし偽物はプレイリストの中身と自動遷移を持たないので、
   並べ替え・削除・一時保存の読み出しとプレビューの同期は実機で確認すること。

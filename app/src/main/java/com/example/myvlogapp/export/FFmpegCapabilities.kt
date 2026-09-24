@@ -34,7 +34,9 @@ private data class Capabilities(
     val videoEncoder: String,
     val extraVideoArgs: List<String>,
     /** 書き出しに要るのにこのビルドに無いフィルタ（[REQUIRED_FILTERS]のうち） */
-    val missingFilters: List<String>
+    val missingFilters: List<String>,
+    /** HDRのクリップを変換するのに要るのに、このビルドに無いフィルタ（[HDR_FILTERS]のうち） */
+    val missingHdrFilters: List<String>
 )
 
 /**
@@ -44,6 +46,12 @@ private data class Capabilities(
  * - fade：タイトルカードのフェードアウト
  */
 private val REQUIRED_FILTERS = listOf("drawtext", "movie", "overlay", "fade")
+
+/**
+ * HDRのクリップをSDRへ変換するのに要るフィルタ（Hdr.kt）。zscaleはlibzimgを含むビルドにしか無い。
+ * HDRのクリップがあるときだけ要るので、[REQUIRED_FILTERS]とは分けて、そのときだけ確かめる
+ */
+private val HDR_FILTERS = listOf("zscale", "tonemap")
 
 /**
  * `-filters` の一覧に[name]のフィルタがあるか。一覧は「 T.. name  入出力  説明」の形なので、
@@ -75,22 +83,26 @@ private fun probeCapabilities(): Capabilities {
     }.getOrDefault("")
 
     val missingFilters = REQUIRED_FILTERS.filterNot { hasFilter(filters, it) }
+    val missingHdrFilters = HDR_FILTERS.filterNot { hasFilter(filters, it) }
     val caps = when {
         // GPL版に含まれるソフトウェアH.264エンコーダ。品質・互換性ともに最良。
-        encoders.contains("libx264") -> Capabilities("libx264", emptyList(), missingFilters)
+        encoders.contains("libx264") ->
+            Capabilities("libx264", emptyList(), missingFilters, missingHdrFilters)
 
         // 端末のハードウェアエンコーダ。libx264が無いビルドでの代替。
         // ビットレート指定が無いと極端に低品質になるため明示する。
-        encoders.contains("h264_mediacodec") ->
-            Capabilities("h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), missingFilters)
+        encoders.contains("h264_mediacodec") -> Capabilities(
+            "h264_mediacodec", listOf("-b:v", MEDIACODEC_BITRATE), missingFilters, missingHdrFilters
+        )
 
         // 最後の手段。mp4に入るが圧縮効率は落ちる。
-        else -> Capabilities("mpeg4", listOf("-q:v", "3"), missingFilters)
+        else -> Capabilities("mpeg4", listOf("-q:v", "3"), missingFilters, missingHdrFilters)
     }
 
     Log.i(
         LOG_TAG,
-        "FFmpeg機能判定: encoder=${caps.videoEncoder} 足りないフィルタ=${caps.missingFilters}"
+        "FFmpeg機能判定: encoder=${caps.videoEncoder} 足りないフィルタ=${caps.missingFilters}" +
+                " HDR用に足りないフィルタ=${caps.missingHdrFilters}"
     )
     if (encoders.isNotEmpty() && filters.isNotEmpty()) probedCapabilities = caps
     return caps
@@ -135,6 +147,21 @@ internal fun requireTextFilters() {
         throw VlogExportException(
             "このFFmpegビルドには${missing.joinToString("・")}フィルタが含まれておらず、文字を焼き込めません。" +
                     "freetypeを含むビルド（full / full-gpl）に差し替えてください。"
+        )
+    }
+}
+
+/**
+ * HDRのクリップを変換するフィルタ（[HDR_FILTERS]）が揃っていなければ、書き出しを始める前に断る。
+ * 確かめていなかった頃は、FFmpegを差し替えてこれらが抜けると、HDRのクリップを含むときだけ
+ * 「No such filter」のようなFFmpegの英語のエラーで途中から失敗することになっていた
+ */
+internal fun requireHdrFilters() {
+    val missing = capabilities.missingHdrFilters
+    if (missing.isNotEmpty()) {
+        throw VlogExportException(
+            "HDRで撮った動画が含まれていますが、このFFmpegビルドには${missing.joinToString("・")}フィルタが無く、" +
+                    "色を変換できません。HDRの動画を外すか、libzimgを含むビルドに差し替えてください。"
         )
     }
 }
