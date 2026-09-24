@@ -46,4 +46,8 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
     （一緒にビルドされるライブラリの版と入手先は、フォークの `scripts/source.sh` に固定されている）。
     フォークと FFmpeg 本体のソースの控えは、[Releases](https://github.com/msmn1128/MyVlogApp/releases) の各リリースに添付してある。
 - 同梱の素材（`app/src/main/assets/fonts/`・`sfx/`）はそれぞれの配布元のライセンスに従う。
+  アプリ内の「ライセンス」にも、フォントの著作権表示を載せている。
+  - M PLUS U（`MPLUSU-Regular.ttf`）：Copyright 2025 The M+ FONTS Project Authors。[SIL Open Font License 1.1](https://openfontlicense.org)
+  - 07ロゴたいぷゴシック7（`LogoTypeGothic.otf`）：Copyright (c) 2013 M+ FONTS PROJECT／[フォントな](http://www.fontna.com)
+  - タイトルの効果音（`sfx/title.mp3`）：表記の要らない素材
 

@@ -31,6 +31,9 @@ private const val GPL_TEXT_ASSET = "licenses/GPL-3.0.txt"
 /**
  * ライセンスの表示。
  *
+ * 同梱のフォントの著作権表示も載せる（それぞれのフォントファイルの中の表記と同じ）。
+ * タイトルの効果音（assets/sfx/title.mp3）は表記の要らない素材なので載せていない。
+ *
  * 書き出しに使っているFFmpeg（ffmpeg-kit）は`--enable-gpl --enable-version3`でビルドされて
  * おり、それを含むこのAPKはGPLv3の条件で配布している。GPLv3は画面を持つプログラムに、
  * 著作権表示・無保証であること・この条件で再配布できること・全文の見方を画面から
@@ -104,4 +107,8 @@ Copyright (c) 2026 msmn1128
 ・上の2つの控えは、アプリの配布ページ（https://github.com/msmn1128/MyVlogApp/releases）にも添付しています
 
 GPLv3 の全文：https://www.gnu.org/licenses/gpl-3.0.html
+
+フォント
+・M PLUS U（撮影時刻・タイトルの文言）：Copyright 2025 The M+ FONTS Project Authors（https://github.com/coz-m/MPLUS_FONTS）。SIL Open Font License, Version 1.1（https://openfontlicense.org）
+・07ロゴたいぷゴシック7（ひとこと・「Vlog.」）：Copyright (c) 2013 M+ FONTS PROJECT／フォントな（www.fontna.com）
 """.trim()

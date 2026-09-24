@@ -24,7 +24,8 @@ internal val TOOLBAR_ICON_SIZE = 20.dp
 internal val SECTION_GAP = 12.dp
 
 /**
- * これより縦に短い画面では、キーボードを出している間タイムラインを畳む（VlogAppScreen）。
+ * これより縦に短い画面では、キーボードを出している間タイムラインに加えて、ひとこと欄の
+ * 見出しも畳む（VlogAppScreen。横2ペインでもタイムラインは畳むが、見出しは残す）。
  * MaterialのウィンドウサイズクラスでcompactにあたるHeightの境目。
  */
 internal val COMPACT_HEIGHT = 480.dp

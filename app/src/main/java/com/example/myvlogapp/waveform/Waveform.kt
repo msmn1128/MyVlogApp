@@ -152,7 +152,7 @@ suspend fun extractWaveform(
         // 呼び出し元へ「取り消された」ことが伝わらない
         throw e
     } catch (e: Exception) {
-        Log.w(LOG_TAG, "波形の取得に失敗しました: $uri", e)
+        Log.w(LOG_TAG, "波形の取得に失敗しました", e)
         null
     } finally {
         runCatching { codec?.stop() }

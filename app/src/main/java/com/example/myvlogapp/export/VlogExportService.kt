@@ -3,6 +3,7 @@ package com.example.myvlogapp.export
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.example.myvlogapp.MainActivity
 import com.example.myvlogapp.VlogClip
 
 /**
@@ -263,6 +265,9 @@ class VlogExportService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setContentIntent(openAppIntent())
+            // アプリを開かなくても通知から止められるようにする（中止の経路はACTION_CANCELと同じ）
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "中止", cancelIntent())
             .apply {
                 if (progress == null) setProgress(0, 0, true)
                 else setProgress(
@@ -273,6 +278,29 @@ class VlogExportService : Service() {
                 )
             }
             .build()
+
+    /**
+     * 通知をタップしたときにアプリを開く。以前は開く先が無く、タップしても何も起きなかった。
+     * ランチャーから開くのと同じ形（MAIN/LAUNCHER）にしておくと、アプリがすでに開いていれば
+     * 作り直さずにそのまま前へ出る。
+     */
+    private fun openAppIntent(): PendingIntent = PendingIntent.getActivity(
+        this,
+        0,
+        Intent(this, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
+    /** 書き出し中の通知の「中止」。画面の「中止」ボタンと同じく、このサービスへACTION_CANCELを送る */
+    private fun cancelIntent(): PendingIntent = PendingIntent.getService(
+        this,
+        0,
+        Intent(this, VlogExportService::class.java).setAction(ACTION_CANCEL),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
 
     private fun startForegroundWithNotification(message: String, progress: Float? = null) {
         startForeground(NOTIFICATION_ID, buildNotification(message, progress), foregroundServiceType())
@@ -307,6 +335,7 @@ class VlogExportService : Service() {
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentIntent(openAppIntent())
             .setAutoCancel(true)
             .build()
         val manager = getSystemService(NotificationManager::class.java)

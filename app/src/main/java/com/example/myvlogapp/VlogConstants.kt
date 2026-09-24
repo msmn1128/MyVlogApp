@@ -4,7 +4,7 @@ package com.example.myvlogapp
 // 定数
 //
 // VlogModels.kt から分離。書き出しキャンバスのサイズやフォント設定など、
-// UI側(MainActivity)とExporter側(VlogExporter)の両方から参照される値をここに集約する。
+// 画面側（プレビューの PreviewSection など）と書き出し側（export/）の両方から参照される値をここに集約する。
 // =====================================================================================
 
 const val CANVAS_WIDTH = 1920
@@ -45,7 +45,7 @@ const val HITOKOTO_FONT_PT = 70f      // ひとこと
 const val HITOKOTO_LINE_SPACING_PT = 10f  // ひとことの行間
 const val TIME_FONT_PT = 60f          // 撮影時刻
 const val TITLE_FONT_PT = 150f        // タイトルカードの「Vlog.」
-const val TITLE_DATE_FONT_PT = 50f    // タイトルカードの日付
+const val TITLE_DATE_FONT_PT = 50f    // タイトルカードの文言（既定は撮影日）
 const val TITLE_DATE_LINE_SPACING_PT = 10f // タイトルカードの文言が複数行になったときの行間
 
 // タイトルカードの縦位置。画面中央からのずれ（マイナスが上、プラスが下）
@@ -88,7 +88,7 @@ const val DEFAULT_HITOKOTO = "ひとこと"
 const val MIN_TEXT_SEGMENT_MS = 400L
 
 /**
- * 再生位置の監視間隔（ミリ秒）。MainActivity側のポーリングループと
+ * 再生位置の監視間隔（ミリ秒）。画面側のポーリングループ（VlogAppSideEffects.kt）と
  * PlaybackController側のKDocコメントの両方から参照し、値がズレないようにする。
  */
 const val PLAYBACK_POLL_INTERVAL_MS = 80L

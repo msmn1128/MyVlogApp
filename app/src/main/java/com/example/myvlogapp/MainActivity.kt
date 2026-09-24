@@ -9,9 +9,30 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationSource
+import androidx.compose.foundation.layout.imeAnimationTarget
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
@@ -121,7 +142,11 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // スクロール位置）を切り替えるための合図。isFocusedだけを見ると、キーボードを閉じても
     // フォーカスは残ったままなことがあり、空欄でもカーソルだけ点滅し続けてしまう。
     val isImeVisible = imeBottomPx > 0
-    // 縦横の判定（isWide）には、キーボードでは縮まないウィンドウ全体の大きさを使う（理由は下）
+    // 縦横の判定（isWide）にはウィンドウ全体の大きさ（containerSize）を使う。
+    // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
+    // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
+    // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
+    // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
     val windowSize = LocalWindowInfo.current.containerSize
     val isWide = windowSize.width > windowSize.height
     // キーボードが出ている間は、次の2つの画面でタイムラインを畳み、ひとこと欄に高さを回す。
@@ -138,7 +163,7 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // ここを削るとトリミングのスライダーがカードの下端で切れ、
     // 一度スクロールしないと尺を変えられなくなる。
     // 文字サイズや画面の比率によっては、この配分でも波形が欄から押し出されるので、
-    // 足りないぶんをタイムラインへ上乗せする（下のisWideの後。TimelineFit.kt）
+    // 足りないぶんをタイムラインへ上乗せする（下のtimelineExtraWeight。TimelineFit.kt）
     val basePreviewWeight = lerp(0.40f, 0.25f, imeOpenFraction)
     val baseTimelineWeight = lerp(0.40f, 0.20f, imeOpenFraction)
     val baseEditorWeight = lerp(0.20f, 0.55f, imeOpenFraction)
@@ -161,21 +186,15 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     // 許可する動画を選び直したときに一覧を取り直すための合図
     var galleryReloadToken by remember { mutableIntStateOf(0) }
 
+    // 許可されてもされなくても、ギャラリーの画面は開く。許可されなかったときは、一覧の代わりに
+    // 許可し直す導線と「ファイル」（システムのファイル選択）を案内する（GalleryPicker.kt）。
+    // 以前は断られたらToastで知らせるだけで、ファイル選択の入口がギャラリーの画面の中にしか
+    // 無いため、許可しなかった人は動画を1本も追加できなかった
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        // Android 14の「選択した項目のみ許可」だと READ_MEDIA_VIDEO は拒否のまま
-        // 別の権限が許可されるので、どれか1つでも通れば一覧を開く
-        if (results.values.any { it }) {
-            showGallery = true
-            galleryReloadToken++
-        } else {
-            Toast.makeText(
-                context,
-                "動画へのアクセスが許可されていません。「ファイルから選ぶ」もご利用いただけます",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+    ) {
+        showGallery = true
+        galleryReloadToken++
     }
 
     val openGallery = {
@@ -242,8 +261,8 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
             showGallery = false
             filePicker.launch(arrayOf("video/*"))
         },
-        // 権限を再リクエストすると、システムの「動画を選択」画面が再表示される
-        onChangeSelection = { permissionLauncher.launch(mediaPermissions) },
+        // 権限を再リクエストすると、システムの許可の画面（「選択した項目のみ」なら動画の選択画面）が出る
+        onRequestAccess = { permissionLauncher.launch(mediaPermissions) },
         showSaves = showSaves,
         onDismissSaves = { showSaves = false },
         canSaveProject = clips.isNotEmpty() && !isExporting && !isAdding,
@@ -255,13 +274,6 @@ fun VlogAppScreen(viewModel: VlogViewModel = viewModel()) {
     )
 
     VlogAppSideEffects(viewModel = viewModel, clips = clips)
-
-    // 縦横の判定（isWide、上で求めてある）にはウィンドウ全体の大きさ（containerSize）を使う。
-    // BoxWithConstraintsの実測値はキーボードのぶん縮むため、そちらで判定すると
-    // Foldの展開時（ほぼ正方形）にキーボードを出した瞬間へ縦→横と判定が裏返り、
-    // レイアウトごと作り直されて入力欄のフォーカスが飛んでしまう。
-    // ウィンドウ自体はキーボードでは縮まない（insetsとして渡される）ので、こちらは裏返らない。
-    // windowSize は上（キーボードまわりの判定）で読んである。
 
     // タイムラインへの上乗せは、縦1カラムではプレビューから、横2ペインでは同じ右ペインの
     // ひとこと欄から差し引く。どちらも削り切らない下限を残す。プレビューは動画を縮めて

@@ -10,7 +10,8 @@ import kotlin.math.abs
 // データモデル
 //
 // 定数は VlogConstants.kt、Android I/O依存のメタデータ取得は VideoMetadataReader.kt、
-// 表示整形は Formatters.kt にそれぞれ分離してある。このファイルは純粋データのみを持つ。
+// 表示整形は Formatters.kt にそれぞれ分離してある。このファイルが持つのはデータと、それに付く
+// 純粋な処理（JSONの読み書き・撮影日時順の差し込み・区間ごと移動の量・idの発行）だけ。
 // =====================================================================================
 
 /**
@@ -219,10 +220,12 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
     // ひとことが拾えない区間ができ、書き出しから文字が消える。
     // オブジェクトでない要素は飛ばす。getJSONObjectで読むと例外になり、壊れた区間1つのせいで
     // クリップごと復元されなくなる（ClipStoreが壊れた1件だけを落とすのと同じ考え方）
+    // 負の位置は0へ丸めてから並べる。下で直すのは先頭の1件だけなので、負の位置が2件以上あると
+    // 2件目以降が0より前に残り、昇順が崩れていた（[-5, -3, 1000] → [0, -3, 1000]）
     val segments = (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         TextSegment(
-            startMs = item.optLong(VlogClipKeys.START_MS),
+            startMs = item.optLong(VlogClipKeys.START_MS).coerceAtLeast(0L),
             text = item.optString(VlogClipKeys.TEXT, "")
         )
     }.sortedBy { it.startMs }
@@ -247,7 +250,8 @@ private fun JSONObject.readTextSegments(): List<TextSegment> {
  *
  * [text] の既定値は空文字。動画追加直後に触らなければプレビュー・書き出しの
  * どちらにも何も焼き込まれない（書き出しは空の区間の画像を作らないので
- * [com.example.myvlogapp.export.AndroidTextRenderer]側で自然に何も出ない）。入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
+ * [com.example.myvlogapp.export.AndroidTextRenderer]側で自然に何も出ない）。
+ * 入力欄には[DEFAULT_HITOKOTO]をplaceholderとしてグレー表示するだけに留め、
  * タイムラインのタイル表示（未入力時の目印）は[DEFAULT_HITOKOTO]へのifBlankフォールバックで補う。
  */
 data class TextSegment(
@@ -300,7 +304,7 @@ internal fun mergeByShotAt(
  * 動かせなくしてしまわないよう、許容範囲には必ず0（＝動かさない）を含める。
  *
  * @param requested トリム開始位置の移動量（動画の範囲へクランプ済み）
- * @return 実際にずらす量。動かせる余地が無ければ [requested] のまま0に近い値になる
+ * @return 実際にずらす量。区切りがはみ出す手前で止めた量で、その向きへ動かせる余地が無ければ0
  */
 internal fun clampTimelineShift(
     texts: List<TextSegment>,

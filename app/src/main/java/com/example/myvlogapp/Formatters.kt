@@ -9,12 +9,16 @@ import java.util.Locale
 // VlogModels.kt から分離。UI表示用の文字列整形だけをここに集める。
 // =====================================================================================
 
-/** 一時保存の日時表示 "M/d HH:mm"。一覧の見出しで使う */
+/**
+ * 一時保存の日時表示 "M/d HH:mm"。一覧の見出しで使う。
+ * Locale.USで組み立てるのは、ほかの数字の表示（[formatSeconds]など）と同じく、アラビア語ロケールなど
+ * 数字の字形が違う端末でも半角のアラビア数字にそろえるため
+ */
 fun formatSavedAt(millis: Long): String =
-    SimpleDateFormat("M/d HH:mm", Locale.getDefault()).format(millis)
+    SimpleDateFormat("M/d HH:mm", Locale.US).format(millis)
 
 /**
- * 動画を追加したあとに出す、スキップの通知文。どちらも0件ならnull（通知しない）。
+ * 動画を追加したあとに出す、スキップの通知文。いずれも0件ならnull（通知しない）。
  *
  * @param alreadyAdded すでにタイムラインにあったため追加しなかった件数
  * @param unreadable 長さなどを読み取れなかったため追加しなかった件数（壊れたファイル、
@@ -60,9 +64,10 @@ fun projectUnreadableMessage(dropped: Int): String =
 
 /**
  * 保存名の既定値 "M/d"。同名がすでにあれば「M/d (1)」のように連番を付ける（[uniqueSaveName]）。
+ * Locale.USなのは[formatSavedAt]と同じ理由
  */
 fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
-    uniqueSaveName(SimpleDateFormat("M/d", Locale.getDefault()).format(millis), existingNames)
+    uniqueSaveName(SimpleDateFormat("M/d", Locale.US).format(millis), existingNames)
 
 /**
  * [base]と同じ名前が[existingNames]にすでにあれば、「base (1)」「base (2)」のように
@@ -73,7 +78,7 @@ fun defaultSaveName(millis: Long, existingNames: Collection<String>): String =
  * 同じwhileループを別々に持っていた。
  *
  * @param suffix 連番より後ろに付ける固定文字列。拡張子のように「連番の外側」に
- *   置きたいものを渡す（"Vlog_9-20 (1).mp4" であって "Vlog_9-20.mp4 (1)" ではない）。
+ *   置きたいものを渡す（"Vlog_2026-09-20 (1).mp4" であって "Vlog_2026-09-20.mp4 (1)" ではない）。
  *   既定は空で、一時保存の名前はこちらを使う。
  */
 fun uniqueSaveName(

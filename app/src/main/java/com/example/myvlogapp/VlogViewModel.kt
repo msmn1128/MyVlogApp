@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -75,7 +76,7 @@ private const val MISSING_CHECK_PARALLELISM = 8
  * 書き出しの窓口・Toastの中継）だけを持つ：
  * - [playback]   : ExoPlayerと再生位置（playback/PlaybackController.kt）
  * - [timeline]   : クリップ一覧・履歴・プレイリスト同期（edit/TimelineStore.kt）
- * - [projects]   : 一時保存（data/ProjectsController.kt）
+ * - [projectsController] : 一時保存（data/ProjectsController.kt）
  *
  * 画面（MainActivity）はこのクラスだけを見て、状態と操作を組み立てて下へ渡す。
  */
@@ -242,17 +243,6 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
                 .filter { running -> !running }
                 .collect { refreshMissingClips() }
         }
-
-        // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
-        // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。
-        // 今まさに書き出し中（サービスが同一プロセスで生存中）なら、書き込み中のものを
-        // 消してしまうので触らない。
-        if (!ExportStatus.isRunning) {
-            viewModelScope.launch(Dispatchers.IO) {
-                VlogExporter.cleanupOrphanedPendingFiles(getApplication())
-                VlogExporter.cleanupOrphanedWorkFiles(getApplication())
-            }
-        }
     }
 
     /** 前回の続きを読み込む。いま実際に読めるものだけが対象 */
@@ -263,12 +253,27 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         // 待っている追加が動き出すのは、履歴を空にしたあと。先に動くと、追加の「もとに戻す」まで消える
         val restored = try {
             whileLoadingClips {
-                ClipStore.restore(getApplication()).also {
-                    timeline.replaceAll(it.clips, record = false)
-                    // 復元直後を「起点」にする。ここで履歴を消しておかないと、
-                    // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
-                    timeline.clearHistory()
-                    autosave.onRestored(droppedCount = it.dropped)
+                coroutineScope {
+                    // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
+                    // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。
+                    // 今まさに書き出し中（サービスが同一プロセスで生存中）なら、書き込み中のものを
+                    // 消してしまうので触らない。
+                    // 復元と並べて、読み込み中（書き出しを始められない間）に済ませる。別に走らせていた
+                    // 頃は書き出しの開始と待ち合わせておらず、理屈の上では始まったばかりの書き出しの
+                    // 作業ファイルを消しえた
+                    if (!ExportStatus.isRunning) {
+                        launch(Dispatchers.IO) {
+                            VlogExporter.cleanupOrphanedPendingFiles(getApplication())
+                            VlogExporter.cleanupOrphanedWorkFiles(getApplication())
+                        }
+                    }
+                    ClipStore.restore(getApplication()).also {
+                        timeline.replaceAll(it.clips, record = false)
+                        // 復元直後を「起点」にする。ここで履歴を消しておかないと、
+                        // アプリを開いた直後に「もとに戻す」を押せてしまい、空の状態へ戻ってしまう。
+                        timeline.clearHistory()
+                        autosave.onRestored(droppedCount = it.dropped)
+                    }
                 }
             }
         } finally {
@@ -612,8 +617,8 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
      *
      * @param includeTitle 先頭のタイトルカード（黒背景＋日付＋効果音）を付けるかどうか。
      *   書き出しボタンのタップ（true）／長押し（false）で呼び分ける。
-     * @param customTitleText タイトルカードに焼き込む文言。null/空文字なら先頭クリップの
-     *   撮影日（[VlogClip.dateText]）を使う。タイトル作成ダイアログで自由入力を選んだときのみ渡る。
+     * @param customTitleText タイトルカードに焼き込む文言。タイトル作成ダイアログが、既定（先頭クリップの
+     *   撮影日）か自由入力のどちらかを毎回渡す。nullのときだけ書き出し側で撮影日（[VlogClip.dateText]）にする
      */
     fun export(includeTitle: Boolean = true, customTitleText: String? = null) {
         // 書き出し中に押し直したとき、何も起きないと「押せていない」のか

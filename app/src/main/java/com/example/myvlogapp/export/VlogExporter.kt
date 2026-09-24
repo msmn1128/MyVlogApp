@@ -120,7 +120,7 @@ object VlogExporter {
      *   （[VlogClip.isMuted] の状態に関わらず全て）とタイトルカードの効果音を無音にする。
      * @param customTitleText タイトルカードに焼き込む文言。nullなら先頭クリップの
      *   撮影日（[VlogClip.dateText]）を使う。改行を含む場合は複数行として焼き込み、
-     *   1行目の位置は変えずに下へ積む（FilterGraph.ktのbuildTitleFilter参照）。
+     *   1行目の位置は変えずに下へ積む（TextImages.kt の titleStyle 参照）。
      * @param onProgress 進捗の通知。呼び出しスレッドは決まっていない（FFmpegの統計
      *   コールバックのスレッドから直接呼ばれることがある）ので、実装側はどのスレッドから
      *   呼ばれても安全なようにしておくこと。進捗率が分からない工程では第2引数がnullになる。
@@ -177,7 +177,9 @@ object VlogExporter {
             // HDRで撮ったクリップはSDRへ変換する（Hdr.kt）
             val hdrTransfers = probes.map { it.hdrTransfer }
             if (hdrTransfers.any { it != null }) {
-                Log.i(LOG_TAG, "HDRのクリップ: ${hdrTransfers.withIndex().filter { it.value != null }.map { "${it.index + 1}本目=${it.value}" }}")
+                val hdrClips = hdrTransfers.withIndex().filter { it.value != null }
+                    .map { "${it.index + 1}本目=${it.value}" }
+                Log.i(LOG_TAG, "HDRのクリップ: $hdrClips")
             }
             val titleSfx = if (audioPlan.needsTitleSfxInput) {
                 copySfxAsset(context, TITLE_SFX_ASSET)

@@ -21,7 +21,10 @@ import com.example.myvlogapp.toJson
 import com.example.myvlogapp.uniqueSaveName
 import com.example.myvlogapp.trimmedDurationMs
 
-/** 復元結果。dropped は権限が無くて復元できなかった件数 */
+/**
+ * 復元結果。dropped は復元できなかった件数（動画が移動・削除された、アクセス権限が
+ * 取り消された、保存データのその1件が壊れていた、のいずれか）
+ */
 data class RestoredClips(val clips: List<VlogClip>, val dropped: Int)
 
 /**

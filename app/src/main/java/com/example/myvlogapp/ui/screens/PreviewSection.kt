@@ -192,7 +192,7 @@ private fun PreviewPane(
         val canvasScale = with(density) { canvasHeight.toPx() } /
                 CANVAS_HEIGHT * PREVIEW_FONT_SCALE
         val hitokotoSize = with(density) { (HITOKOTO_FONT_PT * canvasScale).toSp() }
-        // 書き出し側（buildClipFilterのlineHeight = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT）と
+        // 書き出し側（TextImages.kt の hitokotoStyle の行送り = HITOKOTO_FONT_PT + HITOKOTO_LINE_SPACING_PT）と
         // 同じ行間になるよう明示する。指定しないとComposeがフォントの既定の行送りを使ってしまい、
         // 2行以上になったときに書き出し結果とプレビューで行間がずれる。
         val hitokotoLineHeight = with(density) {
@@ -219,7 +219,8 @@ private fun PreviewPane(
                     // 親を渡さない（null）のは、大きさをComposeのAndroidViewが決めるため（XMLの
                     // layout_width/heightは使われない）。lintのInflateParamsはこの前提を知らない
                     @SuppressLint("InflateParams")
-                    val view = LayoutInflater.from(context).inflate(R.layout.preview_player_view, null) as PlayerView
+                    val view = LayoutInflater.from(context)
+                        .inflate(R.layout.preview_player_view, null) as PlayerView
                     view.apply { this.player = player }
                 },
                 // ExoPlayerはViewModelが持ち続けるので、外れたPlayerViewが
@@ -227,9 +228,13 @@ private fun PreviewPane(
                 onRelease = { it.player = null },
                 modifier = Modifier
                     .fillMaxSize()
+                    // 読み上げ（TalkBack）にも、ボタンであることと押すと何が起きるかを伝える。
+                    // 付けていなかった頃は、プレビューを押すと再生できることが読み上げでは分からなかった
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
+                        indication = null,
+                        onClickLabel = "再生／一時停止",
+                        role = Role.Button
                     ) {
                         onTogglePlayback()
                     }
