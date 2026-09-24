@@ -132,17 +132,27 @@ class VlogExportService : Service() {
             // このIntentのせいで起動しただけのサービスが何もせず残り続けてしまうため、
             // ここで自分で畳む。
             val job = exportJob
-            if (job?.isActive == true) job.cancel() else stopSelf()
+            if (job?.isActive == true) job.cancel() else stopSelf(startId)
             return START_NOT_STICKY
         }
 
-        // 既に実行中なら多重起動しない（連打・二重タップ対策）
-        if (exportJob?.isActive == true) return START_NOT_STICKY
-
+        // ここから下は[start]（startForegroundService）で起動されたとき。この起動では、何もせずに
+        // 畳む場合でも先にstartForegroundを呼ばなければならない。呼ばずに戻ったり止めたりすると、
+        // OSが「startForegroundを呼ばなかった」としてアプリごと強制終了させる。
         val pending = pendingExport
         pendingExport = null
+
+        // 既に実行中なら多重起動しない（連打・二重タップ対策）。後から来た書き出しは捨てる。
+        // 通知はいまの書き出しの進み具合のまま出し直す（「準備中...」へ戻して見せない）
+        if (exportJob?.isActive == true) {
+            val running = ExportStatus.state.value as? ExportState.Running
+            startForegroundWithNotification(running?.message ?: "準備中...", running?.progress)
+            return START_NOT_STICKY
+        }
+
         if (pending == null || pending.clips.isEmpty()) {
-            stopSelf()
+            startForegroundWithNotification("準備中...")
+            stopSelf(startId)
             return START_NOT_STICKY
         }
         val (clips, includeTitle, muted, customTitleText) = pending
@@ -264,8 +274,8 @@ class VlogExportService : Service() {
             }
             .build()
 
-    private fun startForegroundWithNotification(message: String) {
-        startForeground(NOTIFICATION_ID, buildNotification(message, progress = null), foregroundServiceType())
+    private fun startForegroundWithNotification(message: String, progress: Float? = null) {
+        startForeground(NOTIFICATION_ID, buildNotification(message, progress), foregroundServiceType())
     }
 
     /**

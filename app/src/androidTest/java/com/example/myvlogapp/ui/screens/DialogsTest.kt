@@ -59,8 +59,10 @@ class DialogsTest {
     // --- 一時保存 ----------------------------------------------------------------------
 
     private val trip = SavedProject(id = 7L, name = "旅行", savedAt = 0L, clipCount = 3, totalMs = 9_000L)
+    private val saved = mutableListOf<String>()
     private val overwritten = mutableListOf<Long>()
     private val deleted = mutableListOf<Long>()
+    private var dismissed = false
 
     private fun showSaveLoadDialog(canSave: Boolean) {
         rule.setContent {
@@ -68,13 +70,26 @@ class DialogsTest {
                 SaveLoadDialog(
                     projects = listOf(trip),
                     canSave = canSave,
-                    onSave = {},
+                    onSave = { saved += it },
                     onLoad = {},
                     onOverwrite = { overwritten += it.id },
                     onDelete = { deleted += it },
-                    onDismiss = {}
+                    onDismiss = { dismissed = true }
                 )
             }
+        }
+    }
+
+    @Test
+    fun savingClosesTheDialog() {
+        // 開いたままだと続けて押せて、同じ内容が2件保存されてしまう
+        showSaveLoadDialog(canSave = true)
+
+        rule.onNodeWithText("この内容を保存").performClick()
+
+        rule.runOnIdle {
+            assertEquals(1, saved.size)
+            assertEquals(true, dismissed)
         }
     }
 

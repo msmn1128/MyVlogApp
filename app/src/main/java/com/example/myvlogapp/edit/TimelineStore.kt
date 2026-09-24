@@ -203,8 +203,16 @@ internal class TimelineStore(
      *
      * @param previewAtMs プレビューに出す位置。波形の右端を掴んでいるのに左端の映像が
      *   出ると「どこで切れるのか」が確認できないため、掴んでいる側を渡してもらう。
+     *
+     * 範囲が変わっていなければ何もしない。つまみを端の限界で止めたままのドラッグ、端での
+     * 自動スクロール（16msごと）、すでに同じ長さの「2s」などは同じ値で呼んでくる。ここで弾かないと
+     * 空振りの「もとに戻す」が積まれ、それを編集の合図と取り違えて、開けなかった動画の
+     * 編集内容を残すための自動保存の保留（AutosavePolicy）まで外れてしまう
+     * （[updateText]と同じ理由）。同じ位置へのシークを繰り返すのも避けられる。
      */
     fun updateTrim(startMs: Long, endMs: Long, previewAtMs: Long = startMs) {
+        val clip = selectedClip ?: return
+        if (clip.startMs == startMs && clip.endMs == endMs) return
         recordHistory(EditTag.Trim(playback.selectedIndexValue))
         updateSelected { it.copy(startMs = startMs, endMs = endMs) }
 
@@ -462,15 +470,21 @@ internal class TimelineStore(
      * 音量は最後に必ず合わせ直す。プレイリストを作り直さず選択クリップも変わらない
      * とき（選択中クリップのミュートをundoした場合など）は、音量を合わせ直す経路を
      * どこも通らず、表示はミュート解除に戻ったのに再生すると無音のまま、になる。
+     *
+     * タイル一覧を作り直す合図（[replacementCount]）は、URIではなくidの並びで判断する。
+     * いまと同じ動画だけの一時保存を読み出してから戻すと、URIの並びは同じなのにidは全部入れ替わる。
+     * URIで見ていた頃はそこで合図を出さず、消えたはずのタイルが画面に残る不具合の条件になっていた。
      */
     private fun applySnapshot(snapshot: Snapshot) {
         val playlistChanged =
             snapshot.clips.map { it.uri } != _clips.value.map { it.uri }
+        val tilesChanged =
+            snapshot.clips.map { it.id } != _clips.value.map { it.id }
 
         _clips.value = snapshot.clips
 
+        if (tilesChanged) _replacementCount.value++
         if (playlistChanged) {
-            _replacementCount.value++
             playback.rebuildPlaylist(snapshot.clips)
         } else {
             playback.pause()
