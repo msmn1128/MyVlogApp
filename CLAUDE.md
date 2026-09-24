@@ -20,7 +20,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleDebug            # デバッグAPK
 ./gradlew testDebugUnitTest        # JVM単体テスト（222件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-                                   # 画面操作のテスト（21件）。起動中のエミュレータ・実機で動く。
+                                   # 画面操作のテスト（24件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
 ./gradlew assembleDebugAndroidTest # 画面操作のテストのコンパイルだけ（端末なしで通せる）
 ./gradlew lintDebug                # lint（現状 0 issues を維持している）
@@ -179,6 +179,10 @@ MainActivity            画面構成（縦1カラム / 横2ペイン）。ダイ
   - タイトルカードは、文字ごとの alpha ではなく**カード全体を黒へ `fade`** する（背景が黒なので見た目は同じ。
     `start_frame` は「まだ100%のコマ」なので、95%にしたいコマの1つ手前。エミュレータでコマごとに±1で一致）。
   - 必要なフィルタ（drawtext・movie・overlay・fade）が無いビルドでは、始める前に断る（`requireTextFilters`）。
+  - **ひとことは撮影時刻に届かない幅（`HITOKOTO_WRAP_WIDTH_PT`＝1400）で自動で折り返す。行の分け方は
+    `wrapLines`（`StaticLayout`）1つで決め、プレビューと書き出しの両方がそれを使う。** それぞれに折り返させると
+    描き方の違いで改行位置が1文字ずれうるので、プレビューの Compose には折り返させない（`softWrap = false` のまま）。
+    タイトルの文言は折り返さない（撮影時刻が無く、はみ出す行は左右均等に切れる）。
 - **撮影時刻と「Vlog.」は drawtext のまま**（固定の英数字）。`:expansion=none` で `%{...}` の展開を切り、
   文字は `textfile=` 経由で渡す（`text=` に直接埋めると引用符・コロンの解釈が中身次第になる）。
 - **フィルタグラフに書くパスは単引用符で囲む**（`quotedPath`）。中に単引用符があると壊れるので、組み立ての時点で断る。
@@ -309,7 +313,7 @@ JVM単体テスト（`src/test`）、222件。対象は純粋関数と、再生�
 `mockk` は `android.net.Uri` の差し替えにだけ使う。`org.json` は Android のスタブが
 JVMで動かないため実装を入れている。
 
-### 画面操作のテスト（`src/androidTest`、21件）
+### 画面操作のテスト（`src/androidTest`、24件）
 
 部品（Composable）を、ViewModelの代わりに固定の状態と「呼ばれた内容を記録するだけ」の操作で
 組み立て、どの操作で何が呼ばれるか（呼ばれないか）を確かめる。エミュレータ（Android 17）と実機（SM-F971Q、Android 17）で通してある。
@@ -319,7 +323,7 @@ JVMで動かないため実装を入れている。
 | `EditSectionTest` | ひとこと欄はタップ・カーソル移動では書き換えを伝えない／再生位置が別の区間へ動いたら入力欄の文字も入れ替わる／ミュートがスイッチとして状態を持つ／消えた動画のタイルの目印／波形の読み上げの説明文とアクション |
 | `DialogsTest` | タイトル作成（既定は撮影日・自由入力）／動画への許可が無いときの案内（許可し直す・設定を開く）／一時保存の上書き・削除は確認を挟む／保存できないときは上書きも出さない／保存したら閉じる |
 | `PreviewSectionTest` | プレビューのタップが読み上げに「再生／一時停止」のボタンとして伝わる |
-| `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない |
+| `export/TextImagesTest` | ひとこと・文言の画像（部品ではないが、端末のフォントに頼るのでここ）：絵文字がカラーで描ける／絵文字や下に伸びる字が帯の端で切れない／空の区間は画像を作らない／長いひとことは折り返し幅に収まり、文字を落とさず、撮影時刻の側へはみ出さない |
 
 - `espresso-core` は 3.7.0 を明示している。`ui-test-junit4` が引き込む 3.5.0 は、Android 17 で無くなった
   `InputManager.getInstance` を呼んで全テストが落ちる。

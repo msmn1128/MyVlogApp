@@ -3,6 +3,8 @@ package com.example.myvlogapp.export
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -12,6 +14,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import com.example.myvlogapp.HITOKOTO_FONT_PT
+import com.example.myvlogapp.HITOKOTO_WRAP_WIDTH_PT
 import com.example.myvlogapp.TIME_FONT_ASSET
 import com.example.myvlogapp.TITLE_FONT_ASSET
 
@@ -90,6 +94,50 @@ class TextImagesTest {
         assertEquals(textStripLayout(1, hitokotoStyle(fonts))!!.height, bitmap.height)
         assertEquals(listOf(image.file), workFiles)
     }
+
+    // --- 自動の折り返し ------------------------------------------------------------------
+
+    private val longHitokoto = "今日は朝から海へ行って、みんなでバーベキューをしてから花火を見ました🎆"
+
+    private fun wrapPaint() = Paint().apply {
+        typeface = Typeface.createFromFile(fonts.logoType)
+        textSize = HITOKOTO_FONT_PT
+    }
+
+    @Test
+    fun aLongHitokotoIsWrappedWithinTheWidthAndKeepsEveryCharacter() {
+        val wrapped = wrapLines(listOf(longHitokoto), wrapPaint(), HITOKOTO_WRAP_WIDTH_PT.toInt())
+
+        assertTrue(wrapped.toString(), wrapped.size >= 2)
+        wrapped.forEach { line ->
+            assertTrue(line!!, wrapPaint().measureText(line) <= HITOKOTO_WRAP_WIDTH_PT)
+        }
+        // 折り返しで文字が消えたり増えたりしない（絵文字も割れない）
+        assertEquals(longHitokoto, wrapped.joinToString(""))
+    }
+
+    @Test
+    fun shortLinesAndBlankLinesAreLeftAsTheyAre() {
+        assertEquals(
+            listOf("上", null, "下"),
+            wrapLines(listOf("上", null, "下"), wrapPaint(), HITOKOTO_WRAP_WIDTH_PT.toInt())
+        )
+    }
+
+    @Test
+    fun aWrappedHitokotoStaysClearOfTheShootingTime() {
+        // 右端の撮影時刻に重ならないよう、左右に(1920-折り返し幅)/2ずつ空く（数pxは文字のにじみの余裕）
+        val bitmap = render(listOf(longHitokoto))
+        val side = ((1920 - HITOKOTO_WRAP_WIDTH_PT) / 2).toInt() - 4
+
+        assertEquals(0, opaquePixelsInColumns(bitmap, 0 until side))
+        assertEquals(0, opaquePixelsInColumns(bitmap, (1920 - side) until 1920))
+        // 行が増えたぶん、帯も高くなる
+        assertTrue(bitmap.height > render(listOf("旅行")).height)
+    }
+
+    private fun opaquePixelsInColumns(bitmap: Bitmap, columns: IntRange) =
+        columns.sumOf { x -> (0 until bitmap.height).count { y -> Color.alpha(bitmap.getPixel(x, y)) > 0 } }
 
     private fun pixels(bitmap: Bitmap) = IntArray(bitmap.width * bitmap.height).also {
         bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)

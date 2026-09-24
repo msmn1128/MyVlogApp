@@ -1,6 +1,9 @@
 package com.example.myvlogapp.ui.screens
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.view.LayoutInflater
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedContent
@@ -53,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -66,16 +70,21 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.myvlogapp.CANVAS_HEIGHT
 import com.example.myvlogapp.CANVAS_WIDTH
+import com.example.myvlogapp.FONT_ASSET_DIR
 import com.example.myvlogapp.HITOKOTO_FONT_PT
 import com.example.myvlogapp.HITOKOTO_LINE_SPACING_PT
+import com.example.myvlogapp.HITOKOTO_WRAP_WIDTH_PT
 import com.example.myvlogapp.PREVIEW_FONT_SCALE
 import com.example.myvlogapp.R
 import com.example.myvlogapp.SECTION_GAP
 import com.example.myvlogapp.TIME_FONT_PT
 import com.example.myvlogapp.TIME_MARGIN_PT
+import com.example.myvlogapp.TITLE_FONT_ASSET
 import com.example.myvlogapp.TOOLBAR_ICON_SIZE
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.export.ExportState
+import com.example.myvlogapp.export.hitokotoLines
+import com.example.myvlogapp.export.wrapLines
 import com.example.myvlogapp.ui.components.VlogIcons
 
 // =====================================================================================
@@ -172,11 +181,18 @@ private fun PreviewPane(
     // 再生位置は約80msごとに更新される。ここで値そのものを読むとプレビュー全体が
     // 毎回再コンポーズされてしまうため、表示する文字列だけを派生させておき、
     // ひとことが切り替わったときにだけ更新されるようにする。
-    val hitokoto by remember(selectedClip) {
-        // 改行は書き出し（TextImages.hitokotoLines）と同じくlines()で区切り直す。
-        // Composeは単独の\rを改行にしないが、書き出しは\rでも行を分けるため、
-        // そのままだと貼り付けた文字の行の割れ方がプレビューと書き出しで食い違う
-        derivedStateOf { selectedClip.textAt(positionMs.value).lines().joinToString("\n") }
+    val hitokotoText by remember(selectedClip) {
+        derivedStateOf { selectedClip.textAt(positionMs.value) }
+    }
+    // 行の分け方は書き出しと同じ関数で決める（TextImages.kt の hitokotoLines と wrapLines）。
+    // 改行コードの扱い（Composeは単独の\rを改行にしない）も、自動の折り返しの位置も、
+    // それぞれに任せるとプレビューと書き出しで行の割れ方が食い違う。
+    // 折り返しは書き出しのキャンバス上の大きさ（pt）で測るので、プレビューの表示の大きさには左右されない
+    val context = LocalContext.current
+    val wrapPaint = remember(context) { hitokotoWrapPaint(context) }
+    val hitokoto = remember(hitokotoText, wrapPaint) {
+        wrapLines(hitokotoLines(hitokotoText), wrapPaint, HITOKOTO_WRAP_WIDTH_PT.toInt())
+            .joinToString("\n") { it.orEmpty() }
     }
 
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -254,10 +270,10 @@ private fun PreviewPane(
                 ),
                 fontFamily = hitokotoFontFamily,
                 textAlign = TextAlign.Center,
-                // 折り返さない。書き出しは改行の位置でしか行を分けないので、
-                // プレビューだけ自動で折り返すと、長い1行が画面では収まって見えるのに
-                // 書き出した動画では左右が切れる。はみ出しも書き出しと同じく中央から
-                // 左右均等にさせる（unboundedにしないと左端から描かれて右だけが切れる）。
+                // Compose自身には折り返させない。行は上で書き出しと同じ位置で分けてあり、
+                // ここで折り返させると、描き方の違いで改行の位置が書き出しと1文字ずれることがある。
+                // 万一はみ出すときも書き出しと同じく中央から左右均等にさせる
+                // （unboundedにしないと左端から描かれて右だけが切れる）。
                 softWrap = false,
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -458,4 +474,13 @@ private fun ExportProgress(exportState: ExportState) {
             }
         }
     }
+}
+
+/**
+ * ひとことを折り返すときの文字の測り方。書き出し（AndroidTextRenderer）と同じ書体・同じ大きさ
+ * （キャンバス上のpt＝px）にする。書体は書き出しと同じフォントファイル（assets）から作る。
+ */
+private fun hitokotoWrapPaint(context: Context) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    typeface = Typeface.createFromAsset(context.assets, "$FONT_ASSET_DIR/$TITLE_FONT_ASSET")
+    textSize = HITOKOTO_FONT_PT
 }
