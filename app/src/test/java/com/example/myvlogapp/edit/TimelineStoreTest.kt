@@ -230,6 +230,23 @@ class TimelineStoreTest {
         assertEquals(listOf(0L, 3_000L), selected.texts.map { it.startMs })
     }
 
+    @Test
+    fun movingTheRangeLeavesTheSplitAtTheEndOfTheVideoInPlace() {
+        // 尺の位置の区切り（保存データの尺より後ろの区切りを集めたもの）は動画の終わりに付いたまま。
+        // 一緒に動かすと尺の外へ出る。動く区切りに数えていた頃は、範囲ごと後ろへ動かせなかった
+        val store = storeWith(
+            testClip(
+                id = 1, durationMs = 10_000L, startMs = 2_000L, endMs = 5_000L,
+                texts = listOf(TextSegment(0L, "a"), TextSegment(3_000L, "b"), TextSegment(10_000L, "c"))
+            )
+        )
+
+        store.moveTrim(targetStartMs = 4_000L, previewAtMs = 4_000L)
+
+        assertEquals(4_000L to 7_000L, selected.startMs to selected.endMs)
+        assertEquals(listOf(0L, 5_000L, 10_000L), selected.texts.map { it.startMs })
+    }
+
     // --- 区切りの解除 -----------------------------------------------------------------
 
     @Test

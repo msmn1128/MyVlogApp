@@ -80,8 +80,19 @@ class ClampTimelineShiftTest {
     }
 
     @Test
-    fun movingRightStopsWhereTheLastSplitReachesTheEndOfTheVideo() {
-        assertEquals(5_000L, clampTimelineShift(texts, requested = 9_999L, durationMs = 10_000L))
+    fun movingRightStopsWhereTheLastSegmentWouldBecomeTooShort() {
+        // 最後の区間にも、先頭側と同じく400msを残す。尺ちょうどまで行けた頃は、着いた区切りが
+        // 尺の位置の（動かない）区切りに変わってしまった
+        assertEquals(4_600L, clampTimelineShift(texts, requested = 9_999L, durationMs = 10_000L))
+    }
+
+    @Test
+    fun aSplitAtTheEndOfTheVideoDoesNotBlockMovingRight() {
+        // 保存データの尺より後ろの区切りは、復元時に尺の位置へ集められる（長さ0で表示されない）。
+        // それも動く区切りに数えていた頃は、後ろへずらせる量が0になっていた
+        val withEnd = texts + TextSegment(10_000L, "d")
+        assertEquals(3_000L, clampTimelineShift(withEnd, requested = 3_000L, durationMs = 10_000L))
+        assertEquals(4_600L, clampTimelineShift(withEnd, requested = 9_999L, durationMs = 10_000L))
     }
 
     @Test
