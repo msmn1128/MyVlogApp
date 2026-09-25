@@ -171,8 +171,39 @@ class VlogClipJsonTest {
         val json = clipJsonWithTexts(-5L to "a", -3L to "b", 1_000L to "c")
 
         val starts = VlogClip.fromJson(json, id = 1L).texts.map { it.startMs }
-        assertEquals(listOf(0L, 0L, 1_000L), starts)
         assertEquals(starts.sorted(), starts)
+        assertEquals(0L, starts.first())
+    }
+
+    @Test
+    fun segmentsAtTheSamePositionAreMergedKeepingTheOneThatWasShown() {
+        // 同じ位置が2つあると、textIndexAtは後ろを拾うので前の方（"a"）は表示も編集もできなかった。
+        // 負の位置が0へ丸められて先頭0が2つになる形も同じ
+        val json = clipJsonWithTexts(-5L to "a", 0L to "b", 3_000L to "c", 3_000L to "d")
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 3_000L), texts.map { it.startMs })
+        assertEquals(listOf("b", "d"), texts.map { it.text })
+    }
+
+    @Test
+    fun segmentsBeyondTheClipLengthArePulledBackInside() {
+        // 尺（10秒）より後ろの区切りが残ると、区間ごと移動で後ろへずらせる量が0になっていた
+        val json = clipJsonWithTexts(0L to "a", 4_000L to "b", 15_000L to "c")
+
+        val clip = VlogClip.fromJson(json, id = 1L)
+        assertEquals(listOf(0L, 4_000L, 10_000L), clip.texts.map { it.startMs })
+        assertEquals(listOf("a", "b", "c"), clip.texts.map { it.text })
+    }
+
+    @Test
+    fun severalSegmentsBeyondTheClipLengthKeepAllTheirText() {
+        // 尺へ丸めると同じ位置で重なる。1つにまとめても、どの文言も捨てない（空の文言は詰める）
+        val json = clipJsonWithTexts(0L to "a", 10_000L to "b", 12_000L to "", 15_000L to "c")
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 10_000L), texts.map { it.startMs })
+        assertEquals(listOf("a", "b\nc"), texts.map { it.text })
     }
 
     @Test

@@ -112,7 +112,7 @@ class PlaybackController(
     /**
      * いま実際に音と映像が進んでいるか。
      *
-     * 画面側の再生位置ポーリング（MainActivity）を、再生中だけに絞るために公開している。
+     * 画面側の再生位置ポーリング（VlogAppSideEffects.kt）を、再生中だけに絞るために公開している。
      * `playWhenReady`ではなく`isPlaying`なのは、バッファ待ちで止まっている間は位置が
      * 進まず、ポーリングしても意味が無いため。
      */
@@ -166,7 +166,9 @@ class PlaybackController(
              * 失敗と準備し直しを繰り返し続けるため。
              */
             override fun onPlayerError(error: PlaybackException) {
-                Log.w(LOG_TAG, "プレビューで動画を再生できませんでした", error)
+                // 例外そのものは出さず、エラーの種類だけを残す。原因の例外の文言には、ファイル選択の
+                // 動画のパス（利用者のファイル名）が入りうる（ログにURIを出さないのと同じ理由。VideoMetadataReader）
+                Log.w(LOG_TAG, "プレビューで動画を再生できませんでした: ${error.errorCodeName}")
                 // 同じ動画で続けて失敗したときは知らせ直さない。選んだときと再生を押したときの
                 // 両方で失敗するので、そのままだと同じお知らせが2回続けて出る
                 val index = player.currentMediaItemIndex
@@ -188,6 +190,15 @@ class PlaybackController(
 
     /** シークして表示位置も合わせる。再生中でも止めない（自動遷移など再生を継続したい場面用） */
     override fun seekWithoutPause(positionMs: Long) {
+        if (isInteractiveSeeking) seekedDuringInteraction = true
+        seekTo(positionMs)
+    }
+
+    /**
+     * [seekWithoutPause]の中身。波形の操作中に位置を動かしたか（[seekedDuringInteraction]）を
+     * 記録しないので、利用者の操作ではないシーク（トリミング終端での次のクリップへの自動遷移）はこちらを使う
+     */
+    private fun seekTo(positionMs: Long) {
         player.seekTo(_selectedIndex.value, positionMs)
         _playbackPositionMs.value = positionMs
         recoverFromError()
@@ -351,7 +362,7 @@ class PlaybackController(
 
             next in current.indices -> {
                 _selectedIndex.value = next
-                seekWithoutPause(current[next].startMs)
+                seekTo(current[next].startMs)
             }
 
             // 連続再生で最後のクリップまで再生し終えたら、そこで止める（先頭へは戻らない）
@@ -407,12 +418,27 @@ class PlaybackController(
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
     }
 
-    /** 指を離したらEXACTへ戻し、最後に一度だけ正確な位置へ合わせ直す */
+    /**
+     * 指を離したらEXACTへ戻し、最後に一度だけ正確な位置へ合わせ直す。
+     *
+     * 触っている間に位置を動かしていなければ、合わせ直さずにプレイヤーのいまの位置を取り込む。
+     * 触っている間は[refreshProgress]が表示上の位置を更新しないので、再生中につまみや区切り線に
+     * 触れて動かさずに離すと、触れる前の古い位置へシークし直し、触れていた時間ぶん
+     * （本体の長押しなら0.5秒以上）巻き戻っていた。
+     */
     fun endInteractiveSeek() {
         isInteractiveSeeking = false
         player.setSeekParameters(SeekParameters.EXACT)
-        seekWithoutPause(_playbackPositionMs.value)
+        if (seekedDuringInteraction) {
+            seekWithoutPause(_playbackPositionMs.value)
+        } else if (player.currentMediaItemIndex == _selectedIndex.value) {
+            _playbackPositionMs.value = player.currentPosition
+        }
+        seekedDuringInteraction = false
     }
+
+    /** 波形の操作中（[beginInteractiveSeek]〜[endInteractiveSeek]）に、利用者の操作で位置を動かしたか */
+    private var seekedDuringInteraction = false
 
     /**
      * ドラッグ中は[refreshProgress]による上書きを止めるためのフラグ。

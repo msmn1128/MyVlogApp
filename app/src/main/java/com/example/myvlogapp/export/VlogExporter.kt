@@ -180,6 +180,7 @@ object VlogExporter {
                 val hdrClips = hdrTransfers.withIndex().filter { it.value != null }
                     .map { "${it.index + 1}本目=${it.value}" }
                 Log.i(LOG_TAG, "HDRのクリップ: $hdrClips")
+                requireHdrFilters()
             }
             val titleSfx = if (audioPlan.needsTitleSfxInput) {
                 copySfxAsset(context, TITLE_SFX_ASSET)
