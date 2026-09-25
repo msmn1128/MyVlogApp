@@ -1,7 +1,7 @@
 # MyVlogApp
 
 撮った動画を並べて、ひとことと撮影時刻を焼き込み、1本のVLOGとして書き出すAndroidアプリ。
-同じ仕様のiOS版が別リポジトリ（`~/XcodeProjects/MyVlogApp`）にある。
+同じ仕様のiOS版が別リポジトリ（`~/XcodeProjects/MyVlogApp`、GitHub は [msmn1128/MyVlogApp-iOS](https://github.com/msmn1128/MyVlogApp-iOS)）にある。
 
 - パッケージ（Kotlin）: `com.example.myvlogapp`
 - applicationId（配布用）: `com.masamune.myvlogapp` ← **公開後は変更不可。namespaceとは別物**
