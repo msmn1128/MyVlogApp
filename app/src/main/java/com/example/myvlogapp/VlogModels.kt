@@ -227,17 +227,25 @@ private fun JSONObject.readTextSegments(durationMs: Long): List<TextSegment> {
     // 尺より後ろの位置は尺へ丸める。はみ出した区切りが残ると、区間ごと移動で後ろへずらせる量
     // （clampTimelineShift）が0になり、範囲ごと後ろへ動かせなくなっていた
     val maxStartMs = if (durationMs > 0L) durationMs else Long.MAX_VALUE
-    val segments = (0 until array.length()).mapNotNull { index ->
+    val sorted = (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         TextSegment(
             startMs = item.optLong(VlogClipKeys.START_MS).coerceIn(0L, maxStartMs),
             text = item.optString(VlogClipKeys.TEXT, "")
         )
     }.sortedBy { it.startMs }
-        // 同じ位置の区間は1つにまとめ、後ろの方を残す。textIndexAtは同じ位置なら後ろを拾うので、
-        // 前の方は表示も編集もできないまま残っていた（先頭0が2つだと、区切りとして外すこともできない）。
-        // 残すのは、それまで画面に出ていた方
-        .asReversed().distinctBy { it.startMs }.asReversed()
+    // 尺の位置（尺より後ろから丸めたものを含む）の区間は、どれも長さ0で表示も書き出しもされない。
+    // 丸めた結果が同じ位置で重なるので、1つにまとめて文言は改行でつなぐ（どれかを捨てると、
+    // 読み上げの操作で区切りを手前へ引き戻せば出せた文言まで消えてしまう）
+    val (inside, atEnd) =
+        if (durationMs > 0L) sorted.partition { it.startMs < durationMs } else sorted to emptyList()
+    val end = atEnd.takeIf { it.isNotEmpty() }?.let { segmentsAtEnd ->
+        TextSegment(durationMs, segmentsAtEnd.map { it.text }.filter { it.isNotBlank() }.joinToString("\n"))
+    }
+    // 同じ位置の区間は1つにまとめ、後ろの方を残す。textIndexAtは同じ位置なら後ろを拾うので、
+    // 前の方は表示も編集もできないまま残っていた（先頭0が2つだと、区切りとして外すこともできない）。
+    // 残すのは、それまで画面に出ていた方
+    val segments = inside.asReversed().distinctBy { it.startMs }.asReversed() + listOfNotNull(end)
 
     if (segments.isEmpty()) return listOf(TextSegment())
 

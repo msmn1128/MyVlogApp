@@ -197,6 +197,16 @@ class VlogClipJsonTest {
     }
 
     @Test
+    fun severalSegmentsBeyondTheClipLengthKeepAllTheirText() {
+        // 尺へ丸めると同じ位置で重なる。1つにまとめても、どの文言も捨てない（空の文言は詰める）
+        val json = clipJsonWithTexts(0L to "a", 10_000L to "b", 12_000L to "", 15_000L to "c")
+
+        val texts = VlogClip.fromJson(json, id = 1L).texts
+        assertEquals(listOf(0L, 10_000L), texts.map { it.startMs })
+        assertEquals(listOf("a", "b\nc"), texts.map { it.text })
+    }
+
+    @Test
     fun anEmptyTextsArrayStillYieldsOneSegmentAtZero() {
         val texts = VlogClip.fromJson(clipJsonWithTexts(), id = 1L).texts
 

@@ -261,12 +261,14 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 前回の続きを読み込む。いま実際に読めるものだけが対象 */
     private suspend fun restoreClips() {
-        playback.setAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
-
         // 読み込み中の扱いにして、入れ替え終えるまで追加・書き出し・一時保存を止める（[restoreFinished]）。
         // 待っている追加が動き出すのは、履歴を空にしたあと。先に動くと、追加の「もとに戻す」まで消える
         val restored = try {
             whileLoadingClips {
+                // 連続再生の設定もこの中で読む。外で読んでいた頃は、その読み出し（初回はディスク待ち）の間だけ
+                // 読み込み中になっておらず、そこで一時保存を読み出すと、あとから来た復元の入れ替えで
+                // 上書きされて履歴も消えた
+                playback.setAutoAdvance(ClipStore.restoreAutoAdvance(getApplication()))
                 coroutineScope {
                     // 前回、書き出し中に強制終了していた場合の後始末。ギャラリー側（IS_PENDINGのまま
                     // 残った項目）と、cacheDir側（結合途中の動画。数GBになりうる）の両方を掃除する。

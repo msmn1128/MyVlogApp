@@ -55,6 +55,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -517,6 +520,10 @@ internal fun ClipTile(
         // 切れて見える（＝枠の右下だけ幅が変わったように見える）
         modifier = modifier
             .widthIn(min = 104.dp)
+            // 選ばれているかを読み上げに伝える（「選択済み」など、端末の言語で読まれる）。
+            // 伝えていなかった頃は、枠の色でしか分からず、TalkBackではどのクリップを編集中か分からなかった
+            // （ギャラリーのタイルはselectableで伝えている）
+            .semantics { selected = isSelected }
             .combinedClickable(
                 onClickLabel = "選択",
                 onLongClickLabel = if (clip.isMuted) "ミュートを解除" else "ミュート",
@@ -685,7 +692,13 @@ private fun EditorPane(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("ひとこと", style = MaterialTheme.typography.titleSmall)
+                    // 読み上げの見出しにする。入力欄には名前を付けていない（contentDescriptionを付けると、
+                    // 打った文字の代わりにそれが読まれる）ので、TalkBackでは直前のこの見出しで何の欄かを伝える
+                    Text(
+                        "ひとこと",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.semantics { heading() }
+                    )
                     // 分割しているときだけ、いま何番目を触っているのかを出す。
                     //
                     // AnimatedVisibilityで出し入れせず、常にレイアウトへ含めて

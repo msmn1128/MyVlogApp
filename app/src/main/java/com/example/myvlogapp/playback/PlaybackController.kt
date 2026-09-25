@@ -166,7 +166,9 @@ class PlaybackController(
              * 失敗と準備し直しを繰り返し続けるため。
              */
             override fun onPlayerError(error: PlaybackException) {
-                Log.w(LOG_TAG, "プレビューで動画を再生できませんでした", error)
+                // 例外そのものは出さず、エラーの種類だけを残す。原因の例外の文言には、ファイル選択の
+                // 動画のパス（利用者のファイル名）が入りうる（ログにURIを出さないのと同じ理由。VideoMetadataReader）
+                Log.w(LOG_TAG, "プレビューで動画を再生できませんでした: ${error.errorCodeName}")
                 // 同じ動画で続けて失敗したときは知らせ直さない。選んだときと再生を押したときの
                 // 両方で失敗するので、そのままだと同じお知らせが2回続けて出る
                 val index = player.currentMediaItemIndex

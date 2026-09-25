@@ -55,10 +55,12 @@ private val HDR_FILTERS = listOf("zscale", "tonemap")
 
 /**
  * `-filters` の一覧に[name]のフィルタがあるか。一覧は「 T.. name  入出力  説明」の形なので、
- * 前後の空白ごと探す（単に含むかで見ると、movieがamovieに、fadeがafadeに一致してしまう）。
+ * 行頭の3文字の印に続く名前の列だけを見る。単に含むかで見ると、movieがamovieに、fadeがafadeに
+ * 一致してしまう。前後の空白で区切るだけだった頃は、説明文の単語にも一致していた
+ * （amovieの「Read audio from a movie source.」で、movieが無いビルドでも「ある」と読んだ）。
  */
-private fun hasFilter(filterList: String, name: String): Boolean =
-    Regex("""\s${Regex.escape(name)}\s""").containsMatchIn(filterList)
+internal fun hasFilter(filterList: String, name: String): Boolean =
+    Regex("""^\s*\S{3}\s+${Regex.escape(name)}\s""", RegexOption.MULTILINE).containsMatchIn(filterList)
 
 /**
  * 判定済みの結果。判定そのものに失敗した回（出力が空）は覚えない。
@@ -69,8 +71,16 @@ private fun hasFilter(filterList: String, name: String): Boolean =
 @Volatile
 private var probedCapabilities: Capabilities? = null
 
+/**
+ * [capabilities]の判定を1度に1つだけ走らせるためのロック。
+ *
+ * 以前は`synchronized(Capabilities::class)`で守っていたが、kotlin-reflectを入れていないと
+ * `Capabilities::class`は読むたびに新しいオブジェクトになり、ロックとして何も守っていなかった。
+ */
+private val capabilitiesLock = Any()
+
 private val capabilities: Capabilities
-    get() = probedCapabilities ?: synchronized(Capabilities::class) {
+    get() = probedCapabilities ?: synchronized(capabilitiesLock) {
         probedCapabilities ?: probeCapabilities()
     }
 

@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（224件）
+./gradlew testDebugUnitTest        # JVM単体テスト（228件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（24件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -286,12 +286,12 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、224件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、228件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
 | `VlogClipTest` | 尺・区間・分割点の判定、並び替えのキー |
-| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順・同じ位置は1つに・尺の中へ） |
+| `VlogClipJsonTest` | JSONの往復、旧保存データとの互換、`texts`の正規化（1件以上・先頭0・昇順・同じ位置は1つに・尺の中へ、尺の位置で重なる文言はつなぐ） |
 | `VlogModelsTest` | 撮影日時順の差し込み（`mergeByShotAt`）、区間ごと移動でずらせる量（`clampTimelineShift`） |
 | `FormattersTest` | 表示整形、保存名の連番、追加時のスキップ通知、一時保存の読み出し可否と文言 |
 | `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
@@ -305,6 +305,7 @@ JVM単体テスト（`src/test`）、224件。対象は純粋関数と、再生�
 | `data/VideoMetadataReaderTest` | creation_time・ファイル名のパース |
 | `export/FilterGraphTest` | FFmpegフィルタグラフの組み立て（区間ごとの画像の重ね方・タイトルのフェード・結合と30fps化を含む） |
 | `export/AudioPlanTest` | 書き出しの音声の組み立て（ミュート・音声トラックの有無・タイトルの効果音の入力・区切りごとの切り出し） |
+| `export/FFmpegCapabilitiesTest` | `-filters` の一覧からフィルタの有無を読む（`amovie`を`movie`と取り違えない） |
 | `export/SegmentsTest` | 本数が多いときの区切り方、つなぐ一覧 |
 | `export/ExportSpaceTest` | 書き出しに要る空き容量の見積もり、容量不足の文言と判定 |
 | `export/GalleryOutputTest` | 書き出した動画のファイル名の日付と、メタデータの作成日時 |
