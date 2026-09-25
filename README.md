@@ -1,7 +1,6 @@
 # MyVlog.
 
 撮った動画を並べて、ひとことと撮影時刻を焼き込み、1本のVLOGとして書き出すAndroidアプリ。
-同じ仕様の iOS 版は [msmn1128/MyVlogApp-iOS](https://github.com/msmn1128/MyVlogApp-iOS) にある。
 
 - パッケージ（Kotlin）: `com.example.myvlogapp`
 - applicationId（配布用）: `com.masamune.myvlogapp`
