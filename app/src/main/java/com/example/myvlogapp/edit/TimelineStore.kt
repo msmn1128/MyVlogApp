@@ -12,6 +12,7 @@ import com.example.myvlogapp.TextSegment
 import com.example.myvlogapp.VideoMeta
 import com.example.myvlogapp.VlogClip
 import com.example.myvlogapp.clampTimelineShift
+import com.example.myvlogapp.isPinnedSegment
 import com.example.myvlogapp.mergeByShotAt
 
 // =====================================================================================
@@ -277,11 +278,11 @@ internal class TimelineStore(
             current.copy(
                 startMs = newStart,
                 endMs = newEnd,
-                // 先頭の区間は常に絶対位置0（動画そのものの頭）なので動かさない。
-                // それ以外はすべて同じdeltaで動く。はみ出さない量まで詰めてあるので、
-                // ここで個別に丸める必要はない。
+                // 先頭の区間（絶対位置0＝動画の頭）と尺の位置の区切り（動画の終わり）は動かさない
+                // （[isPinnedSegment]）。それ以外はすべて同じdeltaで動く。はみ出さない量まで
+                // 詰めてあるので、ここで個別に丸める必要はない。
                 texts = current.texts.map { segment ->
-                    if (segment.startMs == 0L) segment
+                    if (segment.isPinnedSegment(current.durationMs)) segment
                     else segment.copy(startMs = segment.startMs + delta)
                 }
             )

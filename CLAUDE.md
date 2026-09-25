@@ -18,7 +18,7 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew assembleDebug            # デバッグAPK
-./gradlew testDebugUnitTest        # JVM単体テスト（228件）
+./gradlew testDebugUnitTest        # JVM単体テスト（230件）
 ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
                                    # 画面操作のテスト（24件）。起動中のエミュレータ・実機で動く。
                                    # 最後の指定が無いと、終わったあとアプリごとアンインストールされ端末のデータが消える
@@ -286,7 +286,7 @@ init から、**書き出しが走っていないときだけ**掃除する。
 
 ## テスト
 
-JVM単体テスト（`src/test`）、228件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
+JVM単体テスト（`src/test`）、230件。対象は純粋関数と、再生側を偽物（`edit/FakePlayback`）に差し替えた `TimelineStore`、保存先を偽物に差し替えた `ProjectsController`。
 
 | ファイル | 対象 |
 |---|---|
@@ -297,7 +297,7 @@ JVM単体テスト（`src/test`）、228件。対象は純粋関数と、再生�
 | `ClipAdditionTest` | 動画を追加するときの振り分け（追加済み・上限超え・読み込むもの。ギャラリーとファイル選択で形の違う同じ動画も追加済みとして扱う） |
 | `AutosavePolicyTest` | 前回の続きをいつ書き換えてよいか（開けない動画を落とした回は編集まで保留） |
 | `edit/EditHistoryTest` | 履歴のまとめ判定・上限・undo/redo・積んだ状態の書き換え |
-| `edit/TimelineStoreTest` | 区切りの移動範囲と解除、ひとことの書き換え・分割、トリム（変わらないトリムは履歴に積まない、2s/4sは動画の終わりでも指定の長さを確保する、区間ごと移動で区切りも一緒に動く）、削除・全削除・並べ替えとundo、追加（撮影日時順・上限・別の経路から先に入った同じ動画）、入れ替えのundoでタイル一覧を作り直す、undo/redo後の音量、撮影時刻の取り直しとundo |
+| `edit/TimelineStoreTest` | 区切りの移動範囲と解除、ひとことの書き換え・分割、トリム（変わらないトリムは履歴に積まない、2s/4sは動画の終わりでも指定の長さを確保する、区間ごと移動で区切りも一緒に動き、尺の位置の区切りは動かない）、削除・全削除・並べ替えとundo、追加（撮影日時順・上限・別の経路から先に入った同じ動画）、入れ替えのundoでタイル一覧を作り直す、undo/redo後の音量、撮影時刻の取り直しとundo |
 | `playback/PlayFromWhereTest` | 再生ボタンの頭出し判断（`playFromWhere`） |
 | `data/ProjectsControllerTest` | 一時保存の保存・上書き・読み出し・削除（読み込み中は断る、全部開けない保存は読み出さない、読み出し中に追加が始まったら入れ替えない） |
 | `data/ClipStoreTest` | 一時保存が参照する動画のURIの集め方（権限の解放の判断）、保存領域の移行 |

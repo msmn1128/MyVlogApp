@@ -224,8 +224,8 @@ private fun JSONObject.readTextSegments(durationMs: Long): List<TextSegment> {
     // クリップごと復元されなくなる（ClipStoreが壊れた1件だけを落とすのと同じ考え方）
     // 負の位置は0へ丸めてから並べる。下で直すのは先頭の1件だけなので、負の位置が2件以上あると
     // 2件目以降が0より前に残り、昇順が崩れていた（[-5, -3, 1000] → [0, -3, 1000]）
-    // 尺より後ろの位置は尺へ丸める。はみ出した区切りが残ると、区間ごと移動で後ろへずらせる量
-    // （clampTimelineShift）が0になり、範囲ごと後ろへ動かせなくなっていた
+    // 尺より後ろの位置は尺へ丸める。尺の位置の区間は長さ0で表示されないので、どこにあっても同じ。
+    // 1か所に集めておけば、区間ごと移動（clampTimelineShift）はそれを動かさない区切りとして扱える
     val maxStartMs = if (durationMs > 0L) durationMs else Long.MAX_VALUE
     val sorted = (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
@@ -316,8 +316,14 @@ internal fun mergeByShotAt(
  * 大きく左へ動かすと、それらが先頭付近へ潰れて相対位置が失われ、「もとに戻す」以外で
  * 復元できなくなっていた。代わりに、全部が同じ量で動けるところまで[requested]自体を詰める。
  *
- * 先頭の区間（`startMs == 0`）は動画そのものの頭なので動かさない。よって他の区切りの下限は
- * [MIN_TEXT_SEGMENT_MS]、上限は動画の尺。すでにその範囲を外れている保存データを
+ * 先頭の区間（`startMs == 0`）は動画そのものの頭なので動かさない。尺の位置の区切り（保存データの
+ * 尺より後ろの区切りを復元時に集めたもの。長さ0で表示されない）も、同じく動画の終わりに付いたものとして
+ * 動かさない（[isPinnedSegment]）。以前はこれも動く区切りに数えていたので、後ろへずらせる量が0になり、
+ * そういう区切りが1つあるだけで範囲ごと後ろへ動かせなかった。
+ *
+ * 動く区切りの下限は[MIN_TEXT_SEGMENT_MS]、上限は動画の尺の[MIN_TEXT_SEGMENT_MS]手前（前後で同じ扱い。
+ * 最後の区間も読む前に消えないだけの長さを残す）。以前は尺ちょうどまで行けたため、動かした区切りが
+ * 尺の位置に着くと、そこで動かない区切りに変わってしまう。すでにその範囲を外れている保存データを
  * 動かせなくしてしまわないよう、許容範囲には必ず0（＝動かさない）を含める。
  *
  * @param requested トリム開始位置の移動量（動画の範囲へクランプ済み）
@@ -328,16 +334,23 @@ internal fun clampTimelineShift(
     requested: Long,
     durationMs: Long
 ): Long {
-    // 移動の対象になるのは、先頭（絶対位置0）以外の区切りだけ
-    val moving = texts.filter { it.startMs != 0L }
+    // 移動の対象になるのは、先頭（絶対位置0）と尺の位置以外の区切りだけ
+    val moving = texts.filterNot { it.isPinnedSegment(durationMs) }
     if (moving.isEmpty()) return requested
 
     val lowest = moving.minOf { it.startMs }
     val highest = moving.maxOf { it.startMs }
     val lo = minOf(MIN_TEXT_SEGMENT_MS - lowest, 0L)
-    val hi = maxOf(durationMs - highest, 0L)
+    val hi = maxOf(durationMs - MIN_TEXT_SEGMENT_MS - highest, 0L)
     return requested.coerceIn(lo, hi)
 }
+
+/**
+ * 区間ごと移動（[clampTimelineShift]・TimelineStore.moveTrim）で動かさない区切りか。
+ * 先頭（絶対位置0＝動画の頭）と、尺の位置（動画の終わり。尺が分からないときは見ない）
+ */
+internal fun TextSegment.isPinnedSegment(durationMs: Long): Boolean =
+    startMs == 0L || (durationMs > 0L && startMs >= durationMs)
 
 /**
  * [VlogClip.sortKeyMs] 用。[VideoMetadataReader.formatDate]/[formatTime] と同じ書式
