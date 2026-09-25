@@ -251,7 +251,9 @@ private fun TimelinePane(
                             isSelected = index == selectedIndex,
                             isMissing = clip.id in missingClipIds,
                             onClick = { actions.select(index) },
-                            onLongClick = { actions.toggleClipMute(clip.id) },
+                            // 書き出し中はミュートを切り替えさせない（ほかの編集と同じ）。書き出すのは押した時点の
+                            // 内容なので、切り替えても出来上がる動画には入らず、画面と動画が食い違って見える
+                            onLongClick = if (isExporting) null else { { actions.toggleClipMute(clip.id) } },
                             // 削除・追加・並べ替えで前後のタイルが瞬間移動せず、
                             // 新しい位置へ滑らかにスライドするようにする
                             modifier = Modifier.animateItem()
@@ -497,7 +499,8 @@ internal fun ClipTile(
     isSelected: Boolean,
     isMissing: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    /** 長押しでのミュート切り替え。nullなら長押しを受け付けない（書き出し中） */
+    onLongClick: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     // 選択状態の切り替わりで色・枠線が一瞬で変わらず、じわっと変化するようにする
@@ -526,7 +529,11 @@ internal fun ClipTile(
             .semantics { selected = isSelected }
             .combinedClickable(
                 onClickLabel = "選択",
-                onLongClickLabel = if (clip.isMuted) "ミュートを解除" else "ミュート",
+                onLongClickLabel = when {
+                    onLongClick == null -> null
+                    clip.isMuted -> "ミュートを解除"
+                    else -> "ミュート"
+                },
                 onLongClick = onLongClick,
                 onClick = onClick
             ),
