@@ -37,6 +37,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ```bash
 ls app/build/outputs/apk/release/app-release.apk      # 約 105MB
 ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
+ls app/build/outputs/release/                         # 同じものを MyVlogApp-<versionName>.apk / .aab の名前で写したもの
 "$HOME/Library/Android/sdk/build-tools/<ver>/apksigner" verify --print-certs -v \
   app/build/outputs/apk/release/app-release.apk
 ```

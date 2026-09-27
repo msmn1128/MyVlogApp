@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import java.util.Properties
 
 plugins {
@@ -119,6 +120,38 @@ android {
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+// リリースの成果物を「MyVlogApp-<versionName>」の名前で書き出す。
+// AGP 9 では旧来の applicationVariants（outputFileName の書き換え）が無くなり、公開APIには
+// APK/AAB の名前を変える手段が無い。内部クラス（VariantOutputImpl）に頼ると AGP を上げたときに
+// 黙って壊れるので、公開APIの artifacts から出来上がったファイルを受け取り、名前を変えて写す。
+// 元の app-release.apk / app-release.aab もそのまま残る。
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val baseName = variant.outputs.single().versionName.map { "MyVlogApp-$it" }
+        val outputDir = layout.buildDirectory.dir("outputs/release")
+        val taskSuffix = variant.name.replaceFirstChar { it.uppercase() }
+
+        // APK の出力先はフォルダで、output-metadata.json なども入っているので .apk だけを拾う
+        val copyApk = tasks.register<Copy>("copy${taskSuffix}ApkWithVersion") {
+            from(variant.artifacts.get(SingleArtifact.APK)) { include("*.apk") }
+            into(outputDir)
+            rename { "${baseName.get()}.apk" }
+        }
+        val copyBundle = tasks.register<Copy>("copy${taskSuffix}BundleWithVersion") {
+            from(variant.artifacts.get(SingleArtifact.BUNDLE))
+            into(outputDir)
+            rename { "${baseName.get()}.aab" }
+        }
+        // assembleRelease / bundleRelease を叩けば名前付きのものも一緒にできるようにする
+        tasks.configureEach {
+            when (name) {
+                "assemble$taskSuffix" -> finalizedBy(copyApk)
+                "bundle$taskSuffix" -> finalizedBy(copyBundle)
+            }
         }
     }
 }
