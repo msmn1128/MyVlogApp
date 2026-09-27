@@ -123,6 +123,22 @@ android {
     }
 }
 
+// リリースAPKのファイル名を app-release.apk から MyVlog-<versionName>.apk にする。
+// 配布したAPKが手元でどの版か、名前だけで分かるようにするため。
+//
+// AGP 9 では旧API（applicationVariants.all { outputFileName = ... }）が無くなり、
+// 公開APIにはファイル名の指定が無い。そのため内部実装の VariantOutputImpl を使っている。
+// AGPを上げてこのキャストが通らなくなったら、黙って app-release.apk に戻さず止める。
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.outputs.forEach { output ->
+            val impl = output as? com.android.build.api.variant.impl.VariantOutputImpl
+                ?: error("VariantOutputImpl が無い。AGPの版でAPKの名前の付け方が変わったので見直すこと")
+            impl.outputFileName.set(output.versionName.map { "MyVlog-$it.apk" })
+        }
+    }
+}
+
 dependencies {
     // --- Compose ---
     implementation(platform(libs.androidx.compose.bom))
