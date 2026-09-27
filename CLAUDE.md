@@ -35,10 +35,10 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 成果物と署名の確認:
 
 ```bash
-ls app/build/outputs/apk/release/app-release.apk      # 約 105MB
+ls app/build/outputs/apk/release/MyVlog-<versionName>.apk   # 約 105MB（名前は build.gradle.kts の末尾で付けている）
 ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
 "$HOME/Library/Android/sdk/build-tools/<ver>/apksigner" verify --print-certs -v \
-  app/build/outputs/apk/release/app-release.apk
+  app/build/outputs/apk/release/MyVlog-<versionName>.apk
 ```
 
 ### 署名
