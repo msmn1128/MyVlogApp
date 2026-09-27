@@ -124,33 +124,40 @@ android {
     }
 }
 
-// リリースの成果物を「MyVlogApp-<versionName>」の名前で書き出す。
+// リリースの成果物を「MyVlogApp-<versionName>」の名前だけで残す。
 // AGP 9 では旧来の applicationVariants（outputFileName の書き換え）が無くなり、公開APIには
 // APK/AAB の名前を変える手段が無い。内部クラス（VariantOutputImpl）に頼ると AGP を上げたときに
-// 黙って壊れるので、公開APIの artifacts から出来上がったファイルを受け取り、名前を変えて写す。
-// 元の app-release.apk / app-release.aab もそのまま残る。
+// 壊れうるので、公開APIの artifacts から出来上がったファイルを受け取り、名前を変えて写してから元を消す。
+// 元を消すので、次の assembleRelease / bundleRelease ではパッケージの工程だけが毎回やり直しになる
+// （コンパイルやR8は済んだものが使われる）。
 androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
         val baseName = variant.outputs.single().versionName.map { "MyVlogApp-$it" }
         val outputDir = layout.buildDirectory.dir("outputs/release")
         val taskSuffix = variant.name.replaceFirstChar { it.uppercase() }
+        val apkDir = variant.artifacts.get(SingleArtifact.APK)
+        val bundleFile = variant.artifacts.get(SingleArtifact.BUNDLE)
 
         // APK の出力先はフォルダで、output-metadata.json なども入っているので .apk だけを拾う
-        val copyApk = tasks.register<Copy>("copy${taskSuffix}ApkWithVersion") {
-            from(variant.artifacts.get(SingleArtifact.APK)) { include("*.apk") }
+        val renameApk = tasks.register<Copy>("rename${taskSuffix}ApkWithVersion") {
+            from(apkDir) { include("*.apk") }
             into(outputDir)
             rename { "${baseName.get()}.apk" }
+            doLast {
+                apkDir.get().asFile.listFiles { f -> f.extension == "apk" }?.forEach { it.delete() }
+            }
         }
-        val copyBundle = tasks.register<Copy>("copy${taskSuffix}BundleWithVersion") {
-            from(variant.artifacts.get(SingleArtifact.BUNDLE))
+        val renameBundle = tasks.register<Copy>("rename${taskSuffix}BundleWithVersion") {
+            from(bundleFile)
             into(outputDir)
             rename { "${baseName.get()}.aab" }
+            doLast { bundleFile.get().asFile.delete() }
         }
-        // assembleRelease / bundleRelease を叩けば名前付きのものも一緒にできるようにする
+        // assembleRelease / bundleRelease を叩けば名前を変えたものができるようにする
         tasks.configureEach {
             when (name) {
-                "assemble$taskSuffix" -> finalizedBy(copyApk)
-                "bundle$taskSuffix" -> finalizedBy(copyBundle)
+                "assemble$taskSuffix" -> finalizedBy(renameApk)
+                "bundle$taskSuffix" -> finalizedBy(renameBundle)
             }
         }
     }

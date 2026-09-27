@@ -32,14 +32,13 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 単体テストとlintは画面操作のテスト（`src/androidTest`）をコンパイルしないので、部品の引数を
 変えてもテスト側の直し忘れに気付けない（v1.5で `EditSection` に引数を足したとき、実際にそうなった）。
 
-成果物と署名の確認:
+成果物と署名の確認（`app-release.*` は名前を変えて写したあと消す。`app/build.gradle.kts` の `androidComponents`）:
 
 ```bash
-ls app/build/outputs/apk/release/app-release.apk      # 約 105MB
-ls app/build/outputs/bundle/release/app-release.aab   # 約 53MB
-ls app/build/outputs/release/                         # 同じものを MyVlogApp-<versionName>.apk / .aab の名前で写したもの
+ls app/build/outputs/release/MyVlogApp-<versionName>.apk   # 約 105MB
+ls app/build/outputs/release/MyVlogApp-<versionName>.aab   # 約 53MB
 "$HOME/Library/Android/sdk/build-tools/<ver>/apksigner" verify --print-certs -v \
-  app/build/outputs/apk/release/app-release.apk
+  app/build/outputs/release/MyVlogApp-<versionName>.apk
 ```
 
 ### 署名
