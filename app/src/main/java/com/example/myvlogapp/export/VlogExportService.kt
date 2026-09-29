@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.example.myvlogapp.LOG_TAG
 import com.example.myvlogapp.MainActivity
 import com.example.myvlogapp.VlogClip
 
@@ -218,8 +220,11 @@ class VlogExportService : Service() {
             } catch (e: CancellationException) {
                 ExportStatus.emit(VlogEvent.Message("書き出しを中止しました"))
                 notifyResult("書き出しを中止しました", "書き出しを中止しました")
-            } catch (e: Exception) {
-                val message = e.message ?: "書き出しに失敗しました"
+            } catch (e: Throwable) {
+                // Errorも拾う。ネイティブの読み込み失敗（UnsatisfiedLinkError）やR8の keep 漏れ
+                // （NoSuchMethodError）は Exception ではなく、拾わないとサービスから未捕捉で落ちる
+                Log.e(LOG_TAG, "書き出しに失敗しました", e)
+                val message = (e as? Exception)?.message ?: "書き出しに失敗しました"
                 ExportStatus.emit(VlogEvent.Message(message))
                 notifyResult("書き出しに失敗しました", message)
             } finally {

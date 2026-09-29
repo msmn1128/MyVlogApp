@@ -208,6 +208,8 @@ fun GalleryPickerDialog(
 
                 GalleryPickerFooter(
                     selectedCount = selected.size,
+                    // 一覧の読み込み中は、渡す動画を引けず空で閉じてしまうので押させない
+                    canPick = videos != null,
                     onDismiss = onDismiss,
                     onPick = { onPick(oldestFirst(videos.orEmpty(), selected)) }
                 )
@@ -353,6 +355,7 @@ internal fun oldestFirst(videos: List<GalleryVideo>, selected: Set<Uri>): List<U
 @Composable
 private fun GalleryPickerFooter(
     selectedCount: Int,
+    canPick: Boolean,
     onDismiss: () -> Unit,
     onPick: () -> Unit
 ) {
@@ -366,7 +369,7 @@ private fun GalleryPickerFooter(
         }
         Button(
             onClick = onPick,
-            enabled = selectedCount > 0,
+            enabled = selectedCount > 0 && canPick,
             modifier = Modifier.weight(1f)
         ) {
             Text(if (selectedCount == 0) "追加" else "$selectedCount 件を追加")

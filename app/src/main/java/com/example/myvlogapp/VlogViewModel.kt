@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import com.example.myvlogapp.data.ClipStore
 import com.example.myvlogapp.data.ClipStoreProjects
@@ -64,6 +66,9 @@ private const val METADATA_PARALLELISM = 4
 
 /** 動画が開けるかを確かめ直すとき（[VlogViewModel.refreshMissingClips]）に同時に開く本数 */
 private const val MISSING_CHECK_PARALLELISM = 8
+
+/** 波形のデコードを同時に走らせる本数。選択を次々に変えても、音声全体の復号が重ならないようにする */
+private const val WAVEFORM_PARALLELISM = 2
 
 /**
  * 画面状態と書き出し処理の保持先。
@@ -188,6 +193,7 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
     private val _waveforms = MutableStateFlow<Map<String, Waveform?>>(emptyMap())
 
     private val waveformJobs = mutableMapOf<String, Job>()
+    private val waveformGate = Semaphore(WAVEFORM_PARALLELISM)
 
     /** 前回の続き（自動保存）を、いつ書き換えてよいか（AutosavePolicy.kt） */
     private val autosave = AutosavePolicy()
@@ -239,7 +245,13 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             combine(timeline.clips, playback.selectedIndex) { clips, index -> clips.getOrNull(index) }
                 .distinctUntilChangedBy { it?.uri }
-                .collect { clip -> clip?.let(::requestWaveform) }
+                .collect { clip ->
+                    // 選択から外れたクリップの復号は止める。要るのは選択中の1本だけで、
+                    // 止めなければ長い動画の復号が選択を変えた数だけ重なる（取り消したものは選び直したとき取り直す）
+                    val selectedKey = clip?.uri?.toString()
+                    waveformJobs.keys.filter { it != selectedKey }.forEach { waveformJobs.remove(it)?.cancel() }
+                    clip?.let(::requestWaveform)
+                }
         }
 
         // VlogExportService からの完了・失敗通知をUIのイベントとして中継する
@@ -540,7 +552,9 @@ class VlogViewModel(application: Application) : AndroidViewModel(application) {
         if (waveformJobs[key]?.isActive == true) return
 
         waveformJobs[key] = viewModelScope.launch {
-            val waveform = extractWaveform(getApplication(), clip.uri, clip.durationMs)
+            val waveform = waveformGate.withPermit {
+                extractWaveform(getApplication(), clip.uri, clip.durationMs)
+            }
             _waveforms.value = _waveforms.value + (key to waveform)
             waveformJobs.remove(key)
         }
