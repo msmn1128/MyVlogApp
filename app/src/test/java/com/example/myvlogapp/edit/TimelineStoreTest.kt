@@ -90,6 +90,25 @@ class TimelineStoreTest {
     }
 
     @Test
+    fun splitCannotMovePastTrimEndEvenWhenTheNextSplitIsBeyondIt() {
+        // 終わりを9秒まで縮めたあとも、9.5秒の区切りが範囲の後ろに残っている
+        val store = storeWith(
+            testClip(
+                id = 1,
+                durationMs = 10_000L,
+                startMs = 3_000L,
+                endMs = 9_000L,
+                texts = listOf(TextSegment(0L, "a"), TextSegment(6_000L, "b"), TextSegment(9_500L, "c"))
+            )
+        )
+
+        store.moveSplit(1, 20_000L)
+
+        assertEquals(9_000L - MIN_TEXT_SEGMENT_MS, selected.texts[1].startMs)
+        assertEquals(9_000L - MIN_TEXT_SEGMENT_MS, playback.positionMsValue)
+    }
+
+    @Test
     fun splitCannotMovePastThePreviousSplit() {
         val store = storeWith(
             testClip(

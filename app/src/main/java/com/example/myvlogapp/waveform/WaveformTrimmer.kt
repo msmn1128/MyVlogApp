@@ -186,7 +186,8 @@ fun WaveformTrimmer(
     val latestStart by startState
     val latestEnd by endState
     val latestDuration by durationState
-    val latestTexts by rememberUpdatedState(texts)
+    val textsState = rememberUpdatedState(texts)
+    val latestTexts by textsState
     // 6個のコールバックそれぞれをrememberUpdatedStateしていたのを、
     // データクラスであるcallbacks自体を1回rememberUpdatedStateする形に集約
     val latestCallbacks by callbacksState
@@ -238,6 +239,7 @@ fun WaveformTrimmer(
                     start = latestStart,
                     end = latestEnd,
                     duration = latestDuration,
+                    texts = latestTexts,
                     lockedViewportState = lockedViewportState,
                     onTrimMove = latestCallbacks.onTrimMove
                 )
@@ -357,7 +359,7 @@ fun WaveformTrimmer(
                                 // finallyのonScrubEnd()が呼ばれず、指を離しても再生が
                                 // 再開しないまま固まってしまう。
                                 dragBodyOrMove(
-                                    down, track, startState, endState, durationState,
+                                    down, track, startState, endState, durationState, textsState,
                                     lockedViewportState, viewConfiguration,
                                     haptics, edgeScrollZonePx,
                                     isPinnedAtLeftEdgeState, isPinnedAtRightEdgeState,

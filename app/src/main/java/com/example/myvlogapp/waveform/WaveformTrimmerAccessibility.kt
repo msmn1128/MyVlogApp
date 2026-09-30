@@ -62,7 +62,7 @@ internal fun trimmerActions(
     }
 
     fun moveRange(delta: Long): Boolean {
-        val moved = computeMoveSpan(startMs + delta, startMs, endMs, durationMs)
+        val moved = computeMoveSpan(startMs + delta, startMs, endMs, durationMs, texts)
         callbacks.onTrimMove(moved.newStart, moved.newStart)
         return true
     }

@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.ViewConfiguration
 import kotlin.math.abs
 import kotlinx.coroutines.withTimeoutOrNull
 import com.example.myvlogapp.TextSegment
+import com.example.myvlogapp.clampTimelineShift
 
 // =====================================================================================
 // WaveformTrimmer.ktのジェスチャー判定・ドラッグ処理（状態を持たない純粋関数群と、
@@ -204,10 +205,11 @@ internal fun applyTrimMove(
     start: Long,
     end: Long,
     duration: Long,
+    texts: List<TextSegment>,
     lockedViewportState: MutableState<LongRange?>,
     onTrimMove: (startMs: Long, seekMs: Long) -> Unit
 ): MoveSpanResult {
-    val moved = computeMoveSpan(candidateStartMs, start, end, duration)
+    val moved = computeMoveSpan(candidateStartMs, start, end, duration, texts)
     panViewportIfNeeded(moved.newStart, duration, lockedViewportState)
     panViewportIfNeeded(moved.newEnd, duration, lockedViewportState)
     onTrimMove(moved.newStart, moved.newStart)
@@ -222,11 +224,23 @@ internal data class MoveSpanResult(val newStart: Long, val newEnd: Long)
  * 区間の幅（[start]〜[end]）は変えず、動画の範囲内に収まるようclampする。
  * 指でドラッグしているとき（[dragBodyOrMove]）と、端に張り付いたまま自動で進める
  * とき（WaveformTrimmer内のオートスクロールLaunchedEffect）の両方から呼ぶ。
+ *
+ * ひとことの区切り（[texts]）がはみ出す手前で止めるのも、実際に動かす側
+ * （TimelineStore.moveTrim）と同じ[clampTimelineShift]で行う。動画の範囲だけで求めていた頃は、
+ * 区切りのせいで範囲が止まっても、こちらは動いたつもりで表示範囲をパンし続け、選択範囲が
+ * 画面の外へ流れて見えなくなっていた。
  */
-internal fun computeMoveSpan(candidateStart: Long, start: Long, end: Long, duration: Long): MoveSpanResult {
+internal fun computeMoveSpan(
+    candidateStart: Long,
+    start: Long,
+    end: Long,
+    duration: Long,
+    texts: List<TextSegment>
+): MoveSpanResult {
     val span = (end - start).coerceAtLeast(0L)
     val maxStart = (duration - span).coerceAtLeast(0L)
-    val newStart = candidateStart.coerceIn(0L, maxStart)
+    val delta = clampTimelineShift(texts, candidateStart.coerceIn(0L, maxStart) - start, duration)
+    val newStart = start + delta
     return MoveSpanResult(newStart, newStart + span)
 }
 
@@ -463,6 +477,7 @@ internal suspend fun AwaitPointerEventScope.dragBodyOrMove(
     latestStart: State<Long>,
     latestEnd: State<Long>,
     latestDuration: State<Long>,
+    latestTexts: State<List<TextSegment>>,
     lockedViewportState: MutableState<LongRange?>,
     viewConfiguration: ViewConfiguration,
     haptics: HapticFeedback,
@@ -519,6 +534,7 @@ internal suspend fun AwaitPointerEventScope.dragBodyOrMove(
                         start = latestStart.value,
                         end = latestEnd.value,
                         duration = latestDuration.value,
+                        texts = latestTexts.value,
                         lockedViewportState = lockedViewportState,
                         onTrimMove = callbacks.onTrimMove
                     )
