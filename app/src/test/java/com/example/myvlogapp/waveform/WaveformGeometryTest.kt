@@ -64,16 +64,26 @@ class ClampHandleMsTest {
 
 class ComputeMoveSpanTest {
 
+    private val noSplits = listOf(TextSegment())
+
     @Test
     fun keepsSpanWidthInsideVideo() {
-        assertEquals(MoveSpanResult(2_000L, 5_000L), computeMoveSpan(2_000L, 0L, 3_000L, 10_000L))
-        assertEquals(MoveSpanResult(7_000L, 10_000L), computeMoveSpan(9_000L, 0L, 3_000L, 10_000L))
-        assertEquals(MoveSpanResult(0L, 3_000L), computeMoveSpan(-100L, 0L, 3_000L, 10_000L))
+        assertEquals(MoveSpanResult(2_000L, 5_000L), computeMoveSpan(2_000L, 0L, 3_000L, 10_000L, noSplits))
+        assertEquals(MoveSpanResult(7_000L, 10_000L), computeMoveSpan(9_000L, 0L, 3_000L, 10_000L, noSplits))
+        assertEquals(MoveSpanResult(0L, 3_000L), computeMoveSpan(-100L, 0L, 3_000L, 10_000L, noSplits))
     }
 
     @Test
     fun spanWiderThanVideoDoesNotThrow() {
-        assertEquals(MoveSpanResult(0L, 500L), computeMoveSpan(100L, 0L, 500L, 200L))
+        assertEquals(MoveSpanResult(0L, 500L), computeMoveSpan(100L, 0L, 500L, 200L, noSplits))
+    }
+
+    @Test
+    fun stopsWhereASplitWouldLeaveTheVideo() {
+        // 1秒の区切りは MIN_TEXT_SEGMENT_MS(400ms) までしか前へ動けないので、範囲も600msぶんで止まる。
+        // 実際に動かす TimelineStore.moveTrim と同じ所で止まらないと、表示範囲だけが指について流れる
+        val texts = listOf(TextSegment(0L), TextSegment(1_000L))
+        assertEquals(MoveSpanResult(1_400L, 3_400L), computeMoveSpan(0L, 2_000L, 4_000L, 10_000L, texts))
     }
 }
 

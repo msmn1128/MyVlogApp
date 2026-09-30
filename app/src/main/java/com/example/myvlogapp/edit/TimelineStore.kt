@@ -308,9 +308,12 @@ internal class TimelineStore(
         // コマが出る。基準は区切りを入れるとき（splitTextAtPlayhead）の「端に寄りすぎ」と同じ。
         // 手前側は、1つ前の区切りとトリム開始のうち後ろにある方から間隔を取る
         // （1つ前が先頭区間＝絶対位置0だと、トリムで頭を落としていても0が基準になってしまう）。
+        // 奥側も同じく、次の区切りとトリム終了のうち手前にある方から間隔を取る。次の区切りだけを
+        // 見ていた頃は、トリムで終わりを縮めて次の区切りが範囲の後ろに残っていると、区切りを
+        // トリム終了の先まで動かせ、その区間のひとことが書き出しから黙って消えていた。
         val lowerBound = maxOf(clip.texts[index - 1].startMs, clip.startMs) + MIN_TEXT_SEGMENT_MS
-        val upperBound =
-            (clip.texts.getOrNull(index + 1)?.startMs ?: clip.endMs) - MIN_TEXT_SEGMENT_MS
+        val nextStartMs = clip.texts.getOrNull(index + 1)?.startMs ?: clip.endMs
+        val upperBound = minOf(nextStartMs, clip.endMs) - MIN_TEXT_SEGMENT_MS
         if (lowerBound > upperBound) return
 
         val clamped = newAtMs.coerceIn(lowerBound, upperBound)

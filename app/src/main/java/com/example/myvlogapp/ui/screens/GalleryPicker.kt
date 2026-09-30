@@ -155,8 +155,10 @@ fun GalleryPickerDialog(
     val isPartial = remember(reloadToken, resumeCount) { hasPartialMediaAccess(context) }
     val thumbnails = remember { ThumbnailCache() }
 
-    // 許可が変わったときも取り直す（設定から許可されて戻ってきたときなど）
-    LaunchedEffect(reloadToken, hasAccess) {
+    // 許可が変わったときも取り直す（設定から許可されて戻ってきたときなど）。
+    // 「選択した項目のみ」と「すべて許可」はどちらもhasAccessがtrueなので、isPartialもキーに入れる。
+    // 入れていなかった頃は、設定で許可の範囲を変えて戻っても一覧が前のままだった
+    LaunchedEffect(reloadToken, hasAccess, isPartial) {
         if (!hasAccess) {
             videos = emptyList()
             selected.clear()
