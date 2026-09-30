@@ -92,6 +92,12 @@ private fun probeCapabilities(): Capabilities {
         FFmpegKit.execute("-hide_banner -filters").allLogsAsString.orEmpty()
     }.getOrDefault("")
 
+    // 出力が空なのは判定に失敗したとき。そのまま進めると全フィルタが「無い」扱いになり、
+    // 「ビルドを差し替えてください」という的外れな案内が出る。結果は覚えないので、次の書き出しでやり直せる
+    if (encoders.isBlank() || filters.isBlank()) {
+        throw VlogExportException("FFmpegの機能を調べられませんでした。もう一度お試しください")
+    }
+
     val missingFilters = REQUIRED_FILTERS.filterNot { hasFilter(filters, it) }
     val missingHdrFilters = HDR_FILTERS.filterNot { hasFilter(filters, it) }
     val caps = when {
@@ -114,7 +120,7 @@ private fun probeCapabilities(): Capabilities {
         "FFmpeg機能判定: encoder=${caps.videoEncoder} 足りないフィルタ=${caps.missingFilters}" +
                 " HDR用に足りないフィルタ=${caps.missingHdrFilters}"
     )
-    if (encoders.isNotEmpty() && filters.isNotEmpty()) probedCapabilities = caps
+    probedCapabilities = caps
     return caps
 }
 

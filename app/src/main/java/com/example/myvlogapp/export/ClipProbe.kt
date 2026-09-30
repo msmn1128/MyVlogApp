@@ -31,6 +31,17 @@ internal data class ClipProbe(val hasAudioTrack: Boolean, val hdrTransfer: HdrTr
  * のどちらも、その動画を書き出せなくする扱いではない。
  */
 internal fun probeClip(context: Context, uri: Uri): ClipProbe {
+    // 一時的な失敗（同時に開いた数が多い、クラウド上のファイルが一瞬読めないなど）で、
+    // 音声のある動画が黙って無音になったりHDRが変換されなかったりしないよう、1回だけやり直す
+    repeat(PROBE_RETRIES) { readProbe(context, uri)?.let { return it } }
+    Log.w(LOG_TAG, "動画の中身を調べられませんでした（音声なし・SDRとして扱います）")
+    return ClipProbe(hasAudioTrack = false, hdrTransfer = null)
+}
+
+private const val PROBE_RETRIES = 2
+
+/** 1回読む。読めなければ null */
+private fun readProbe(context: Context, uri: Uri): ClipProbe? {
     val extractor = MediaExtractor()
     return try {
         extractor.setDataSource(context, uri, null)
@@ -42,8 +53,8 @@ internal fun probeClip(context: Context, uri: Uri): ClipProbe {
             hdrTransfer = video?.let(::hdrTransferOf)
         )
     } catch (e: Exception) {
-        Log.w(LOG_TAG, "動画の中身を調べられませんでした（音声なし・SDRとして扱います）", e)
-        ClipProbe(hasAudioTrack = false, hdrTransfer = null)
+        Log.w(LOG_TAG, "動画の中身の読み取りに失敗しました", e)
+        null
     } finally {
         extractor.release()
     }
