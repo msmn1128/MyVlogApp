@@ -18,7 +18,7 @@ import com.example.myvlogapp.LOG_TAG
 // 両方でこの値を使う。片方だけ変えると無音クリップだけサンプルレートが食い違うため、
 // 必ずここを経由する。
 
-internal const val AUDIO_SAMPLE_RATE = 44100
+internal const val AUDIO_SAMPLE_RATE = 48000
 internal const val AUDIO_CHANNEL_LAYOUT = "stereo" // anullsrcの cl= 用
 internal const val AUDIO_CHANNELS = 2              // -ac 用
 // ビットレートは数値で持つ。書き出し前の空き容量の見積もり（ExportSpace.kt）でも同じ値を使い、
