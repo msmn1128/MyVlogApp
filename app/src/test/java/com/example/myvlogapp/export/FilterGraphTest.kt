@@ -93,7 +93,7 @@ class FilterGraphTest {
         )
         assertTrue(graph.contains("[2:v]setpts=PTS-STARTPTS,trim=end=3.000,scale="))
         // 音声の無いクリップは無音で埋める
-        assertTrue(graph.contains("anullsrc=r=44100:cl=stereo:d=3.000[a1]"))
+        assertTrue(graph.contains("anullsrc=r=48000:cl=stereo:d=3.000[a1]"))
 
         // 開始位置での切り出しは入力側に任せたので、フィルタに残してはいけない
         assertFalse(graph.contains("trim=start="))

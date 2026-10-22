@@ -24,9 +24,9 @@ class ExportSpaceTest {
         val margin = 200L * 1024 * 1024
         // 1回: 作業フォルダの動画＋ギャラリーへのコピー（＋余裕）
         assertEquals(output * 2 + margin, single)
-        // 区切り: つないでいる最中の、中間ファイル（映像12Mbps＋無圧縮の音声 44.1kHz×2ch×16bit）＋つないだ動画。
+        // 区切り: つないでいる最中の、中間ファイル（映像12Mbps＋無圧縮の音声 48kHz×2ch×16bit）＋つないだ動画。
         // 中間ファイルはつなぎ終えたら消すので、ギャラリーへのコピー分とは足さない
-        val intermediates = oneMinute * (12_000_000L + 44_100L * 2 * 16) / 8 / 1000
+        val intermediates = oneMinute * (12_000_000L + 48_000L * 2 * 16) / 8 / 1000
         assertEquals(output + intermediates + margin, segmented)
         assertTrue(segmented > single)
     }
